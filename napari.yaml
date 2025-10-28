@@ -1,0 +1,15 @@
+name: hydro-analysis
+schema_version: 0.1.0
+contributions:
+  commands:
+    - id: hydro-analysis.open-dataset
+      title: Hydro Analysis: Open Dataset…
+      python_name: hydro_analysis.napari_plugin:open_dataset_dialog
+    - id: hydro-analysis.save-metadata
+      title: Hydro Analysis: Save metadata…
+      python_name: hydro_analysis.napari_plugin:save_metadata_command
+  menus:
+    - submenu: Plugins > Hydro Analysis
+      commands:
+        - hydro-analysis.open-dataset
+        - hydro-analysis.save-metadata
