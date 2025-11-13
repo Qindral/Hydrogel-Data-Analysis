@@ -13,6 +13,8 @@ dependencies = [
     "tifffile",
     "scipy",
     "qtpy",
+    "Pillow",
+    "scikit-image",
 ]
 
 [project.entry-points."napari.manifest"]
