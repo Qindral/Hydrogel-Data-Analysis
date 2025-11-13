@@ -13,6 +13,9 @@ dependencies = [
     "tifffile",
     "scipy",
     "qtpy",
+    "Pillow",
+    "scikit-image",
+    "matplotlib",
 ]
 
 [project.entry-points."napari.manifest"]
