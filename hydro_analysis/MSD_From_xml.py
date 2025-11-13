@@ -2,9 +2,12 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import linregress
-
+# python -m venv .venv   
+#pip install numpy scipy scikit-image matplotlib
 # Load XML file
 file_path = r"Z:\Diffusion in Hydrogel Data\20mg_500nm\SPT\B1_500nm_water_Tracks.xml"
+title = "500nm in water"
+
 tree = ET.parse(file_path)
 root = tree.getroot()
 
@@ -45,13 +48,13 @@ ensemble_msd = np.mean(aligned_msds, axis=0)
 time_lags = np.arange(1, min_len + 1) * frame_interval
 
 # Linear fit in early regime
-fit_end = min_len // 3
+fit_end = min_len // 2
 slope, intercept, r, p, se = linregress(time_lags[:fit_end], ensemble_msd[:fit_end])
 D = slope / (4)  # µm²/s for 2D diffusion
 
 # Plot MSDs
 plt.figure(figsize=(7,5))
-for msd in all_msds[:20]:  # plot some single MSDs
+for msd in all_msds[:]:  # plot some single MSDs
     n_points = min(len(msd), len(time_lags))
     plt.plot(time_lags[:n_points], msd[:n_points], color='lightgray', alpha=0.6)
 plt.plot(time_lags, ensemble_msd, 'o-', color='blue', label='Ensemble MSD')
@@ -61,7 +64,7 @@ plt.yscale('log')
 plt.xlabel('Δt [s]')
 plt.ylabel('MSD [µm²]')
 plt.legend()
-plt.title('Mean Squared Displacement (MSD) Analysis')
+plt.title(f'MSD Analysis: {title}')
 plt.tight_layout()
 plt.show()
 
