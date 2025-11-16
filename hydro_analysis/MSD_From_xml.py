@@ -4,10 +4,14 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 # python -m venv .venv   
 #pip install numpy scipy scikit-image matplotlib
+
+plt.rcParams.update({ 'font.family': 'serif', 'font.serif': ['Arial'], 'font.size': 12, 'axes.linewidth': 3, 'axes.labelsize': 12, 'axes.edgecolor': 'black', 'xtick.direction': 'in', 'ytick.direction': 'in', 'xtick.major.width': 3, 'ytick.major.width': 2, 'xtick.major.size': 5, 'ytick.major.size': 5, 'xtick.top': True, 'ytick.right': True, 'legend.frameon': True, 'legend.fontsize': 12, 'legend.title_fontsize': 12, 'lines.linewidth': 2.5, 'lines.markersize': 8, 'figure.figsize': [6, 6 / np.sqrt(2)], 'savefig.bbox': 'tight', 'figure.autolayout': True, 'axes.grid': False })
+
+
 # Load XML file
 file_path = r"Z:\Diffusion in Hydrogel Data\20mg_500nm\SPT\B1_500nm_water_Tracks.xml"
-title = "500nm in water"
-
+title = "500nm water"
+print(title)
 tree = ET.parse(file_path)
 root = tree.getroot()
 
@@ -40,7 +44,7 @@ def compute_msd(track):
     return msd
 
 all_msds = [compute_msd(track) for track in tracks if len(track) > 1]
-
+all_msds = [m for m in all_msds if m[-1] < 14]
 # Align MSD lengths
 min_len = min(len(m) for m in all_msds)
 aligned_msds = np.array([m[:min_len] for m in all_msds])
@@ -51,6 +55,9 @@ time_lags = np.arange(1, min_len + 1) * frame_interval
 fit_end = min_len // 2
 slope, intercept, r, p, se = linregress(time_lags[:fit_end], ensemble_msd[:fit_end])
 D = slope / (4)  # µm²/s for 2D diffusion
+
+print(f"Diffusion Coefficient D: {D} µm²/s")
+
 
 # Plot MSDs
 plt.figure(figsize=(7,5))
@@ -68,4 +75,4 @@ plt.title(f'MSD Analysis: {title}')
 plt.tight_layout()
 plt.show()
 
-D
+
