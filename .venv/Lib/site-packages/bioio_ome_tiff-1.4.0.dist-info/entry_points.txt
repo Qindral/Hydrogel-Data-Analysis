@@ -1,0 +1,5 @@
+[bioio.readers]
+bioio-ome-tiff = bioio_ome_tiff
+
+[bioio.writers]
+OmeTiffWriter = bioio_ome_tiff.writers:OmeTiffWriter

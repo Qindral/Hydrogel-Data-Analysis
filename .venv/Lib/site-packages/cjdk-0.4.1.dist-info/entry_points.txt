@@ -1,0 +1,2 @@
+[console_scripts]
+cjdk = cjdk.__main__:main

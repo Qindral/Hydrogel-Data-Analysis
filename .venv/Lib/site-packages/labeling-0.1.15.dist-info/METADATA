@@ -1,0 +1,51 @@
+Metadata-Version: 2.4
+Name: labeling
+Version: 0.1.15
+Summary: A package to create labeling/segmentation information based on pixel values.
+Author: Tom Burke
+License-Expression: BSD-3-Clause
+Project-URL: homepage, https://github.com/Labelings/pyLabeling
+Project-URL: source, https://github.com/Labelings/pyLabeling
+Project-URL: tracker, https://github.com/Labelings/pyLabeling/issues
+Keywords: labeling,segmentation,image-processing
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: Unix
+Classifier: Operating System :: MacOS
+Classifier: Topic :: Scientific/Engineering
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: tifffile
+Requires-Dist: pillow
+Requires-Dist: numpy
+Provides-Extra: examples
+Requires-Dist: scipy; extra == "examples"
+Dynamic: license-file
+
+# Labeling in Python
+
+This package is intended to provide an easy way to store Labelings for image segmentation.
+The segmentation information is stored in a BSON file for fast I/O on demand, but can also be exported to JSON for human readability.
+
+### Usage
+1. Create a Labeling object with one of the static methods or just init normally.
+2. Add one or more images(*iterate_over_images()*, *add_image()*, or even patches of an image (*add_segments()*). 
+   
+   **Note**: If you decide to add patches, make sure that no segment in a patch is overlapping the edge of the patch. 
+   Otherwise, the other parts of the segment will be considered an unique entity.
+   
+3. (Optional) Add any kind of metadata you want to the Labeling as additional information supplied by you
+4. Get the Labeling for further use(*get_result()*) or save (*save_result()*) it to a specified path. 
+   Both methods return an image and a bson container.
+
+### Information
+The project is open-source. If you find problems or have ideas for improvement, please create an issue on GitHub, or contribute yourself!

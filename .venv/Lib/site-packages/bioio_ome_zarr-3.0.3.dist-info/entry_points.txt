@@ -1,0 +1,7 @@
+[bioio.readers]
+bioio-ome-zarr = bioio_ome_zarr
+
+[bioio.writers]
+OMEZarrWriter = bioio_ome_zarr.writers:OMEZarrWriter
+OmeZarrWriterV2 = bioio_ome_zarr.writers:OmeZarrWriterV2
+OmeZarrWriterV3 = bioio_ome_zarr.writers:OmeZarrWriterV3

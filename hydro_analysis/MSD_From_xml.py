@@ -10,7 +10,9 @@ plt.rcParams.update({ 'font.family': 'serif', 'font.serif': ['Arial'], 'font.siz
 
 # Load XML file
 file_path = r"Z:\Diffusion in Hydrogel Data\20mg_500nm\SPT\B1_500nm_water_Tracks.xml"
-title = "500nm water"
+file_path = r"Z:\Diffusion in Hydrogel Data\20mg_50nm\A2_50nm_20mg_4d_newpos_Tracks.xml"
+file_path = r"Z:\Diffusion in Hydrogel Data\20mg_20nm\Trajektorien\ResultofB1_20nm_20mg_1d_nichtzentral_1_ohne_Tracks.xml"
+title = "20nm 20mg 1d nichtzentral 1"
 print(title)
 tree = ET.parse(file_path)
 root = tree.getroot()
@@ -18,15 +20,15 @@ root = tree.getroot()
 # Constants
 frame_interval = 0.05  # seconds (50 ms per frame)
 dim = 2
-
+dx = 0.130  # µm per pixel
 # Parse tracks
 tracks = []
 for particle in root.findall(".//particle"):
     detections = []
     for d in particle.findall(".//detection"):
         t = int(float(d.get("t")))
-        x = float(d.get("x"))
-        y = float(d.get("y"))
+        x = float(d.get("x")) * dx
+        y = float(d.get("y")) * dx
         detections.append((t, x, y))
     detections.sort(key=lambda x: x[0])
     if len(detections) > 1:
@@ -42,9 +44,11 @@ def compute_msd(track):
         dy = y[lag:] - y[:-lag]
         msd[lag-1] = np.mean(dx**2 + dy**2)
     return msd
-
+print(  f"Total tracks: {len(tracks)}")
 all_msds = [compute_msd(track) for track in tracks if len(track) > 1]
-all_msds = [m for m in all_msds if m[-1] < 14]
+print(  f"Tracks with MSD computed: {len(all_msds)}")
+#all_msds = [m for m in all_msds if m[-1] < 14]
+print(  f"Tracks after filtering long MSDs: {len(all_msds)}")
 # Align MSD lengths
 min_len = min(len(m) for m in all_msds)
 aligned_msds = np.array([m[:min_len] for m in all_msds])
@@ -65,7 +69,7 @@ for msd in all_msds[:]:  # plot some single MSDs
     n_points = min(len(msd), len(time_lags))
     plt.plot(time_lags[:n_points], msd[:n_points], color='lightgray', alpha=0.6)
 plt.plot(time_lags, ensemble_msd, 'o-', color='blue', label='Ensemble MSD')
-plt.plot(time_lags[:fit_end], intercept + slope*time_lags[:fit_end], 'r--', label=f'Linear fit\nD={D:.3e} µm²/s')
+plt.plot(time_lags[:fit_end], intercept + slope*time_lags[:fit_end], 'r--', label=f'Linear fit\nD={D:.3} µm²/s')
 plt.xscale('log')
 plt.yscale('log')
 plt.xlabel('Δt [s]')

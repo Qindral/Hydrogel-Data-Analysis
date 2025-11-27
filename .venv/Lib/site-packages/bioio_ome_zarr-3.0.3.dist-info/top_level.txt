@@ -1,0 +1,2 @@
+bioio_ome_zarr
+scripts
