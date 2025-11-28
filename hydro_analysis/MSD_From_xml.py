@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import linregress
 # python -m venv .venv   
+#PS C:\Users\Jonas\Documents\GitHub\Hydrogel-Data-Analysis> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 #pip install numpy scipy scikit-image matplotlib
 
 plt.rcParams.update({ 'font.family': 'serif', 'font.serif': ['Arial'], 'font.size': 12, 'axes.linewidth': 3, 'axes.labelsize': 12, 'axes.edgecolor': 'black', 'xtick.direction': 'in', 'ytick.direction': 'in', 'xtick.major.width': 3, 'ytick.major.width': 2, 'xtick.major.size': 5, 'ytick.major.size': 5, 'xtick.top': True, 'ytick.right': True, 'legend.frameon': True, 'legend.fontsize': 12, 'legend.title_fontsize': 12, 'lines.linewidth': 2.5, 'lines.markersize': 8, 'figure.figsize': [6, 6 / np.sqrt(2)], 'savefig.bbox': 'tight', 'figure.autolayout': True, 'axes.grid': False })
@@ -12,6 +13,9 @@ plt.rcParams.update({ 'font.family': 'serif', 'font.serif': ['Arial'], 'font.siz
 file_path = r"Z:\Diffusion in Hydrogel Data\20mg_500nm\SPT\B1_500nm_water_Tracks.xml"
 file_path = r"Z:\Diffusion in Hydrogel Data\20mg_50nm\A2_50nm_20mg_4d_newpos_Tracks.xml"
 file_path = r"Z:\Diffusion in Hydrogel Data\20mg_20nm\Trajektorien\ResultofB1_20nm_20mg_1d_nichtzentral_1_ohne_Tracks.xml"
+file_path = r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\20 nm_2_Tracks_2.xml"
+#file_path = r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\preprocess\tracks\20 nm_2_processed_Tracks.xml"
+
 title = "20nm 20mg 1d nichtzentral 1"
 print(title)
 tree = ET.parse(file_path)
@@ -20,7 +24,7 @@ root = tree.getroot()
 # Constants
 frame_interval = 0.05  # seconds (50 ms per frame)
 dim = 2
-dx = 0.130  # µm per pixel
+dx = 0.150  # µm per pixel
 # Parse tracks
 tracks = []
 for particle in root.findall(".//particle"):

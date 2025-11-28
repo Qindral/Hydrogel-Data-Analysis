@@ -330,23 +330,33 @@ def try_load_with_pytrackmate(path):
     return None
 
 def main():
-    p = argparse.ArgumentParser(description='Compute MSD and track statistics from TrackMate XML.')
-    p.add_argument('xml', help='TrackMate XML file')
-    p.add_argument('--dt', type=float, default=1.0, help='time between frames in seconds (default 1.0)')
-    p.add_argument('--min-len', type=int, default=2, help='minimum spots per track to include')
-    p.add_argument('--fit-lags', type=int, default=3, help='number of initial lags to fit linear MSD for D estimate')
-    p.add_argument('--max-msd-lag', type=int, default=None, help='maximum lag (in frames) for MSD calculation (default use track length-1)')
-    p.add_argument('--out-prefix', default='trackmate_stats', help='output file prefix')
-    p.add_argument('--plot', action='store_true', help='show/save MSD plots if matplotlib available')
-    args = p.parse_args()
-
+    # p = argparse.ArgumentParser(description='Compute MSD and track statistics from TrackMate XML.')
+    # p.add_argument('xml', help='TrackMate XML file')
+    # p.add_argument('--dt', type=float, default=1.0, help='time between frames in seconds (default 1.0)')
+    # p.add_argument('--min-len', type=int, default=2, help='minimum spots per track to include')
+    # p.add_argument('--fit-lags', type=int, default=3, help='number of initial lags to fit linear MSD for D estimate')
+    # p.add_argument('--max-msd-lag', type=int, default=None, help='maximum lag (in frames) for MSD calculation (default use track length-1)')
+    # p.add_argument('--out-prefix', default='trackmate_stats', help='output file prefix')
+    # p.add_argument('--plot', action='store_true', help='show/save MSD plots if matplotlib available')
+    # args = p.parse_args()
+    file_path = r"Z:\Diffusion in Hydrogel Data\20mg_20nm\Trajektorien\ResultofB1_20nm_20mg_1d_nichtzentral_1_ohne_Tracks.xml"
+    file_path = r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\20 nm_2_Tracks_2.xml"
+    dx = 0.150  # µm per pixel
+    class Args:
+        dt = 0.05  # seconds
+        min_len = 2
+        dt = 0.05  # 50ms per frame
+        fit_lags = 3
+        max_msd_lag = None
+        out_prefix = 'trackmate_stats_20nm_2_2'
+        plot = True
     # Try pytrackmate
-    loaded = try_load_with_pytrackmate(args.xml)
+    loaded = try_load_with_pytrackmate(file_path)
     if loaded is not None:
         spots, tracks = loaded
     else:
         # parse XML using ElementTree
-        tree = ET.parse(args.xml)
+        tree = ET.parse(file_path)
         root = tree.getroot()
         spots = parse_spots_from_xml(root)
         if not spots:
