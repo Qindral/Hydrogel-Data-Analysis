@@ -15,125 +15,182 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Circle
 import matplotlib.pyplot as plt
 
-# 1. Daten laden (pims öffnet den Stack 'lazy', also speicherschonend)
-# Ersetze 'dein_stack.tif' mit deinem Pfad
-frames = pims.open(r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_4.tif")
 
-print(f"Anzahl der Frames: {len(frames)}")
-print(f"Bildgröße: {frames[0].shape}")
+def main(tif_path, diameter, minmass, mpp, fps, plot=False):
 
-# 2. Parameter-Einstellung (WICHTIGSTER SCHRITT FÜR KONTROLLE)
-# diameter: Geschätzter Durchmesser eines Partikels in Pixeln (Muss ungerade sein!)
-# minmass: Mindest-integrierte Helligkeit, um Rauschen zu filtern.
-DIAMETER = 7  # <-- Hier anpassen (ungerade Zahl, z.B. 9, 11, 13)
+    # 1. Daten laden (pims öffnet den Stack 'lazy', also speicherschonend)
+    # Ersetze 'dein_stack.tif' mit deinem Pfad
+    frames = pims.open(tif_path)
 
-# Testlauf auf dem ersten Frame (Frame 0)
-f = tp.locate(frames[0], diameter=DIAMETER, invert=False, minmass=2000) 
-# invert=True nutzen, falls Partikel dunkel auf hellem Grund sind
+    # compute per-pixel background as the mean over the whole stack (float64 accumulator for precision)
+    n_frames = len(frames)
+    acc = None
+    for fr in frames:
+        arr = np.asarray(fr, dtype=np.float64)
+        if acc is None:
+            acc = np.zeros_like(arr, dtype=np.float64)
+        acc += arr
+    background = (acc / float(n_frames)).astype(np.float32)
 
-# 3. Visualisierung der Erkennung
+    # subtract background from each frame, clip negatives to zero and keep float32
+    frames = [np.clip(np.asarray(fr, dtype=np.float32) - background, 0.0, None).astype(np.float32)
+              for fr in frames]
+    print(f"Anzahl der Frames: {len(frames)}")
+    print(f"Bildgröße: {frames[0].shape}")
 
-tp.annotate(f, frames[0])
+    # 2. Parameter-Einstellung (WICHTIGSTER SCHRITT FÜR KONTROLLE)
+    # diameter: Geschätzter Durchmesser eines Partikels in Pixeln (Muss ungerade sein!)
+    # minmass: Mindest-integrierte Helligkeit, um Rauschen zu filtern.
+    DIAMETER = diameter  # <-- Hier anpassen (ungerade Zahl, z.B. 9, 11, 13)
 
-fig, ax = plt.subplots()
-ax.hist(f['mass'], bins=6)
+    # Testlauf auf dem ersten Frame (Frame 0)
+    f = tp.locate(frames[0], diameter=DIAMETER, invert=False, minmass=minmass) 
+    # invert=True nutzen, falls Partikel dunkel auf hellem Grund sind
 
-# Optionally, label the axes.
-ax.set(xlabel='mass', ylabel='count')
-plt.show()
+    # 3. Visualisierung der Erkennung
+    if plot:
+        fig, ax = plt.subplots()
+        ax.imshow(frames[0], cmap='gray')
+        tp.annotate(f, frames[0], ax=ax)
+        plt.show()
+        #tp.annotate(f, frames[0])
 
-#tp.subpx_bias(f)
-#plt.show()
-f = tp.batch(frames[:], 17, minmass=2000)
-t = tp.link(f, 5, memory=3)
-t1 = tp.filter_stubs(t, 25)
+        fig, ax = plt.subplots()
+        ax.hist(f['mass'], bins=21)
 
-d = tp.compute_drift(t1)
+        #Optionally, label the axes.
+        ax.set(xlabel='mass', ylabel='count')
+        plt.show()
 
-plt.figure()
-tp.plot_traj(t2);
+        tp.subpx_bias(f)
+        plt.show()
+    tp.quiet()
+    f = tp.batch(frames, 17, minmass=2000)
+    t = tp.link(f, 5, memory=3)
+    t1 = tp.filter_stubs(t, 25)
 
-# Prepare figure
-n_frames = len(frames)
-h, w = frames[0].shape
-fig, ax = plt.subplots(figsize=(8, 8))
-im = ax.imshow(frames[0], cmap='gray', interpolation='nearest')
-ax.set_xlim(0, w)
-ax.set_ylim(h, 0)  # invert y-axis so image coords match trackpy (y increases downward)
-ax.set_xlabel('x (px)')
-ax.set_ylabel('y (px)')
-title = ax.set_title("Frame 0")
+    d = tp.compute_drift(t1)
+    if plot:
+        print(d)
+        plt.figure()
+        tp.plot_traj(t1);
+        plt.show()
+    tm = tp.subtract_drift(t1, d)
+    
+    if plot:
+        plt.figure()
+        tp.plot_traj(tm);
+        plt.show()
+    
+    # Avoid ValueError: "cannot insert particle, already exists"
+    # If columns duplicate index level names, drop those columns first so reset_index can insert index levels as columns.
+    if tm.index.nlevels > 0:
+        dup_levels = [n for n in tm.index.names if n in tm.columns]
+        if dup_levels:
+            tm = tm.drop(columns=dup_levels)
+    tm = tm.reset_index()
+    # Remove any accidental duplicate column names (keeps first occurrence)
+    tm = tm.loc[:, ~tm.columns.duplicated()]
+    im = tp.imsd(tm, mpp, fps) # Pixel zu µm (100 nm/Pixel), fps=24
+    em = tp.emsd(tm, mpp, fps)
+    if plot:
+        fig, ax = plt.subplots()
+        ax.plot(im.index, im, 'k-', alpha=0.1)  # black lines, semitransparent
+        ax.plot(em.index, em, 'o')
+        ax.set(ylabel=r'$\langle \Delta r^2 \rangle$ [$\mu$m$^2$]',
+            xlabel='lag time $t$')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
 
-# Prepare particles (one color per particle)
-pids = np.unique(t1['particle'])
-cmap = plt.cm.get_cmap('tab20', len(pids))
-pid_to_color = {pid: cmap(i % cmap.N) for i, pid in enumerate(pids)}
+        plt.figure()
+        plt.ylabel(r'$\langle \Delta r^2 \rangle$ [$\mu$m$^2$]')
+        plt.xlabel('lag time $t$');
+    
+    tp.quiet()
+    params = tp.utils.fit_powerlaw(em,plot=plot)
+    if not plot: 
+        plt.close('all')
+    if plot:
+        print(params)
+    D = params.A/4
+    print("D =", D ,'µm²/s')
+    return D
+if __name__ == "__main__":
+    # On Windows, multiprocessing used by trackpy/pims requires the freeze_support guard.
+    # This prevents the "Safe importing of main module" / freeze_support warning/error.
+    import multiprocessing
+    multiprocessing.freeze_support()
+    #Parameter
+    mpp = 0.15
+    fps = 22
+    diamter = 7
+    print("diameter",diamter*mpp,"µm")
 
-# Pre-create Line2D objects (trajectories) and Circle patches (current spot rings)
-lines = {}
-circles = {}
-radius = DIAMETER / 2.0
-for pid in pids:
-    line, = ax.plot([], [], lw=1.5, color=pid_to_color[pid], alpha=0.9)
-    circ = Circle((0, 0), radius=radius, edgecolor=pid_to_color[pid],
-                  facecolor='none', lw=1.2, visible=False)
-    ax.add_patch(circ)
-    lines[pid] = line
-    circles[pid] = circ
-
-# Try to make drift lookup function (works if d is indexable by frame)
-def get_drift_at(frame_idx):
-    try:
-        # If d is a DataFrame with index=frame and columns ['x','y']
-        dx = float(d.loc[frame_idx, 'x'])
-        dy = float(d.loc[frame_idx, 'y'])
-        return dx, dy
-    except Exception:
-        try:
-            # If d is numpy-like array or list of (x,y)
-            dx, dy = d[frame_idx]
-            return float(dx), float(dy)
-        except Exception:
-            return 0.0, 0.0
-
-# Animation update function
-def update(frame_idx):
-    # update image
-    im.set_array(frames[frame_idx])
-    title.set_text(f"Frame {frame_idx + 1}/{n_frames}")
-
-    # drift to subtract (if available)
-    dx, dy = get_drift_at(frame_idx)
-
-    # update each particle
-    for pid in pids:
-        hist = t1[(t1['particle'] == pid) & (t1['frame'] <= frame_idx)].sort_values('frame')
-        if hist.empty:
-            lines[pid].set_data([], [])
-            circles[pid].set_visible(False)
-            continue
-
-        x = hist['x'].to_numpy() - dx
-        y = hist['y'].to_numpy() - dy
-        lines[pid].set_data(x, y)
-
-        # current position (at this exact frame)
-        current = hist[hist['frame'] == frame_idx]
-        if not current.empty:
-            cx = float(current['x'].iloc[-1] - dx)
-            cy = float(current['y'].iloc[-1] - dy)
-            circles[pid].center = (cx, cy)
-            circles[pid].set_visible(True)
-        else:
-            circles[pid].set_visible(False)
-
-    return [im, title] + list(lines.values()) + list(circles.values())
-
-# Create and run animation
-anim = FuncAnimation(fig, update, frames=range(n_frames), interval=100, blit=False, repeat=True)
-
-plt.show()
+    kb = 1.380649e-23  # Boltzmann-Konstante in J/K
+    T = 293.15  # Temperatur in Kelvin (25 °C)
+    nu = 0.001002  # Dynamische Viskosität von Wasser bei 25 °C in Pa·s
 
 
+    print(f'Theoretischer D ({diamter*mpp*1000} nm Partikel):', (kb * T)/(6 * np.pi * diamter * mpp/2*nu*(1e-6)*1e-12) ,'µm²/s')
+
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_2.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_3.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_4.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm.tif"]  
+    #D_1000 = []
+    #for path in paths:
+    #    minmass = 2000
+    #    print("Processing:", path)
+    #    D = main(path,diamter,mpp, fps,plot=False)
+    #    D_1000.append(D)
+    #print("Mittelwert D 1000 nm:", np.mean(D_1000), "µm²/s ±", np.std(D_1000), "µm²/s")
 
 
+    diamter = 5
+    print("diameter",diamter*mpp,"µm")
+
+
+    print(f'Theoretischer D ({diamter*mpp*1000} nm Partikel):', (kb * T)/(6 * np.pi * diamter * mpp/2*nu*(1e-6)*1e-12) ,'µm²/s')
+
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _3.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _4.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _2.tif"]  
+    D_500 = []
+    minmass = 250
+    for path in paths:
+        D = main(path,diamter, minmass, mpp, fps,plot=True)
+        D_500.append(D)
+    print("Mittelwert D 500 nm:", np.mean(D_500), "µm²/s ±", np.std(D_500), "µm²/s")
+
+    #return
+    diamter = 3
+    print("diameter",diamter*mpp,"µm")
+
+    print(f'Theoretischer D ({diamter*mpp*1000} nm Partikel):', (kb * T)/(6 * np.pi * diamter * mpp/2*nu*(1e-6)*1e-12) ,'µm²/s')
+
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm_2.tif"]  
+    D_1000 = []
+    for path in paths:
+        D = main(path,diamter,mpp, fps,plot=False)
+        D_1000.append(D)
+    print("Mittelwert D 1000 nm:", np.mean(D_1000), "µm²/s ±", np.std(D_1000), "µm²/s")
+
+    
+
+    diamter = 3
+    print("diameter",diamter*mpp,"µm")
+
+    print(f'Theoretischer D ({diamter*mpp*1000} nm Partikel):', (kb * T)/(6 * np.pi * diamter * mpp/2*nu*(1e-6)*1e-12) ,'µm²/s')
+
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_5.tif",
+    r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_4.tif",
+    r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_3.tif",
+    r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_2.tif",
+    r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm.tif"]  
+    D_1000 = []
+    for path in paths:
+        D = main(path,diamter,mpp, fps,plot=False)
+        D_1000.append(D)
+    print("Mittelwert D 1000 nm:", np.mean(D_1000), "µm²/s ±", np.std(D_1000), "µm²/s")
