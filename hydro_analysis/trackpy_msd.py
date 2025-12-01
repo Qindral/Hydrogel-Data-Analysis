@@ -227,15 +227,15 @@ if __name__ == "__main__":
              r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm.tif"]  
     D_1000 = []
     imsd_1000 = []
-    for path in paths:
-        minmass = 2000
-        print(os.path.basename(path))   
-        D, imsd = main(path,diamter,minmass,mpp, fps,plot=False)
-        D_1000.append(D)
-        imsd_1000.append(imsd)
+    # for path in paths:
+    #     minmass = 2000
+    #     print(os.path.basename(path))   
+    #     D, imsd = main(path,diamter,minmass,mpp, fps,plot=True)
+    #     D_1000.append(D)
+    #     imsd_1000.append(imsd)
     print(f'Theoretischer D ({1000} nm Partikel):', (kb * T)/(6 * np.pi * 1/2*nu*(1e-6)*1e-12) ,'µm²/s')
     print("Mittelwert D 1000 nm:", np.mean(D_1000), "µm²/s ±", np.std(D_1000), "µm²/s")
-
+    
 
     diamter = 5
     print("diameter",diamter*mpp,"µm")
@@ -251,11 +251,11 @@ if __name__ == "__main__":
     minmass = 250
     for path in paths:
         print(os.path.basename(path))   
-        D, imsd = main(path,diamter, minmass, mpp, fps,plot=False)
+        D, imsd = main(path,diamter, minmass, mpp, fps,plot=True)
         D_500.append(D)
         imsd_500.append(imsd)
     
-    print(f'Theoretischer D ({500} nm Partikel):', (kb * T)/(6 * np.pi * 500*1000/2*nu*(1e-6)*1e-12) ,'µm²/s')
+    print(f'Theoretischer D ({500} nm Partikel):', (kb * T)/(6 * np.pi * 0.5/2*nu*(1e-6)*1e-12) ,'µm²/s')
     print("Mittelwert D 500 nm:", np.mean(D_500), "µm²/s ±", np.std(D_500), "µm²/s")
 
     #return
