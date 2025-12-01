@@ -252,6 +252,7 @@ if __name__ == "__main__":
     for path in paths:
         print(os.path.basename(path))   
         D, imsd = main(path,diamter, minmass, mpp, fps,plot=True)
+        print(imsd.head())
         D_500.append(D)
         imsd_500.append(imsd)
     
@@ -332,8 +333,28 @@ if __name__ == "__main__":
     import pickle
     with open(r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\imsds.pkl", 'wb') as f:
         pickle.dump(imsds, f)
+    #%% Plot all MSDs and fit ensemble MSDs
+    imsds = pickle.load(open(r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\imsds.pkl", 'rb'))
     for key in imsds:
         imsd = imsds[key]
+        # make particle column names unique across the list by adding a running offset
+        offset = 0
+        renamed = []
+        for df in imsd:
+            df = df.copy()
+            cols = list(df.columns)
+            # try to treat column names as integer particle ids
+            try:
+            ints = [int(c) for c in cols]
+            mapping = {old: int(old) + offset for old in cols}
+            # update offset so next dataframe starts after the largest id used here
+            offset = max(mapping.values()) + 1 if mapping else offset
+            except Exception:
+            # fallback: give each column a unique integer id using current offset
+            mapping = {old: offset + i for i, old in enumerate(cols, start=1)}
+            offset += len(cols)
+            renamed.append(df.rename(columns=mapping))
+        imsd = renamed
         imsd_all = pd.concat(imsd, axis=1)
         print(imsd.head(),imsd_all.head())
         em = tp.emsd(imsd_all, mpp, fps)
