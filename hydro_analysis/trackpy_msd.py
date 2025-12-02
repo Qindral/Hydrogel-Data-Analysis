@@ -345,13 +345,13 @@ if __name__ == "__main__":
             cols = list(df.columns)
             # try to treat column names as integer particle ids
             try:
-            ints = [int(c) for c in cols]
-            mapping = {old: int(old) + offset for old in cols}
-            # update offset so next dataframe starts after the largest id used here
-            offset = max(mapping.values()) + 1 if mapping else offset
+                ints = [int(c) for c in cols]
+                mapping = {old: int(old) + offset for old in cols}
+                # update offset so next dataframe starts after the largest id used here
+                offset = max(mapping.values()) + 1 if mapping else offset
             except Exception:
             # fallback: give each column a unique integer id using current offset
-            mapping = {old: offset + i for i, old in enumerate(cols, start=1)}
+                mapping = {old: offset + i for i, old in enumerate(cols, start=1)}
             offset += len(cols)
             renamed.append(df.rename(columns=mapping))
         imsd = renamed
@@ -384,3 +384,5 @@ if __name__ == "__main__":
         print(params)
         D = params.A/4
         print("D =", D ,'µm²/s')
+
+# %%
