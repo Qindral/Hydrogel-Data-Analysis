@@ -22,6 +22,9 @@ from cv2_rolling_ball import subtract_background_rolling_ball
 import tqdm as tqdm
 
 
+
+
+
 def subtract_background(image, radius=50):
     # img, background = subtract_background_rolling_ball(image, radius=radius, light_background=light_bg)
     # out = image - background
@@ -69,7 +72,7 @@ if 'fit_powerlaw_with_errors' not in globals():
             cov = cov
         )
 
-def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = False):
+def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = False, radius=50, sigma=1.0   ):
 
     # 1. Daten laden (pims öffnet den Stack 'lazy', also speicherschonend)
     # Ersetze 'dein_stack.tif' mit deinem Pfad
@@ -93,13 +96,13 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
         if plot:
             plt.imshow(frames[0], cmap='gray')
             plt.show()
-        r = 50
+        r = radius
         frames_copy = np.array(frames.copy()).astype('uint8')
         for i, fr in enumerate(tqdm.tqdm(frames_copy)):
-            frames_copy[i] = subtract_background(fr, radius=50, light_bg=False)
+            frames_copy[i] = subtract_background(fr, radius=radius)
         frames = frames_copy
         from scipy.ndimage import gaussian_filter
-        frames = [gaussian_filter(fr, sigma=2) for fr in frames]
+        frames = [gaussian_filter(fr, sigma=sigma) for fr in frames]
         if plot:
             plt.imshow(frames[0], cmap='gray')
             plt.show()
@@ -161,8 +164,8 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
             raise RuntimeError("No particle data available; aborting.")
         
 
-    t = tp.link(f, distance , memory=3)
-    t1 = tp.filter_stubs(t, 25)
+    t = tp.link(f, distance , memory=7)
+    t1 = tp.filter_stubs(t, 15) # remove trajectories shorter than 15 frames
 
     d = tp.compute_drift(t1)
     if plot:
@@ -170,8 +173,12 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
         plt.figure()
         tp.plot_traj(t1);
         plt.show()
-    tm = tp.subtract_drift(t1, d)
-    
+        print(t1.head())
+        print(t1['particle'].nunique())
+    if len(t1['particle'].unique()) > 20:
+        tm = tp.subtract_drift(t1, d)
+    else:
+        tm = t1.copy()
     if plot:
         plt.figure()
         tp.plot_traj(tm);
@@ -239,11 +246,12 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
     if plot:
         print(f"Filtered trajectories: removed {len(set(track_len.index) - good_particles)} / {len(track_len)}")
     em = tp.emsd(tm, mpp, fps)
+    fit_range = 20
     if plot:
         fig, ax = plt.subplots()
         ax.plot(im.index, im, 'k-', alpha=0.1)  # black lines, semitransparent
         ax.plot(em.index, em, 'o', markersize=8, color='blue')
-        ax.plot(em.iloc[0:40].index, em.iloc[0:40], 'o', markersize=3, color='red')
+        ax.plot(em.iloc[0:20].index, em.iloc[0:20], 'o', markersize=3, color='red')
         ax.set(ylabel=r'$\langle \Delta r^2 \rangle$ [$\mu$m$^2$]',
             xlabel='lag time $t$')
         ax.set_xscale('log')
@@ -256,12 +264,12 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
     tp.quiet()
     if plot: 
         fig, ax = plt.subplots()
-        params = tp.utils.fit_powerlaw(em.iloc[0:40], plot=plot, ax=ax)
+        params = tp.utils.fit_powerlaw(em.iloc[0:20], plot=plot, ax=ax)
         ax.set_xscale('linear')
         ax.set_yscale('linear')
         plt.show()
     else:
-        params = tp.utils.fit_powerlaw(em.iloc[0:40],plot=plot)
+        params = tp.utils.fit_powerlaw(em.iloc[0:20],plot=plot)
     if not plot: 
         plt.close('all')
     if plot:
@@ -342,13 +350,15 @@ if __name__ == "__main__":
     # D_200 = []
     # imsd_200 = []
     
-    # diamter = 5
     # for path in paths:
     #     print(os.path.basename(path))   
-    #     minmass = 200
-    #     distance = 15
-    #     D, imsd = main(path,diamter,distance,minmass,mpp, fps,plot=False)
-    #     D_200.append(D)
+        # diameter = 13
+        # minmass = 580
+        # radius = 37
+        # sigma = 1.0
+
+    #     D, imsd = main(path,diamter,distance,minmass,mpp, fps,plot=True,smooth=True,radius =rB, sigma = sigma)
+        # D_200.append(D)
     #     imsd_200.append(imsd)
     
     # print(f'Theoretischer D ({200} nm Partikel):', (kb * T)/(6 * np.pi * 0.2/2*nu*(1e-6)*1e-12) ,'µm²/s')
@@ -367,14 +377,16 @@ if __name__ == "__main__":
     D_50 = []
     imsd_50 = []
     
-    diamter = 3
-    for path in paths:
-        minmass = 22
-        distance = 23
-        print(os.path.basename(path))   
-        D, imsd = main(path,diamter,distance,minmass,mpp, fps,plot=True,smooth=True)
-        D_50.append(D)
-        imsd_50.append(imsd)
+    # for path in paths:
+    #     diamter = 7
+    #     minmass = 180
+    #     rB = 24
+    #     sigma = 1.1 
+    #     distance = 23
+    #     print(os.path.basename(path))   
+    #     D, imsd = main(path,diamter,distance,minmass,mpp, fps,plot=True,smooth=True,radius =rB, sigma = sigma)
+    #     D_50.append(D)
+    #     imsd_50.append(imsd)
     
     print(f'Theoretischer D ({50} nm Partikel):', (kb * T)/(6 * np.pi * 0.05/2*nu*(1e-6)*1e-12) ,'µm²/s')
     print("Mittelwert D 50 nm:", np.mean(D_50), "µm²/s ±", np.std(D_50), "µm²/s")
@@ -384,7 +396,6 @@ if __name__ == "__main__":
 
     paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\20 nm_2.tif",
             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\20 nm_3.tif",
-            r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\20 nm_2.tif",
             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\20 nm.tif",
             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\20 nm_5.tif",
             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\20 nm_4.tif"]
@@ -395,12 +406,21 @@ if __name__ == "__main__":
             # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\preprocess\20 nm_2_processed.tif"]
     D_20 = []
     imsd_20 = []
-    for path in paths:
-        diamter = 7
-        minmass = 1100
-        distance = 27
+    parameter = {"diameter": 7,
+        "minmass": 420,
+        "radius": 47,
+        "sigma": 1.0,
+        "distance": 15}
+    parameter_set = [ {'diameter': 9, 'minmass': 270, 'radius': 3, 'sigma': 2.0,"distance": 15},parameter,{'diameter': 7, 'minmass': 420, 'radius': 46, 'sigma': 0.7000000000000001}]
+    for i,path in enumerate(paths):
+        param = parameter_set[0]
+        diameter = param['diameter']
+        minmass = param['minmass']
+        radius = param['radius']
+        sigma = param['sigma']
+        distance = param['distance']
         print(os.path.basename(path))   
-        D, imsd = main(path,diamter,distance,minmass,mpp, fps,plot=False)
+        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=True,smooth=True,radius=radius, sigma=sigma)
         D_20.append(D)
         imsd_20.append(imsd)
     
@@ -474,10 +494,10 @@ if __name__ == "__main__":
     imsds = pickle.load(open(r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\imsds.pkl", 'rb'))
     print(type(imsds))
     D_values = {}
-    for key in imsds:
+    for j,key in enumerate(imsds):
         print(key)
         imsd = imsds[key]
-        
+        Dthr = [13.48,8.294646849,1.783746311,0.621773811,0.394612505][::-1][j]
         imsds_df_list = []
         for i in range(len(imsd)):
             imsd_i = imsd[i].copy()
@@ -539,6 +559,8 @@ if __name__ == "__main__":
         ax.plot(em.index, em, 'o', markersize=8, color='blue', label='Ensemble MSD')
         ax.plot(em.iloc[0:points].index, em.iloc[0:points], 'o', markersize=3, color='red', label='Fitting range')
         ax.plot(em.iloc[0:points].index, A*np.array(em.iloc[0:points].index)**n, 'g--', linewidth=4, alpha = 0.8, label='Fit')
+        
+        ax.plot(em.iloc[0:points].index, 4*Dthr*np.array(em.iloc[0:points].index)**1, 'p--', linewidth=4, alpha = 0.8, label='Theory')
         ax.set(ylabel=r'$\langle \Delta r^2 \rangle$ [$\mu$m$^2$]',
             xlabel='lag time $t$')
         ax.set_xscale('log')
