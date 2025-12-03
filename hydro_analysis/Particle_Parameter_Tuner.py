@@ -1,191 +1,248 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Button
+from matplotlib.widgets import Slider, Button, TextBox
+from matplotlib.collections import LineCollection
 import pims
 import trackpy as tp
 import cv2
 from scipy.ndimage import gaussian_filter
 import tkinter as tk
 from tkinter import filedialog
+import pandas as pd
 
-# --- Helper Function for Fast Rolling Ball (using OpenCV) ---
+# --- Helper: Fast Rolling Ball ---
 def fast_rolling_ball(image, radius):
-    # img, background = subtract_background_rolling_ball(image, radius=radius, light_background=light_bg)
-    # out = image - background
-    # 1. Create a "flat" kernel (disk) instead of a 3D ball
-    # Adjust the size (50, 50) to match your rolling ball diameter (not radius!)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius, radius))
-
-    # 2. Run the background estimation (Morphological Opening)
-    # This is the "Background" that rolling ball would normally give you
+    if radius < 1: return image
+    k_size = int(radius * 2) + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
     background = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
+    return cv2.subtract(image, background)
 
-    # 3. Subtract
-    out = cv2.subtract(image, background)
-    return out
-
-class ParticleTuner:
+class ParticleTrackerUI:
     def __init__(self, tif_path):
         print("Loading frames...")
         self.frames = pims.open(tif_path)
         self.n_frames = len(self.frames)
         
-        # --- 1. Pre-calculate Static Mean Background (Your Logic) ---
-        print("Calculating static mean background (this may take a moment)...")
-        acc = None
+        # 1. Pre-calculate Static Background
+        print("Calculating static background...")
+        acc = np.zeros_like(self.frames[0], dtype=np.float64)
         for fr in self.frames:
-            arr = np.asarray(fr, dtype=np.float64)
-            if acc is None:
-                acc = np.zeros_like(arr, dtype=np.float64)
-            acc += arr
-        self.static_background = (acc / float(self.n_frames)).astype(np.float32)
-        print("Static background calculated.")
+            acc += fr
+        self.static_background = (acc / self.n_frames).astype(np.float32)
 
-        # --- Initial Parameters ---
-        self.current_frame_idx = 0
-        self.p_diameter = 11  # Must be odd
-        self.p_minmass = 100
-        self.p_radius = 0     # Rolling ball radius (0 = off)
-        self.p_smooth = 0.0   # Gaussian sigma
+        # --- Internal State ---
+        self.tracks = None  # Will hold the DataFrame after linking
+        self.has_tracks = False
         
-        # --- Setup UI Layout ---
-        self.fig = plt.figure(figsize=(16, 9))
-        self.fig.canvas.manager.set_window_title('Particle Tracking Tuner')
-        
-        # Grid layout: Image (Left), Plots (Right), Sliders (Bottom)
-        gs = self.fig.add_gridspec(3, 3, height_ratios=[1, 1, 0.4])
-        
-        # Axes
-        self.ax_img = self.fig.add_subplot(gs[0:2, 0:2]) # Main Image
-        self.ax_hist = self.fig.add_subplot(gs[0, 2])    # Mass Histogram
-        self.ax_bias = self.fig.add_subplot(gs[1, 2])    # Subpixel Bias
-        
-        # Adjust layout for sliders
-        plt.subplots_adjust(bottom=0.25)
+        # Default Parameters
+        self.params = {
+            'frame': 0,
+            'diameter': 11,
+            'minmass': 100,
+            'radius': 0,    # Rolling ball
+            'smooth': 0.0,  # Gaussian
+            'search_range': 5.0, # Linking distance
+            'memory': 0     # Linking gap
+        }
 
-        # --- Sliders ---
-        # Format: [left, bottom, width, height]
-        ax_frame = plt.axes([0.15, 0.15, 0.65, 0.03])
-        ax_diam  = plt.axes([0.15, 0.11, 0.25, 0.03])
-        ax_mass  = plt.axes([0.55, 0.11, 0.25, 0.03])
-        ax_rad   = plt.axes([0.15, 0.07, 0.25, 0.03])
-        ax_smooth= plt.axes([0.55, 0.07, 0.25, 0.03])
-        ax_btn   = plt.axes([0.85, 0.07, 0.1, 0.07])
-
-        self.s_frame = Slider(ax_frame, 'Frame', 0, self.n_frames-1, valinit=0, valstep=1)
-        self.s_diam  = Slider(ax_diam, 'Diameter (px)', 3, 51, valinit=self.p_diameter, valstep=2)
-        self.s_mass  = Slider(ax_mass, 'Min Mass', 0, 5000, valinit=self.p_minmass, valstep=10)
-        self.s_rad   = Slider(ax_rad, 'RB Radius', 0, 100, valinit=self.p_radius, valstep=1)
-        self.s_smooth= Slider(ax_smooth, 'Smooth Sigma', 0, 5, valinit=self.p_smooth, valstep=0.1)
+        # --- UI Layout ---
+        self.fig = plt.figure(figsize=(16, 10))
+        self.fig.canvas.manager.set_window_title('Particle Tracker UI')
         
-        self.btn_run = Button(ax_btn, 'Print Params', hovercolor='0.975')
+        # Main Image (Top Left), Plots (Right)
+        gs = self.fig.add_gridspec(3, 4, height_ratios=[1, 1, 0.6])
+        self.ax_img = self.fig.add_subplot(gs[0:2, 0:3])
+        self.ax_hist = self.fig.add_subplot(gs[0, 3])
+        self.ax_bias = self.fig.add_subplot(gs[1, 3])
+        plt.subplots_adjust(bottom=0.35)
 
-        # Connect events
-        self.s_frame.on_changed(self.update)
-        self.s_diam.on_changed(self.update)
-        self.s_mass.on_changed(self.update)
-        self.s_rad.on_changed(self.update)
-        self.s_smooth.on_changed(self.update)
-        self.btn_run.on_clicked(self.print_params)
+        # --- Controls Generation ---
+        # Helper to create Slider + Textbox pairs
+        self.widgets = {}
+        
+        def add_control(label, key, val_min, val_max, y_pos, val_step=1, is_int=False):
+            # Slider Axis
+            ax_s = plt.axes([0.1, y_pos, 0.35, 0.03])
+            # Textbox Axis
+            ax_t = plt.axes([0.48, y_pos, 0.06, 0.03])
+            
+            s = Slider(ax_s, label, val_min, val_max, valinit=self.params[key], valstep=val_step)
+            t = TextBox(ax_t, '', initial=str(self.params[key]))
+            
+            # Update Logic
+            def update_from_slider(val):
+                self.params[key] = int(val) if is_int else val
+                t.set_val(str(round(val, 2))) # Sync Text
+                self.update_plot()
+                
+            def update_from_text(text):
+                try:
+                    val = float(text)
+                    if is_int: val = int(val)
+                    # Update slider (this triggers update_from_slider, which updates plot)
+                    s.set_val(val) 
+                except ValueError:
+                    pass
+
+            s.on_changed(update_from_slider)
+            t.on_submit(update_from_text)
+            
+            self.widgets[key] = {'slider': s, 'text': t}
+
+        # Row 1: Image Processing
+        add_control('Frame', 'frame', 0, self.n_frames-1, 0.28, 1, True)
+        add_control('Diameter (odd)', 'diameter', 3, 31, 0.24, 2, True)
+        add_control('Min Mass', 'minmass', 0, 5000, 0.20, 10, False)
+        add_control('RB Radius', 'radius', 0, 50, 0.16, 1, True)
+        add_control('Smooth Sigma', 'smooth', 0, 5, 0.12, 0.1, False)
+
+        # Row 2: Linking Parameters (Right side)
+        add_control('Search Range (px)', 'search_range', 0, 50, 0.24, 0.5, False)
+        # Manually move the linking widgets to the right
+        self.widgets['search_range']['slider'].ax.set_position([0.60, 0.24, 0.25, 0.03])
+        self.widgets['search_range']['text'].ax.set_position([0.87, 0.24, 0.06, 0.03])
+        
+        add_control('Memory (Gap)', 'memory', 0, 10, 0.20, 1, True)
+        self.widgets['memory']['slider'].ax.set_position([0.60, 0.20, 0.25, 0.03])
+        self.widgets['memory']['text'].ax.set_position([0.87, 0.20, 0.06, 0.03])
+
+        # Buttons
+        ax_btn_track = plt.axes([0.60, 0.12, 0.15, 0.05])
+        self.btn_track = Button(ax_btn_track, 'Find & Draw Trajectories', color='lightblue', hovercolor='0.9')
+        self.btn_track.on_clicked(self.run_tracking)
+        
+        ax_btn_print = plt.axes([0.80, 0.12, 0.1, 0.05])
+        self.btn_print = Button(ax_btn_print, 'Print Params', hovercolor='0.9')
+        self.btn_print.on_clicked(self.print_params)
 
         # Initial Draw
-        self.update(None)
+        self.update_plot()
         plt.show()
 
-    def get_processed_image(self, frame_idx):
-        # 1. Get Raw Frame
+    def process_frame(self, frame_idx):
         raw = np.asarray(self.frames[frame_idx], dtype=np.float32)
-        
-        # 2. Subtract Static Mean Background (Clip negatives)
         img = np.clip(raw - self.static_background, 0.0, None).astype(np.float32)
-        
-        # 3. Rolling Ball (Optional)
-        # Note: We convert to uint8 temporarily if needed by cv2, or keep float if cv2 supports it.
-        # CV2 morphology usually wants defined ranges. Let's normalize safely or keep float.
-        if self.p_radius > 0:
-            img = fast_rolling_ball(img, self.p_radius)
-            
-        # 4. Gaussian Smoothing (Optional)
-        if self.p_smooth > 0:
-            img = gaussian_filter(img, sigma=self.p_smooth)
-            
+        if self.params['radius'] > 0:
+            img = fast_rolling_ball(img, self.params['radius'])
+        if self.params['smooth'] > 0:
+            img = gaussian_filter(img, sigma=self.params['smooth'])
         return img
 
-    def update(self, val):
-        # Update Parameter Variables
-        self.current_frame_idx = int(self.s_frame.val)
-        self.p_diameter = int(self.s_diam.val)
+    def run_tracking(self, event):
+        print("\n--- Starting Batch Process & Linking ---")
+        print("1. Locating features in all frames (this may take time)...")
         
-        # Force odd diameter
-        if self.p_diameter % 2 == 0: 
-            self.p_diameter += 1
-            
-        self.p_minmass = self.s_mass.val
-        self.p_radius = int(self.s_rad.val)
-        self.p_smooth = self.s_smooth.val
+        # We need to perform the same preprocessing as the UI
+        # Since pims is lazy, we iterate and process
+        def frame_generator():
+            for i in range(len(self.frames)):
+                yield self.process_frame(i)
+                
+        # tp.batch can accept a generator or list
+        # To ensure diameter is odd
+        d = self.params['diameter']
+        if d % 2 == 0: d += 1
+        
+        # Run Batch
+        f = tp.batch(frame_generator(), diameter=d, minmass=self.params['minmass'], invert=False)
+        
+        print(f"2. Found {len(f)} features. Linking trajectories...")
+        print(f"   Range: {self.params['search_range']}, Memory: {self.params['memory']}")
+        
+        # Run Link
+        t = tp.link(f, self.params['search_range'], memory=self.params['memory'])
+        
+        # Filter short stubs (optional, keeps UI cleaner)
+        t1 = tp.filter_stubs(t, threshold=5)
+        
+        print(f"3. Done. Found {t1['particle'].nunique()} unique trajectories.")
+        self.tracks = t1
+        self.has_tracks = True
+        self.update_plot()
 
-        # --- Process Image ---
-        img = self.get_processed_image(self.current_frame_idx)
-
-        # --- Trackpy Locate ---
-        # invert=False based on your code (particles are bright on dark after subtraction)
-        tp.quiet()
-        f = tp.locate(img, diameter=self.p_diameter, minmass=self.p_minmass, invert=False)
-
-        # --- Update Image Plot ---
+    def update_plot(self):
+        curr_frame = self.params['frame']
+        
+        # 1. Image Processing
+        img = self.process_frame(curr_frame)
+        
         self.ax_img.clear()
         self.ax_img.imshow(img, cmap='gray', origin='upper')
-        
-        # Annotate manually (faster than tp.annotate for UI)
-        if len(f) > 0:
-            self.ax_img.plot(f['x'], f['y'], 'o', markerfacecolor='none', markeredgecolor='r', markersize=10, alpha=0.7)
-        self.ax_img.set_title(f"Frame {self.current_frame_idx} | Detected: {len(f)}")
         self.ax_img.axis('off')
 
-        # --- Update Histogram (MinMass) ---
+        # 2. Particle Detection (Current Frame)
+        d = self.params['diameter']
+        if d % 2 == 0: d += 1
+        
+        # If we have tracks, use them. If not, live detect.
+        current_particles = pd.DataFrame()
+        
+        if self.has_tracks:
+            # Slicing the pre-calculated dataframe
+            current_particles = self.tracks[self.tracks['frame'] == curr_frame]
+            
+            # --- DRAW TRAILS (Fading 30 steps) ---
+            # Get data from (Current - 30) to Current
+            start_lookback = max(0, curr_frame - 30)
+            
+            # Filter relevant history
+            history = self.tracks[
+                (self.tracks['frame'] >= start_lookback) & 
+                (self.tracks['frame'] <= curr_frame)
+            ]
+            
+            # We only care about particles that exist in the CURRENT frame
+            active_ids = current_particles['particle'].unique()
+            active_history = history[history['particle'].isin(active_ids)]
+            
+            if not active_history.empty:
+                # Group by particle to draw lines
+                for pid, group in active_history.groupby('particle'):
+                    # Plot the line (trail)
+                    # Alpha 0.6 makes it look slightly transparent/faded
+                    self.ax_img.plot(group.x, group.y, '-', color='lime', linewidth=1.5, alpha=0.6)
+            
+            # Draw current heads
+            self.ax_img.plot(current_particles.x, current_particles.y, 'o', color='red', markersize=4)
+            self.ax_img.set_title(f"Frame {curr_frame} | Tracking Mode | Particles: {len(current_particles)}")
+            
+        else:
+            # LIVE PREVIEW MODE
+            f = tp.locate(img, diameter=d, minmass=self.params['minmass'], invert=False)
+            current_particles = f
+            if len(f) > 0:
+                tp.annotate(f, img, ax=self.ax_img)
+            self.ax_img.set_title(f"Frame {curr_frame} | Preview Mode | Particles: {len(f)}")
+
+        # 3. Update Histograms
         self.ax_hist.clear()
-        if len(f) > 0:
-            self.ax_hist.hist(f['mass'], bins=20, color='skyblue', edgecolor='black')
-            self.ax_hist.axvline(self.p_minmass, color='r', linestyle='--', label='Threshold')
-            self.ax_hist.set_title('Mass Distribution')
-            self.ax_hist.set_xlabel('Mass')
-        else:
-            self.ax_hist.text(0.5, 0.5, "No Particles", ha='center')
-
-        # --- Update Subpixel Bias ---
         self.ax_bias.clear()
-        if len(f) > 0:
-            # Manually plotting subpx bias to fit in subplot
-            # tp.subpx_bias(f, ax=self.ax_bias) generates its own figure usually, 
-            # so we reimplement the histogram logic briefly:
-            self.ax_bias.hist(f['x'] % 1, bins=10, alpha=0.5, label='x', color='red')
-            self.ax_bias.hist(f['y'] % 1, bins=10, alpha=0.5, label='y', color='blue')
-            self.ax_bias.legend(loc='upper right', fontsize='small')
-            self.ax_bias.set_title('Subpixel Bias')
-        else:
-            self.ax_bias.text(0.5, 0.5, "No Particles", ha='center')
-
+        
+        if len(current_particles) > 0:
+            self.ax_hist.hist(current_particles['mass'], bins=20, color='skyblue', edgecolor='black')
+            self.ax_hist.axvline(self.params['minmass'], color='r', linestyle='--')
+            self.ax_hist.set_title('Mass')
+            
+            # Subpixel Bias
+            self.ax_bias.hist(current_particles['x'] % 1, bins=10, alpha=0.5, color='red', label='x')
+            self.ax_bias.hist(current_particles['y'] % 1, bins=10, alpha=0.5, color='blue', label='y')
+            self.ax_bias.set_title('Subpx Bias')
+        
         self.fig.canvas.draw_idle()
 
     def print_params(self, event):
-        print("\n--- Current Parameters ---")
-        print(f"Diameter: {self.p_diameter}")
-        print(f"Min Mass: {self.p_minmass}")
-        print(f"Rolling Ball Radius: {self.p_radius}")
-        print(f"Gaussian Sigma: {self.p_smooth}")
-        print("-" * 26)
-        print(f"diameter = {self.p_diameter}\nminmass = {self.p_minmass}\nradius = {self.p_radius}\nsigma = {self.p_smooth}\n")
-        print({"diameter":self.p_diameter,"minmass":self.p_minmass,"radius":self.p_radius,"sigma":self.p_smooth})
+        print("\n--- Final Parameters ---")
+        for k, v in self.params.items():
+            print(f"{k}: {v}")
 
-
-# --- Main Entry Point ---
+# --- Main ---
 if __name__ == "__main__":
-    # Select file
     root = tk.Tk()
-    root.withdraw() # Hide small tkinter window
+    root.withdraw()
     file_path = filedialog.askopenfilename(title="Select TIFF Stack", filetypes=[("TIFF files", "*.tif *.tiff")])
     
     if file_path:
-        app = ParticleTuner(file_path)
+        app = ParticleTrackerUI(file_path)
     else:
         print("No file selected.")
