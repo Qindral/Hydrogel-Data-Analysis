@@ -72,7 +72,7 @@ if 'fit_powerlaw_with_errors' not in globals():
             cov = cov
         )
 
-def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = False, radius=50, sigma=1.0   ):
+def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = False, radius=50, sigma=1.0 ,filter=True  ):
 
     # 1. Daten laden (pims öffnet den Stack 'lazy', also speicherschonend)
     # Ersetze 'dein_stack.tif' mit deinem Pfad
@@ -97,10 +97,12 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
             plt.imshow(frames[0], cmap='gray')
             plt.show()
         r = radius
-        frames_copy = np.array(frames.copy()).astype('uint8')
-        for i, fr in enumerate(tqdm.tqdm(frames_copy)):
-            frames_copy[i] = subtract_background(fr, radius=radius)
-        frames = frames_copy
+        if r>0:
+            frames_copy = np.array(frames.copy()).astype('uint8')
+            
+            for i, fr in enumerate(tqdm.tqdm(frames_copy)):
+                frames_copy[i] = subtract_background(fr, radius=radius)
+            frames = frames_copy
         from scipy.ndimage import gaussian_filter
         frames = [gaussian_filter(fr, sigma=sigma) for fr in frames]
         if plot:
@@ -164,8 +166,9 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
             raise RuntimeError("No particle data available; aborting.")
         
 
-    t = tp.link(f, distance , memory=7)
-    t1 = tp.filter_stubs(t, 15) # remove trajectories shorter than 15 frames
+    t = tp.link(f, distance , memory=8)
+
+    t1 = tp.filter_stubs(t, 7) # remove trajectories shorter than 15 frames
 
     d = tp.compute_drift(t1)
     if plot:
@@ -175,7 +178,8 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
         plt.show()
         print(t1.head())
         print(t1['particle'].nunique())
-    if len(t1['particle'].unique()) > 20:
+
+    if len(t1['particle'].unique()) > 20 and filter:
         tm = tp.subtract_drift(t1, d)
     else:
         tm = t1.copy()
@@ -240,7 +244,8 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
     if bad_cols:
         im = im.drop(columns=bad_cols, errors='ignore')
     good_particles = set(im.columns)
-    tm= tm[tm['particle'].isin(good_particles)].copy()
+    if filter:
+        tm= tm[tm['particle'].isin(good_particles)].copy()
 
     # (Optional) compute and log number removed for diagnostics
     if plot:
@@ -292,77 +297,77 @@ if __name__ == "__main__":
     fps = 22
     diamter = 7
     #print("diameter",diamter*mpp,"µm")
-
+    paths =[] # Dummy
     kb = 1.380649e-23  # Boltzmann-Konstante in J/K
-    T = 293.15  # Temperatur in Kelvin (25 °C)
+    T = 293.15  # Temperatur in Kelvin (20 °C)
     nu = 0.001002  # Dynamische Viskosität von Wasser bei 25 °C in Pa·s
 
 
 
-    # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_2.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_3.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_4.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm.tif"]  
-    # D_1000 = []
-    # imsd_1000 = []
-    # for path in paths:
-    #     print(os.path.basename(path))  
-    #     minmass = 2000
-    #     distance = 8
-    #     diamter = 7 
-    #     D, imsd = main(path,diamter,distance,minmass,mpp, fps,plot=False)
-    #     D_1000.append(D)
-    #     imsd_1000.append(imsd)
-    # print(f'Theoretischer D ({1000} nm Partikel):', (kb * T)/(6 * np.pi * 1/2*nu*(1e-6)*1e-12) ,'µm²/s')
-    # print("Mittelwert D 1000 nm:", np.mean(D_1000), "µm²/s ±", np.std(D_1000), "µm²/s")
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_2.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_3.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_4.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm.tif"]  
+    D_1000 = []
+    imsd_1000 = []
+    for path in paths:
+        print(os.path.basename(path))  
+        minmass = 1090
+        distance = 5
+        diameter = 11 
+        radius = 0
+        sigma = 0
+        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=True,smooth=True,radius=radius, sigma=sigma)
+        D_1000.append(D)
+        imsd_1000.append(imsd)
+    print(f'Theoretischer D ({1000} nm Partikel):', (kb * T)/(6 * np.pi * 1/2*nu*(1e-6)*1e-12) ,'µm²/s')
+    print("Mittelwert D 1000 nm:", np.mean(D_1000), "µm²/s ±", np.std(D_1000), "µm²/s")
     
 
-    # diamter = 5
-    # print("diameter",diamter*mpp,"µm")
+    
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _3.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _4.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _2.tif"]  
+    D_500 = []
+    imsd_500 = []
+    for path in paths:
+        diameter = 15
+        radius =17  # background subtraction rolling ball radius
+        minmass = 1310
+        distance = 8
+        sigma = 0.8
+        print(os.path.basename(path))   
+        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=False,smooth=True,radius=radius, sigma=sigma)
+        D_500.append(D)
+        imsd_500.append(imsd)
+    
+    print(f'Theoretischer D ({500} nm Partikel):', (kb * T)/(6 * np.pi * 0.5/2*nu*(1e-6)*1e-12) ,'µm²/s')
+    print("Mittelwert D 500 nm:", np.mean(D_500), "µm²/s ±", np.std(D_500), "µm²/s")
 
+    #return
 
-
-    # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _3.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _4.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _2.tif"]  
-    # D_500 = []
-    # imsd_500 = []
-    # for path in paths:
+    
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm_2.tif"]
+    D_200 = []
+    imsd_200 = []
+    
+    for path in paths:
+        print(os.path.basename(path))   
         
-    #     minmass = 250
-    #     distance = 12
-    #     print(os.path.basename(path))   
-    #     D, imsd = main(path,diamter,distance,minmass, mpp, fps,plot=False)
-    #     D_500.append(D)
-    #     imsd_500.append(imsd)
-    
-    # print(f'Theoretischer D ({500} nm Partikel):', (kb * T)/(6 * np.pi * 0.5/2*nu*(1e-6)*1e-12) ,'µm²/s')
-    # print("Mittelwert D 500 nm:", np.mean(D_500), "µm²/s ±", np.std(D_500), "µm²/s")
+        diameter= 13
+        minmass= 1320
+        distance = 16
+        sigma = 0
+        radius = 23
 
-    # #return
-    # print("diameter",diamter*mpp,"µm")
-
-    # print(f'Theoretischer D ({diamter*mpp*1000} nm Partikel):',(kb * T)/(6 * np.pi * diamter * mpp/2*nu*(1e-6)*1e-12) ,'µm²/s')
+        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=False,smooth=True,radius=radius, sigma=sigma)
+        D_200.append(D)
+        imsd_200.append(imsd)
     
-    # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm_2.tif"]
-    # D_200 = []
-    # imsd_200 = []
-    
-    # for path in paths:
-    #     print(os.path.basename(path))   
-        # diameter = 13
-        # minmass = 580
-        # radius = 37
-        # sigma = 1.0
-
-    #     D, imsd = main(path,diamter,distance,minmass,mpp, fps,plot=True,smooth=True,radius =rB, sigma = sigma)
-        # D_200.append(D)
-    #     imsd_200.append(imsd)
-    
-    # print(f'Theoretischer D ({200} nm Partikel):', (kb * T)/(6 * np.pi * 0.2/2*nu*(1e-6)*1e-12) ,'µm²/s')
-    # print("Mittelwert D 200 nm:", np.mean(D_200), "µm²/s ±", np.std(D_200), "µm²/s")
+    print(f'Theoretischer D ({200} nm Partikel):', (kb * T)/(6 * np.pi * 0.2/2*nu*(1e-6)*1e-12) ,'µm²/s')
+    print("Mittelwert D 200 nm:", np.mean(D_200), "µm²/s ±", np.std(D_200), "µm²/s")
 
     
 
@@ -373,20 +378,20 @@ if __name__ == "__main__":
              r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_4.tif",
     r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_3.tif", 
     r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm.tif"]  
-    # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_5.tif", bad data
+    ##r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_5.tif"# bad data
     D_50 = []
     imsd_50 = []
     
-    # for path in paths:
-    #     diamter = 7
-    #     minmass = 180
-    #     rB = 24
-    #     sigma = 1.1 
-    #     distance = 23
-    #     print(os.path.basename(path))   
-    #     D, imsd = main(path,diamter,distance,minmass,mpp, fps,plot=True,smooth=True,radius =rB, sigma = sigma)
-    #     D_50.append(D)
-    #     imsd_50.append(imsd)
+    for path in paths:
+        diameter = 9
+        minmass = 420
+        rB = 10
+        sigma =.7 
+        distance = 16
+        print(os.path.basename(path))   
+        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=False,smooth=True,radius =rB, sigma = sigma,filter=False)
+        D_50.append(D)
+        imsd_50.append(imsd)
     
     print(f'Theoretischer D ({50} nm Partikel):', (kb * T)/(6 * np.pi * 0.05/2*nu*(1e-6)*1e-12) ,'µm²/s')
     print("Mittelwert D 50 nm:", np.mean(D_50), "µm²/s ±", np.std(D_50), "µm²/s")
@@ -413,14 +418,19 @@ if __name__ == "__main__":
         "distance": 15}
     parameter_set = [ {'diameter': 9, 'minmass': 270, 'radius': 3, 'sigma': 2.0,"distance": 15},parameter,{'diameter': 7, 'minmass': 420, 'radius': 46, 'sigma': 0.7000000000000001}]
     for i,path in enumerate(paths):
-        param = parameter_set[0]
-        diameter = param['diameter']
-        minmass = param['minmass']
-        radius = param['radius']
-        sigma = param['sigma']
-        distance = param['distance']
+        # param = parameter_set[0]
+        # diameter = param['diameter']
+        # minmass = param['minmass']
+        # radius = param['radius']
+        # sigma = param['sigma']
+        # distance = param['distance']
+        diameter = 7
+        minmass = 250
+        sigma =1.4 
+        radius = 17
+        distance = 16
         print(os.path.basename(path))   
-        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=True,smooth=True,radius=radius, sigma=sigma)
+        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=False,smooth=True,radius=radius, sigma=sigma,filter=False)
         D_20.append(D)
         imsd_20.append(imsd)
     
@@ -486,7 +496,7 @@ if __name__ == "__main__":
     fps = 22
     diamter = 7
     #print("diameter",diamter*mpp,"µm")
-    points = 40 # Range of fits
+    points = 15 # Range of fits
     kb = 1.380649e-23  # Boltzmann-Konstante in J/K
     T = 293.15  # Temperatur in Kelvin (25 °C)
     nu = 0.001002  # Dynamische Viskosität von Wasser bei 25 °C in Pa·s
@@ -597,7 +607,7 @@ if __name__ == "__main__":
     for key in imsds:
         d_val.append(D_values[key][0])
         d_val_err.append(D_values[key+'error'][0])
-    print(d_val, d_val_err)
+    # print(d_val, d_val_err)
     x_vals = [20, 50, 200, 500, 1000][::-1]
     # ensure x and y lengths match
     x_vals = x_vals[:len(d_val)]

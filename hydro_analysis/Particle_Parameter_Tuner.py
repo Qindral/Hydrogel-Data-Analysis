@@ -37,13 +37,13 @@ class ParticleTrackerUI:
         
         # Default Parameters
         self.params = {
-            'frame': 0,
-            'diameter': 11,
-            'minmass': 100,
+            'frame': 12,
+            'diameter': 9,
+            'minmass': 420,
             'radius': 0,    # Rolling ball
             'smooth': 0.0,  # Gaussian
-            'search_range': 5.0, # Linking distance
-            'memory': 0     # Linking gap
+            'search_range': 12.0, # Linking distance
+            'memory': 4     # Linking gap
         }
 
         # --- UI Layout ---
@@ -131,36 +131,52 @@ class ParticleTrackerUI:
 
     def run_tracking(self, event):
         print("\n--- Starting Batch Process & Linking ---")
-        print("1. Locating features in all frames (this may take time)...")
+        print(f"1. Locating features in {len(self.frames)} frames (this may take time)...")
         
         # We need to perform the same preprocessing as the UI
         # Since pims is lazy, we iterate and process
-        def frame_generator():
-            for i in range(len(self.frames)):
-                yield self.process_frame(i)
-                
+        frame_process = []
+        for i in range(len(self.frames)):
+            frame_process.append(self.process_frame(i))
+        
         # tp.batch can accept a generator or list
         # To ensure diameter is odd
-        d = self.params['diameter']
-        if d % 2 == 0: d += 1
+        d = int(self.params['diameter'])
+        if d % 2 == 0:
+            d += 1
         
         # Run Batch
-        f = tp.batch(frame_generator(), diameter=d, minmass=self.params['minmass'], invert=False)
+        tp.quiet()
+        f = tp.batch(frame_process, diameter=d, minmass=self.params['minmass'], invert=False)
+        # Ensure 'frame' is a column (tp.batch may put frame into the index)
+        if 'frame' not in f.columns:
+            try:
+                f = f.reset_index()
+            except Exception:
+                pass
         
         print(f"2. Found {len(f)} features. Linking trajectories...")
         print(f"   Range: {self.params['search_range']}, Memory: {self.params['memory']}")
         
         # Run Link
-        t = tp.link(f, self.params['search_range'], memory=self.params['memory'])
+        t1 = tp.link(f, int(self.params['search_range']), memory=int(self.params['memory']))
         
-        # Filter short stubs (optional, keeps UI cleaner)
-        t1 = tp.filter_stubs(t, threshold=5)
-        
-        print(f"3. Done. Found {t1['particle'].nunique()} unique trajectories.")
-        self.tracks = t1
-        self.has_tracks = True
-        self.update_plot()
+        # Ensure 'frame' and 'particle' are columns after linking; if they are in the index, bring them out
+        if ('frame' not in t1.columns) or ('particle' not in t1.columns):
+            try:
+                t1 = t1.reset_index()
+            except Exception:
+                pass
 
+        # Save linked tracks to the UI and enable tracked mode
+        try:
+            # store the linked DataFrame so update_plot can use it
+            self.tracks = t1
+            self.has_tracks = True
+            print(f"3. Linked features into {t1['particle'].nunique()} unique trajectories.")
+        except Exception as e:
+            print("Warning: could not save tracks:", e)
+        
     def update_plot(self):
         curr_frame = self.params['frame']
         
@@ -171,44 +187,70 @@ class ParticleTrackerUI:
         self.ax_img.imshow(img, cmap='gray', origin='upper')
         self.ax_img.axis('off')
 
+        current_particles = pd.DataFrame()  # default empty
+
         # 2. Particle Detection (Current Frame)
-        d = self.params['diameter']
-        if d % 2 == 0: d += 1
-        
-        # If we have tracks, use them. If not, live detect.
-        current_particles = pd.DataFrame()
-        
-        if self.has_tracks:
-            # Slicing the pre-calculated dataframe
-            current_particles = self.tracks[self.tracks['frame'] == curr_frame]
-            
+        if self.has_tracks and self.tracks is not None and len(self.tracks) > 0:
+            # Ensure the tracked DataFrame exposes 'frame' and 'particle' as columns
+            if ('frame' not in self.tracks.columns) or ('particle' not in self.tracks.columns):
+                try:
+                    self.tracks = self.tracks.reset_index()
+                except Exception:
+                    pass
+
+            # Slicing the pre-calculated dataframe for the current frame
+            curr_frame_int = int(curr_frame)
+            if 'frame' in self.tracks.columns:
+                current_particles = self.tracks[self.tracks['frame'] == curr_frame_int].copy()
+            else:
+                # If no frame information, treat as empty
+                current_particles = pd.DataFrame()
+
+            print(f"Displaying {len(current_particles)} particles from tracked data.")
             # --- DRAW TRAILS (Fading 30 steps) ---
             # Get data from (Current - 30) to Current
-            start_lookback = max(0, curr_frame - 30)
-            
-            # Filter relevant history
-            history = self.tracks[
-                (self.tracks['frame'] >= start_lookback) & 
-                (self.tracks['frame'] <= curr_frame)
-            ]
-            
-            # We only care about particles that exist in the CURRENT frame
-            active_ids = current_particles['particle'].unique()
-            active_history = history[history['particle'].isin(active_ids)]
-            
-            if not active_history.empty:
-                # Group by particle to draw lines
-                for pid, group in active_history.groupby('particle'):
-                    # Plot the line (trail)
-                    # Alpha 0.6 makes it look slightly transparent/faded
-                    self.ax_img.plot(group.x, group.y, '-', color='lime', linewidth=1.5, alpha=0.6)
-            
-            # Draw current heads
-            self.ax_img.plot(current_particles.x, current_particles.y, 'o', color='red', markersize=4)
-            self.ax_img.set_title(f"Frame {curr_frame} | Tracking Mode | Particles: {len(current_particles)}")
-            
+            start_lookback = max(0, int(curr_frame) - 30)
+
+            if 'frame' in self.tracks.columns:
+                history = self.tracks[
+                    (self.tracks['frame'] >= start_lookback) &
+                    (self.tracks['frame'] <= curr_frame_int)
+                ]
+            else:
+                history = pd.DataFrame()
+
+            if current_particles.empty:
+                self.ax_img.set_title(f"Frame {curr_frame_int} | Tracking Mode | Particles: 0")
+            else:
+                # Only proceed if 'particle' column exists
+                if 'particle' not in current_particles.columns:
+                    print("Warning: 'particle' column missing in tracked data; skipping trail drawing.")
+                    # Just draw current positions if x,y exist
+                    if 'x' in current_particles.columns and 'y' in current_particles.columns:
+                        self.ax_img.plot(current_particles.x, current_particles.y, 'o', color='red', markersize=4)
+                        self.ax_img.set_title(f"Frame {curr_frame_int} | Tracking Mode | Particles: {len(current_particles)}")
+                else:
+                    # We only care about particles that exist in the CURRENT frame
+                    active_ids = current_particles['particle'].unique()
+                    active_history = history[history['particle'].isin(active_ids)]
+                    print(f"Drawing trails for {len(active_ids)} active particles, {len(active_history)} total points in history.")
+                    if not active_history.empty:
+                        # Group by particle to draw lines
+                        for pid, group in active_history.groupby('particle'):
+                            # Plot the line (trail)
+                            # Alpha 0.6 makes it look slightly transparent/faded
+                            self.ax_img.plot(group.x, group.y, '-', color='lime', linewidth=1.5, alpha=0.6)
+
+                    # Draw current heads
+                    if 'x' in current_particles.columns and 'y' in current_particles.columns:
+                        self.ax_img.plot(current_particles.x, current_particles.y, 'o', color='red', markersize=4)
+                    self.ax_img.set_title(f"Frame {curr_frame_int} | Tracking Mode | Particles: {len(current_particles)}")
+                    print(f"Plotted {len(current_particles.index)} current particles.")
         else:
             # LIVE PREVIEW MODE
+            d = int(self.params['diameter'])
+            if d % 2 == 0:
+                d += 1
             f = tp.locate(img, diameter=d, minmass=self.params['minmass'], invert=False)
             current_particles = f
             if len(f) > 0:
@@ -219,8 +261,14 @@ class ParticleTrackerUI:
         self.ax_hist.clear()
         self.ax_bias.clear()
         
-        if len(current_particles) > 0:
+        try:
+            cp_len = len(current_particles)
+        except Exception:
+            cp_len = 0
+
+        if cp_len > 0 and 'mass' in current_particles.columns:
             self.ax_hist.hist(current_particles['mass'], bins=20, color='skyblue', edgecolor='black')
+            self.fig.canvas.draw_idle()
             self.ax_hist.axvline(self.params['minmass'], color='r', linestyle='--')
             self.ax_hist.set_title('Mass')
             
@@ -235,6 +283,8 @@ class ParticleTrackerUI:
         print("\n--- Final Parameters ---")
         for k, v in self.params.items():
             print(f"{k}: {v}")
+        print(f"diameter = {self.p_diameter}\nminmass = {self.p_minmass}\nradius = {self.p_radius}\nsigma = {self.p_smooth}\n")
+        print({"diameter":self.p_diameter,"minmass":self.p_minmass,"radius":self.p_radius,"sigma":self.p_smooth})
 
 # --- Main ---
 if __name__ == "__main__":
