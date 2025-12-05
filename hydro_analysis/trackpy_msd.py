@@ -81,13 +81,16 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
     # compute per-pixel background as the mean over the whole stack (float64 accumulator for precision)
     n_frames = len(frames)
     acc = None
+    norm_lst = []
+    
     for fr in frames:
         arr = np.asarray(fr, dtype=np.float64)
+        val = np.mean(arr)
         if acc is None:
             acc = np.zeros_like(arr, dtype=np.float64)
         acc += arr
     background = (acc / float(n_frames)).astype(np.float32)
-
+    background = np.zeros_like(arr, dtype=np.float64)
     # subtract background from each frame, clip negatives to zero and keep float32
     frames = [np.clip(np.asarray(fr, dtype=np.float32) - background, 0.0, None).astype(np.float32)
               for fr in frames]
@@ -308,6 +311,12 @@ if __name__ == "__main__":
              r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_3.tif",
              r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm_4.tif",
              r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\1000 nm.tif"]  
+    
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\1000 nm_2.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\1000 nm.tif"]
+
+    mpp = 0.3
+    fps = 57
     D_1000 = []
     imsd_1000 = []
     for path in paths:
@@ -317,20 +326,22 @@ if __name__ == "__main__":
         diameter = 11 
         radius = 0
         sigma = 0
-        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=True,smooth=True,radius=radius, sigma=sigma)
+        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=False,smooth=True,radius=radius, sigma=sigma)
         D_1000.append(D)
         imsd_1000.append(imsd)
     print(f'Theoretischer D ({1000} nm Partikel):', (kb * T)/(6 * np.pi * 1/2*nu*(1e-6)*1e-12) ,'µm²/s')
     print("Mittelwert D 1000 nm:", np.mean(D_1000), "µm²/s ±", np.std(D_1000), "µm²/s")
     
-
+    paths = []
     
-    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm.tif",
-             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _3.tif",
-             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _4.tif",
-             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _2.tif"]  
+    # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm.tif",
+    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _3.tif",
+    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _4.tif",
+    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _2.tif"]  
     D_500 = []
     imsd_500 = []
+    mpp = 0.15
+    fps = 22
     for path in paths:
         diameter = 15
         radius =17  # background subtraction rolling ball radius
@@ -347,9 +358,9 @@ if __name__ == "__main__":
 
     #return
 
-    
-    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm.tif",
-             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm_2.tif"]
+    paths = []
+    # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm.tif",
+    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm_2.tif"]
     D_200 = []
     imsd_200 = []
     
@@ -374,20 +385,30 @@ if __name__ == "__main__":
     print("diameter",diamter*mpp,"µm")
 
 
-    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_2.tif", 
-             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_4.tif",
-    r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_3.tif", 
-    r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm.tif"]  
+    # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_2.tif", 
+    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_4.tif",
+    # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_3.tif", 
+    # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm.tif"]  
     ##r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_5.tif"# bad data
+#     paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\50 nm.tif",
+#              r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm_2.tif",
+# r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm_4.tif",
+# r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm _ 3.tif"]
     D_50 = []
     imsd_50 = []
-    
+    mpp = 0.3
+    fps = 57
     for path in paths:
-        diameter = 9
-        minmass = 420
-        rB = 10
-        sigma =.7 
-        distance = 16
+        # diameter = 9
+        # minmass = 420
+        # rB = 10
+        # sigma =.7 
+        # distance = 16
+        diameter = 7
+        minmass = 820
+        rB = 18
+        sigma =.9 
+        distance = 11
         print(os.path.basename(path))   
         D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=False,smooth=True,radius =rB, sigma = sigma,filter=False)
         D_50.append(D)
@@ -409,6 +430,13 @@ if __name__ == "__main__":
             # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\preprocess\20 nm_4_processed.tif",
             # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\preprocess\20 nm_3_processed.tif",
             # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\preprocess\20 nm_2_processed.tif"]
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm_57fps.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm_57fps_2.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm_60fps.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm_60fps_2.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm_60fps_3.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\20nm_4.tif", r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\20nm_2.tif"]
     D_20 = []
     imsd_20 = []
     parameter = {"diameter": 7,
@@ -416,6 +444,8 @@ if __name__ == "__main__":
         "radius": 47,
         "sigma": 1.0,
         "distance": 15}
+    mpp = 0.3
+    fps = 57
     parameter_set = [ {'diameter': 9, 'minmass': 270, 'radius': 3, 'sigma': 2.0,"distance": 15},parameter,{'diameter': 7, 'minmass': 420, 'radius': 46, 'sigma': 0.7000000000000001}]
     for i,path in enumerate(paths):
         # param = parameter_set[0]
@@ -612,10 +642,10 @@ if __name__ == "__main__":
     # ensure x and y lengths match
     x_vals = x_vals[:len(d_val)]
     ax.errorbar(x_vals, d_val, yerr=d_val_err, fmt='o', color='blue',
-                ecolor='black', elinewidth=1, capsize=3,label='Gemessener D')
+                ecolor='black', elinewidth=1, capsize=3,label='Gemessener D SPT')
     ax.scatter([20, 50, 200, 500, 1000], [(kb * T)/(6 * np.pi * d/2*nu*(1e-6)*1e-12) for d in [0.02, 0.05, 0.2, 0.5, 1.0]], color='black', marker='x', label='Theoretischer D')
-    ax.scatter([20, 50, 200, 500, 1000], [13.48,8.294646849,1.783746311,0.621773811,0.394612505], color='gray', marker='*', label='DSL Messung')
-    ax.legend(['Gemessener D', 'Theoretischer D', 'DSL Messung D'])
+    ax.scatter([20, 50, 200, 500, 1000], [13.48,8.294646849,1.783746311,0.621773811,0.394612505], color='gray', marker='*', label='D DSL')
+    ax.legend()
     ax.set_ylabel('Diffusionskoeffizient D [µm²/s]')
     ax.set_xlabel('Partikelgröße [nm]')
     ax.set_title('Übersicht der Diffusionskoeffizienten')
