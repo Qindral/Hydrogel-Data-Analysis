@@ -7,6 +7,6 @@ trackpy>=0.6.0,<0.7
 pims>=0.6,<0.8
 imageio>=2.25,<3
 tqdm>=4.65,<5
-
+pco_image
 # Dev / testing (optional)
 pytest>=7.2,<8
