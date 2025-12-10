@@ -13,6 +13,7 @@ import os
 from scipy.ndimage import grey_opening
 import re
 from collections import defaultdict
+from collections import defaultdict as _defaultdict
 save_path = r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\trackmate_MSD_results"
 if not os.path.exists(save_path):
     os.makedirs(save_path)
@@ -56,6 +57,122 @@ diamter = 7
 #print("diameter",diamter*mpp,"µm")
 paths =[] # Dummy
 kb = 1.380649e-23  # Boltzmann-Konstante in J/K
+
+
+def combine_and_analyze(paths_list, save_path=save_path, mpp=mpp, fps=fps, points=10):
+    """
+    Combine tracks per nominal particle size (detected from filename),
+    compute ensemble MSD on the combined tracks, fit a power-law and
+    plot/save comparison to theory.
+    Returns dicts: combined_D, combined_D_err (both keyed by size_nm).
+    """
+    # collect raw DataFrames per size
+    dfs_by_size = _defaultdict(list)
+    for p in paths_list:
+        name = os.path.basename(p)
+        m = re.search(r'(\d+(?:\.\d+)?)\s*nm', name, re.I)
+        if m:
+            size_nm = int(float(m.group(1)))
+        else:
+            nums = [int(x) for x in re.findall(r'(\d+)', name)]
+            size_nm = next((n for n in nums if 20 <= n <= 1000), None)
+        if size_nm is None:
+            continue
+        df = read_trackmate_xml(p)
+        if df is None or df.empty:
+            continue
+        dfs_by_size[size_nm].append(df)
+
+    combined_D = {}
+    combined_D_err = {}
+
+    for size_nm, dflist in dfs_by_size.items():
+        # Concatenate tracks, ensuring unique particle IDs across files
+        if not dflist:
+            continue
+        # renumber particle ids to be unique across files
+        offset = 0
+        reindexed = []
+        for df in dflist:
+            df = df.copy()
+            df['particle'] = df['particle'].astype(int) + offset
+            max_id = df['particle'].max()
+            offset = max(offset, max_id + 1)
+            reindexed.append(df)
+        df_combined = pd.concat(reindexed, ignore_index=True)
+
+        # ensure dtypes
+        df_combined['frame'] = df_combined['frame'].astype(int)
+        df_combined['particle'] = df_combined['particle'].astype(int)
+
+        # compute MSDs on combined dataset
+        tp.quiet()
+        try:
+            # linking optional; if tracks already labeled this will be skipped gracefully
+            tp.link(df_combined, 12, memory=8)
+        except Exception:
+            pass
+
+        im = tp.imsd(df_combined, mpp, fps)
+        em = tp.emsd(df_combined, mpp, fps)
+
+        params = fit_powerlaw_with_errors(em, points=points, plot=False)
+        A = float(params.A[0])
+        A_err = float(params.A_err[0]) if hasattr(params, 'A_err') else np.nan
+        D = A / 4.0
+        D_err = A_err / 4.0
+
+        combined_D[size_nm] = D
+        combined_D_err[size_nm] = D_err
+
+        # plot MSD for this combined size
+        fig, ax = plt.subplots()
+        cols = list(im.columns)
+        if cols:
+            ax.plot(im.index, im[cols[0]], 'k-', alpha=0.2, label='Individual MSDs')
+            for c in cols[1:]:
+                ax.plot(im.index, im[c], 'k-', alpha=0.08)
+        ax.plot(em.index, em, 'o', markersize=6, color='blue', label='Ensemble MSD (combined)')
+        ax.plot(em.iloc[0:points].index, em.iloc[0:points], 'o', markersize=4, color='red', label='Fitting range')
+        ax.plot(em.iloc[0:points].index, A*np.array(em.iloc[0:points].index)**float(params.n[0]), 'g--', linewidth=2, alpha=0.8, label=f'Fit: A={A:.2e}, n={float(params.n[0]):.2f}')
+        ax.set_xscale('log'); ax.set_yscale('log')
+        ax.set_xlabel('lag time [frames]')
+        ax.set_ylabel(r'$\langle \Delta r^2 \rangle$ [$\mu$m$^2$]')
+        ax.set_title(f'Combined ensemble MSD for {size_nm} nm (Nfiles={len(dflist)})')
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_path, f'combined_MSD_{size_nm}nm.png'), dpi=300)
+        plt.close(fig)
+
+    # optional: plot combined D vs theory like earlier
+    sizes = sorted(combined_D.keys())
+    measured_mean = [combined_D[s] for s in sizes]
+    measured_err = [combined_D_err[s] for s in sizes]
+    theory_aligned = []
+    for s in sizes:
+        if s in [20,50,200,500,1000]:
+            d_m = s * 1e-9
+            R = d_m / 2.0
+            D_m2_s = kb * T / (6 * np.pi * nu * R)
+            D_um2_s = D_m2_s * 1e12
+            theory_aligned.append(D_um2_s)
+        else:
+            theory_aligned.append(np.nan)
+
+    if sizes:
+        fig, ax = plt.subplots()
+        ax.errorbar(sizes, measured_mean, yerr=measured_err, fmt='o', color='tab:blue', label='Combined measured D')
+        ax.plot(sizes, theory_aligned, 'x', color='black', label='Theoretical D (canonical sizes)')
+        ax.set_xscale('log'); ax.set_yscale('log')
+        ax.set_xlabel('Particle size [nm]')
+        ax.set_ylabel('Diffusion coefficient D [µm²/s]')
+        ax.set_title('Combined measured vs theoretical D')
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_path, 'combined_D_measured_vs_theoretical.png'), dpi=300)
+        plt.close(fig)
+
+    return combined_D, combined_D_err
 T = 293.15  # Temperatur in Kelvin (20 °C)
 nu = 0.001002  # Dynamische Viskosität von Wasser bei 25 °C in Pa·s
 def read_trackmate_xml(xml_file_path):
@@ -106,7 +223,6 @@ def read_trackmate_xml(xml_file_path):
         print(f"Ein Fehler ist aufgetreten: {e}")
         return None
 
-# --- Anwendungsbeispiel ---
 paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\Resultof50nm_3_Tracks.xml",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\Resultof50nm_2_Tracks.xml",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\1000nm.xml",
