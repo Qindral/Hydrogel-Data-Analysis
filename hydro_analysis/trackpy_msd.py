@@ -5,8 +5,8 @@ Save/display MSD vs lag (in frames). Inline descriptions/comments included.
 """
 
 # Minimal dependencies: pims, trackpy, pandas, numpy, matplotlib
-import argparse
-from email.mime import image
+from pathlib import Path
+import glob
 import pims
 import trackpy as tp
 import numpy as np
@@ -169,9 +169,9 @@ def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = Fal
             raise RuntimeError("No particle data available; aborting.")
         
 
-    t = tp.link(f, distance , memory=8)
+    t = tp.link(f, distance , memory=4)
 
-    t1 = tp.filter_stubs(t, 7) # remove trajectories shorter than 15 frames
+    t1 = tp.filter_stubs(t, 10) # remove trajectories shorter than 15 frames
 
     d = tp.compute_drift(t1)
     if plot:
@@ -314,7 +314,7 @@ if __name__ == "__main__":
     
     paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\1000 nm_2.tif",
              r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\1000 nm.tif"]
-
+    # paths = []
     mpp = 0.3
     fps = 57
     D_1000 = []
@@ -334,14 +334,15 @@ if __name__ == "__main__":
     
     paths = []
     
-    # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _3.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _4.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _2.tif"]  
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _3.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _4.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\500 nm _2.tif"]  
+    
     D_500 = []
     imsd_500 = []
     mpp = 0.15
-    fps = 22
+    fps = 1/0.50
     for path in paths:
         diameter = 15
         radius =17  # background subtraction rolling ball radius
@@ -359,17 +360,20 @@ if __name__ == "__main__":
     #return
 
     paths = []
-    # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm.tif",
-    #          r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm_2.tif"]
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\200 nm_2.tif"]
+    
+    paths = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\200 nm").glob("200 nm*.tif")  
     D_200 = []
     imsd_200 = []
     
     for path in paths:
+        path = str(path)
         print(os.path.basename(path))   
         
-        diameter= 13
+        diameter= 813
         minmass= 1320
-        distance = 16
+        distance = 8
         sigma = 0
         radius = 23
 
@@ -380,9 +384,31 @@ if __name__ == "__main__":
     print(f'Theoretischer D ({200} nm Partikel):', (kb * T)/(6 * np.pi * 0.2/2*nu*(1e-6)*1e-12) ,'µm²/s')
     print("Mittelwert D 200 nm:", np.mean(D_200), "µm²/s ±", np.std(D_200), "µm²/s")
 
-    
+    path = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm")
+    paths = list(path.glob("100 nm*.tif"))
+    #paths = os.listdir(path)
 
-    print("diameter",diamter*mpp,"µm")
+    D_100 = []
+    imsd_100 = []
+    
+    for path in paths:
+        path = str(path)
+        print(os.path.basename(path))   
+        mpp = 0.3
+        fps = 60
+        diameter= 7
+        minmass= 320
+        distance = 5
+        sigma = .4
+        radius = 0
+
+        D, imsd = main(path,diameter,distance,minmass,mpp, fps,plot=False,smooth=True,radius=radius, sigma=sigma)
+        D_100.append(D)
+        imsd_100.append(imsd)
+    
+    print(f'Theoretischer D ({100} nm Partikel):', (kb * T)/(6 * np.pi * 0.1/2*nu*(1e-6)*1e-12) ,'µm²/s')
+    print("Mittelwert D 100 nm:", np.mean(D_100), "µm²/s ±", np.std(D_100), "µm²/s")
+    
 
 
     # paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_2.tif", 
@@ -390,10 +416,10 @@ if __name__ == "__main__":
     # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_3.tif", 
     # r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm.tif"]  
     ##r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\50 nm_5.tif"# bad data
-#     paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\50 nm.tif",
-#              r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm_2.tif",
-# r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm_4.tif",
-# r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm _ 3.tif"]
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\50 nm.tif",
+             r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm_2.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm_4.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\50 nm _ 3.tif"]
     D_50 = []
     imsd_50 = []
     mpp = 0.3
@@ -445,7 +471,7 @@ r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\20nm_4.tif", r"E:\PhD Data Analysi
         "sigma": 1.0,
         "distance": 15}
     mpp = 0.3
-    fps = 57
+    fps = 60
     parameter_set = [ {'diameter': 9, 'minmass': 270, 'radius': 3, 'sigma': 2.0,"distance": 15},parameter,{'diameter': 7, 'minmass': 420, 'radius': 46, 'sigma': 0.7000000000000001}]
     for i,path in enumerate(paths):
         # param = parameter_set[0]

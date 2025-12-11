@@ -29,22 +29,22 @@ class ParticleTrackerUI:
         # Robust background: compute per-pixel median across all frames to avoid
         # per-frame scaling artifacts that can lead to over-subtraction (black images).
         frames_stack = [np.asarray(fr, dtype=np.float32) for fr in self.frames]
-        if len(frames_stack) == 0:
-            # Fallback in the unlikely event there are no frames
-            self.static_background = np.zeros_like(np.asarray(self.frames[0], dtype=np.float32))
-        else:
-            # Stack frames for vectorized ops
-            stack = np.stack(frames_stack, axis=0)  # shape (N, H, W)
-            # Per-frame mean intensity
-            frame_means = stack.mean(axis=(1, 2))
-            # Use the first frame as reference mean (can be changed if desired)
-            ref_mean = float(frame_means[0])
-            # Avoid division by zero: if a frame mean is zero, keep scale 1.0
-            scales = (ref_mean / frame_means).astype(np.float32)
-            # Apply normalization (broadcast scales over H,W)
-            normalized_stack = stack * scales
-            # Compute static background from normalized frames (median)
-            self.static_background = np.median(normalized_stack, axis=0).astype(np.float32)
+        # if len(frames_stack) == 0:
+        #     # Fallback in the unlikely event there are no frames
+        self.static_background = np.zeros_like(np.asarray(self.frames[0], dtype=np.float32))
+        # else:
+        #     # Stack frames for vectorized ops
+        #     stack = np.stack(frames_stack, axis=0)  # shape (N, H, W)
+        #     # Per-frame mean intensity
+        #     frame_means = stack.mean(axis=(1, 2))
+        #     # Use the first frame as reference mean (can be changed if desired)
+        #     ref_mean = float(frame_means[0])
+        #     # Avoid division by zero: if a frame mean is zero, keep scale 1.0
+        #     scales = (ref_mean / frame_means).astype(np.float32)
+        #     # Apply normalization (broadcast scales over H,W)
+        #     normalized_stack = stack * scales
+        #     # Compute static background from normalized frames (median)
+        #     self.static_background = np.median(normalized_stack, axis=0).astype(np.float32)
 
         # --- Internal State ---
         self.tracks = None  # Will hold the DataFrame after linking
