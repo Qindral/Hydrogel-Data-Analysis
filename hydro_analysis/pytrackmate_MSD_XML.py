@@ -54,8 +54,8 @@ if 'fit_powerlaw_with_errors' not in globals():
 mpp = 0.15
 fps = 22
 
-mpp = 0.3
-fps = 57
+# mpp = 0.3
+# fps = 60
 
 diamter = 7
 #print("diameter",diamter*mpp,"µm")
@@ -258,9 +258,11 @@ r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\ResultofResultof20nm_2_Trac
 # Dateipfad hier anpassen
 # group measured D (µm^2/s) and errors by nominal size (nm)
 
-paths = [r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_7_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_4_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_6_Tracks.xml",]
+# paths = [r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_7_Tracks.xml",
+# r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_4_Tracks.xml",
+# r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_6_Tracks.xml",]
+
+# paths = [r"D:\SPT 2025 II\2025.12.16\20 nm 20 mg\tracks\Resultof20nm_atinj_10_Tracks.xml"]
 measured_by_size = defaultdict(list)
 measured_err_by_size = defaultdict(list)
 
