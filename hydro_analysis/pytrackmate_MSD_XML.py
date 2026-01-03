@@ -50,12 +50,12 @@ if 'fit_powerlaw_with_errors' not in globals():
             cov = cov
             )
 
-
 mpp = 0.15
 fps = 22
 
 # mpp = 0.3
 # fps = 60
+
 
 diamter = 7
 #print("diameter",diamter*mpp,"µm")
@@ -297,7 +297,12 @@ for p in paths:
         except Exception:
             # linking may fail or be unnecessary; continue anyway
             pass
-
+        if size > 200: 
+            mpp = 0.15
+            fps = 22
+        else: 
+            mpp = 0.3
+            fps = 60
         im = tp.imsd(df, mpp, fps)
         em = tp.emsd(df, mpp, fps)
         params = fit_powerlaw_with_errors(em, points=10, plot=False)
