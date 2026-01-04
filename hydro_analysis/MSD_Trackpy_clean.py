@@ -178,7 +178,7 @@ def msd_and_diffusion_from_xml(
     fps = traj.attrs["fps"]
 
     # 2) Optional: kurze Tracks filtern
-    if min_track_length is not None and min_track_length > 1:
+    if min_track_length is not None and min_track_length > 9:
         lengths = traj.groupby("particle")["frame"].count()
         valid_ids = lengths[lengths >= min_track_length].index
         traj = traj[traj["particle"].isin(valid_ids)].copy()
@@ -245,7 +245,7 @@ def msd_and_diffusion_from_xml(
         emsd_clean = emsd_clean.loc[mask]
 
     D_ensemble = {"D": np.nan, "alpha": np.nan}
-    if len(emsd_clean) > 1:
+    if len(emsd_clean) > 10:
         result = _fit_powerlaw_trackpy(emsd_clean)
         if result is not None:
             A_ens, n_ens = result

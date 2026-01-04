@@ -1,3 +1,8 @@
+'''This file is used to automatically measure the MSD from Trackmate XML files. in Water measurements for different particle sizes.
+It reads multiple XML files, computes the ensemble MSD for each particle size, fits a power-law 
+
+It uses the old Data from 27. Nov which have not been the correct FPS to get good links.'''
+
 import xml.etree.ElementTree as ET
 import argparse
 import pims
@@ -266,7 +271,7 @@ r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\ResultofResultof20nm_2_Trac
 measured_by_size = defaultdict(list)
 measured_err_by_size = defaultdict(list)
 
-for p in paths:
+for p in paths[:]:
     name = os.path.basename(p)
     # try to extract "<number>nm" first, otherwise pick first number between 20 and 1000
     m = re.search(r'(\d+(?:\.\d+)?)\s*nm', name, re.I)
@@ -297,7 +302,7 @@ for p in paths:
         except Exception:
             # linking may fail or be unnecessary; continue anyway
             pass
-        if size > 200: 
+        if df.x.max() > 200 and df.y.max() > 150:  # heuristic: small FOV likely means higher resolution
             mpp = 0.15
             fps = 22
         else: 
