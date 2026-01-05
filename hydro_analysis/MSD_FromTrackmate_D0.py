@@ -123,11 +123,77 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
             total_time_ms = exposure + delay
             if total_time_ms > 0:
                 result['fps'] = 1000.0 / total_time_ms
+                print(f"    DEBUG REC: {rec_path.name} -> Exp={exposure:.2f}ms, Delay={delay:.2f}ms, FPS={result['fps']:.2f}")
+        else:
+            print(f"    WARNING: Could not find Exposure/Delay in {rec_path.name}")
                 
     except Exception as e:
-        print(f"Warning: Could not parse {rec_path.name}: {e}")
+        print(f"    ERROR: Could not parse {rec_path.name}: {e}")
     
     return result
+
+
+def get_mpp_from_fps_and_size(fps: Optional[float] = None, 
+                              x_max: Optional[int] = None, 
+                              y_max: Optional[int] = None) -> tuple[float, float, str]:
+    """
+    Determine micrometers per pixel (mpp) and FPS based on image size or FPS.
+    
+    Mode detection:
+    - 60 FPS mode: 200×150 px window → 0.30 µm/px, 60 FPS
+    - 20 FPS mode: larger window → 0.15 µm/px, 20 FPS
+    
+    Args:
+        fps: Frames per second (optional)
+        x_max: Maximum x coordinate (image width in pixels, optional)
+        y_max: Maximum y coordinate (image height in pixels, optional)
+        
+    Returns:
+        Tuple of (mpp, fps, mode) where mode is '60 FPS', '20 FPS', or 'Unknown'
+    """
+    # First try to detect mode by image size (most reliable)
+    if x_max is not None and y_max is not None:
+        # 60 FPS mode has small window (200×150 px)
+        if x_max <= 250 and y_max <= 200:
+            return 0.3, 60.0, '60 FPS'
+        # 20 FPS mode has larger window
+        else:
+            return 0.15, 20.0, '20 FPS'
+    
+    # Fallback to FPS-based detection
+    if fps is not None:
+        if 50 <= fps <= 70:
+            return 0.3, fps, '60 FPS'
+        elif 15 <= fps <= 30:
+            return 0.15, fps, '20 FPS'
+    
+    # Default fallback
+    print(f"  Warning: Could not determine mode (fps={fps}, size={x_max}×{y_max}). Using defaults.")
+    return DEFAULT_MPP, DEFAULT_FPS, 'Unknown'
+
+
+def get_mpp_from_fps(fps: float) -> float:
+    """
+    Determine micrometers per pixel (mpp) based on frame rate.
+    
+    Different acquisition rates use different magnifications:
+    - ~60 FPS (50-70 FPS): lower magnification, mpp = 0.3 µm/px
+    - ~20 FPS (15-30 FPS): higher magnification, mpp = 0.15 µm/px
+    
+    Args:
+        fps: Frames per second
+        
+    Returns:
+        Micrometers per pixel calibration value
+    """
+    if fps >= 50 and fps <= 70:  # ~60 FPS - widened range
+        return 0.3
+    elif fps >= 15 and fps <= 30:  # ~20 FPS - widened range
+        return 0.15
+    else:
+        # Default to 20 FPS calibration for other rates
+        print(f"Warning: Unusual FPS {fps:.2f}, using default mpp=0.15")
+        return 0.15
 
 
 def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10, 
@@ -196,6 +262,45 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
 # XML PARSING FUNCTIONS
 # ============================================================================
 
+def extract_image_dimensions_from_xml(xml_file_path: Path) -> tuple[Optional[int], Optional[int]]:
+    """
+    Extract image dimensions (x_max, y_max) from TrackMate XML file.
+    
+    Args:
+        xml_file_path: Path to TrackMate XML file
+        
+    Returns:
+        Tuple of (x_max, y_max) in pixels, or (None, None) if extraction fails
+    """
+    try:
+        tree = ET.parse(xml_file_path)
+        root = tree.getroot()
+        
+        x_coords = []
+        y_coords = []
+        
+        # Collect all x and y coordinates
+        for particle in root.findall('particle'):
+            for detection in particle.findall('detection'):
+                x_raw = detection.get('x')
+                y_raw = detection.get('y')
+                if x_raw and y_raw:
+                    x_coords.append(float(x_raw))
+                    y_coords.append(float(y_raw))
+        
+        if x_coords and y_coords:
+            # Round up to nearest integer for image dimensions
+            x_max = int(np.ceil(max(x_coords)))
+            y_max = int(np.ceil(max(y_coords)))
+            return x_max, y_max
+        
+        return None, None
+    
+    except Exception as e:
+        print(f"  Warning: Could not extract dimensions from {xml_file_path.name}: {e}")
+        return None, None
+
+
 def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
     """
     Parse TrackMate XML file and convert to pandas DataFrame.
@@ -253,18 +358,18 @@ def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
 
 def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
     """
-    Scan directory structure and collect all .tif, .rec, and .xml files 
-    organized by particle size.
+    Scan directory structure and collect XML track files with associated FPS data.
+    
+    This function focuses on XML files (which contain the track data) and retrieves
+    FPS information from .rec files in the same particle size folder.
     
     Expected structure:
         root_path/
             50nm/
-                *.tif
-                *.rec
+                *.rec (for FPS extraction)
                 Tracks/
-                    *.xml
+                    *.xml (primary data)
             100nm/
-                *.tif
                 *.rec
                 Tracks/
                     *.xml
@@ -275,18 +380,18 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
     Returns:
         DataFrame with columns:
         - particle_size_nm: Particle size in nanometers
-        - tif_path: Path to TIFF file (or None)
-        - rec_path: Path to REC file (or None)
-        - xml_path: Path to XML track file (or None)
-        - tif_name: Basename of TIFF file
-        - rec_name: Basename of REC file
+        - xml_path: Path to XML track file
         - xml_name: Basename of XML file
-        - exposure_ms: Exposure time from .rec file
-        - delay_ms: Delay time from .rec file
-        - fps: Calculated frames per second
+        - exposure_ms: Average exposure time from .rec files in this folder
+        - delay_ms: Average delay time from .rec files
+        - fps: Calculated frames per second (average from all .rec files)
         - fps_category: Classification ('~20 FPS', '~60 FPS', 'Other', 'No Data')
+        - num_rec_files: Number of .rec files used for averaging
     """
     file_records = []
+    
+    print(f"\nDEBUG: Scanning folders in {root_path}")
+    print("=" * 70)
     
     # Walk through subdirectories
     for subfolder in root_path.iterdir():
@@ -295,63 +400,91 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
         
         # Extract particle size from folder name
         particle_size = extract_particle_size_from_path(subfolder)
+        
+        print(f"\n📁 Folder: {subfolder.name}")
+        print(f"   Particle size: {particle_size} nm" if particle_size else "   ⚠ No particle size detected")
+        
         if particle_size is None:
             continue
         
-        # Find all TIFF files in main folder
-        tif_files = sorted(list(subfolder.glob("*.tif")) + list(subfolder.glob("*.tiff")))
-        
-        # Find all REC files in main folder
+        # Find all REC files in main folder and parse them
         rec_files = sorted(list(subfolder.glob("*.rec")))
+        print(f"   Found {len(rec_files)} .rec files")
+        
+        # Parse all REC files to get FPS information for this particle size
+        fps_info_list = []
+        for rec_file in rec_files:
+            rec_info = parse_rec_file(rec_file)
+            if rec_info['fps'] is not None:
+                fps_info_list.append(rec_info)
+                print(f"     • {rec_file.name}: {rec_info['fps']:.2f} fps")
+        
+        # Calculate average FPS for this particle size
+        avg_fps_info = {'exposure_ms': None, 'delay_ms': None, 'fps': None}
+        num_valid_rec = 0
+        
+        if fps_info_list:
+            avg_fps_info = {
+                'exposure_ms': np.mean([x['exposure_ms'] for x in fps_info_list]),
+                'delay_ms': np.mean([x['delay_ms'] for x in fps_info_list]),
+                'fps': np.mean([x['fps'] for x in fps_info_list])
+            }
+            num_valid_rec = len(fps_info_list)
+            print(f"   → Average FPS: {avg_fps_info['fps']:.2f} (from {num_valid_rec} files)")
+        else:
+            print(f"   ⚠ No valid FPS data from .rec files")
         
         # Find all XML files in Tracks subfolder
-        xml_files = []
         tracks_folder = subfolder / "Tracks"
+        xml_files = []
+        
         if tracks_folder.exists() and tracks_folder.is_dir():
             xml_files = sorted(list(tracks_folder.glob("*.xml")))
+            print(f"   Found {len(xml_files)} XML track files in Tracks/")
+        else:
+            print(f"   ⚠ No Tracks/ subfolder found")
         
-        # Create records for each combination
-        # Match files by base name (without extension)
-        tif_dict = {f.stem: f for f in tif_files}
-        rec_dict = {f.stem: f for f in rec_files}
-        xml_dict = {f.stem: f for f in xml_files}
+        if len(xml_files) == 0:
+            print(f"   ⚠ Skipping - no XML files found")
+            continue
         
-        # Get all unique base names
-        all_basenames = set(tif_dict.keys()) | set(rec_dict.keys()) | set(xml_dict.keys())
-        
-        for basename in sorted(all_basenames):
-            tif_path = tif_dict.get(basename)
-            rec_path = rec_dict.get(basename)
-            xml_path = xml_dict.get(basename)
+        # Create one record per XML file
+        for xml_file in xml_files:
+            # Extract image dimensions from XML
+            x_max, y_max = extract_image_dimensions_from_xml(xml_file)
             
-            # Parse .rec file if available
-            rec_info = {'exposure_ms': None, 'delay_ms': None, 'fps': None}
-            if rec_path:
-                rec_info = parse_rec_file(rec_path)
+            # Determine mpp and fps based on image size and/or .rec data
+            mpp, fps, mode = get_mpp_from_fps_and_size(
+                fps=avg_fps_info['fps'],
+                x_max=x_max,
+                y_max=y_max
+            )
             
             file_records.append({
                 'particle_size_nm': particle_size,
-                'tif_path': str(tif_path) if tif_path else None,
-                'rec_path': str(rec_path) if rec_path else None,
-                'xml_path': str(xml_path) if xml_path else None,
-                'tif_name': tif_path.name if tif_path else None,
-                'rec_name': rec_path.name if rec_path else None,
-                'xml_name': xml_path.name if xml_path else None,
-                'exposure_ms': rec_info['exposure_ms'],
-                'delay_ms': rec_info['delay_ms'],
-                'fps': rec_info['fps'],
+                'xml_path': str(xml_file),
+                'xml_name': xml_file.name,
+                'x_max': x_max,
+                'y_max': y_max,
+                'exposure_ms': avg_fps_info['exposure_ms'],
+                'delay_ms': avg_fps_info['delay_ms'],
+                'fps_from_rec': avg_fps_info['fps'],
+                'fps': fps,
+                'mpp': mpp,
+                'mode': mode,
+                'num_rec_files': num_valid_rec,
             })
+            
+            size_info = f"{x_max}×{y_max}" if x_max and y_max else "unknown size"
+            print(f"     ✓ {xml_file.name} [{size_info} → {mode}, {mpp} µm/px]")
+        
+        print(f"   → Created {len(xml_files)} records")
+    
+    print(f"\n" + "=" * 70)
+    print(f"✓ Total XML files found: {len(file_records)}")
+    print("=" * 70 + "\n")
     
     df = pd.DataFrame(file_records)
-    
-    # Add fps_category column
-    if not df.empty and 'fps' in df.columns:
-        df['fps_category'] = df['fps'].apply(lambda x: 
-            '~20 FPS' if pd.notna(x) and 18 <= x <= 22 else
-            '~60 FPS' if pd.notna(x) and 55 <= x <= 65 else
-            'Other' if pd.notna(x) else
-            'No Data'
-        )
     
     return df
 
@@ -403,6 +536,289 @@ def find_tracks_in_particle_folders(root_path: Path) -> Dict[float, List[Path]]:
 # ============================================================================
 # ANALYSIS FUNCTIONS
 # ============================================================================
+
+def calculate_imsd_for_file(xml_path: Path, mpp: float, fps: float) -> Optional[pd.DataFrame]:
+    """
+    Calculate individual MSD (iMSD) for all particles in a single XML file.
+    
+    Tracks are already complete from TrackMate and do not need linking.
+    Drift is computed and subtracted before MSD calculation.
+    
+    Args:
+        xml_path: Path to TrackMate XML file
+        mpp: Micrometers per pixel
+        fps: Frames per second
+        
+    Returns:
+        DataFrame with individual MSDs (wide format: columns=particle IDs, index=lag time)
+        or None if calculation fails
+    """
+    try:
+        # Load tracks from XML (already complete, no linking needed)
+        df = read_trackmate_xml(xml_path)
+        if df is None or df.empty:
+            return None
+        
+        # Ensure correct data types
+        df['frame'] = df['frame'].astype(int)
+        df['particle'] = df['particle'].astype(int)
+        
+        # Suppress trackpy warnings
+        tp.quiet()
+        df_corrected = df.copy()
+        # # Compute and subtract drift
+        drift = tp.compute_drift(df)
+        # Calculate per-frame drift (differences between consecutive frames)
+        drift_per_frame_x = drift['x'].diff().dropna()
+        drift_per_frame_y = drift['y'].diff().dropna()
+        
+        # Convert to physical units
+        drift_per_frame_x_um = drift_per_frame_x * mpp
+        drift_per_frame_y_um = drift_per_frame_y * mpp
+        
+        # Calculate statistics
+        mean_drift_x_um = drift_per_frame_x_um.mean()
+        mean_drift_y_um = drift_per_frame_y_um.mean()
+        mean_drift_x_um_per_s = mean_drift_x_um * fps
+        mean_drift_y_um_per_s = mean_drift_y_um * fps
+        
+        print(f"  Drift per frame: x={mean_drift_x_um:.4f} µm ({mean_drift_x_um_per_s:.4f} µm/s), "
+              f"y={mean_drift_y_um:.4f} µm ({mean_drift_y_um_per_s:.4f} µm/s)")
+        
+        # Subtract drift correction
+        df_corrected = tp.subtract_drift(df.copy(), drift)
+        
+        # subtract_drift() uses set_index(..., drop=False) internally,
+        # which creates a MultiIndex ['frame', 'particle'] but also keeps
+        # them as columns. This causes "ambiguous" error in tp.imsd().
+        # Solution: Drop the MultiIndex, keep only the column versions.
+        if isinstance(df_corrected.index, pd.MultiIndex):
+            df_corrected = df_corrected.reset_index(drop=True)
+        
+        # Calculate iMSD with drift-corrected positions
+        imsd = tp.imsd(df_corrected, mpp, fps)
+        
+        return imsd
+        
+    except Exception as e:
+        print(f"    Error calculating iMSD for {xml_path.name}: {e}")
+        return None
+
+
+def analyze_all_msds(files_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate iMSD for all files with both XML and REC data.
+    
+    Filters files based on particle size and acquisition mode:
+    - 20, 50, 100 nm: Only use 60 FPS files
+    - All other sizes: Only use 20 FPS files
+    
+    Args:
+        files_df: DataFrame from collect_all_files_by_particle_size()
+        
+    Returns:
+        DataFrame with columns:
+        - particle_size_nm: Particle size
+        - xml_name: XML filename
+        - fps: Frames per second from .rec file
+        - fps_category: FPS classification
+        - mpp: Micrometers per pixel (based on fps)
+        - num_particles: Number of tracked particles
+        - num_lag_times: Number of lag times in MSD
+        - msd_data: iMSD DataFrame (wide format)
+    """
+    results = []
+    
+    # Debug: Show what we're filtering
+    print(files_df.head())
+
+    print(f"\nDEBUG: Total files in dataframe: {len(files_df)}")
+    print(f"DEBUG: Files with xml_path: {files_df['xml_path'].notna().sum()}")
+    print(f"DEBUG: Files with fps data: {files_df['fps'].notna().sum()}")
+    
+    # Filter for files that have both XML and FPS data
+    valid_files = files_df[(files_df['xml_path'].notna()) & (files_df['fps'].notna())].copy()
+    
+    print(f"DEBUG: Valid files (XML + FPS): {len(valid_files)}")
+    
+    if valid_files.empty:
+        print("⚠ No files with both XML tracks and FPS data found!")
+        print("\nPossible issues:")
+        print("  - XML files and REC files might have different base names")
+        print("  - REC files might not be parsed correctly")
+        return pd.DataFrame()
+    
+    # Apply particle size-specific FPS filtering
+    print("\n" + "=" * 70)
+    print("APPLYING FPS FILTERING BY PARTICLE SIZE")
+    print("=" * 70)
+    
+    filtered_files = []
+    for particle_size in sorted(valid_files['particle_size_nm'].unique()):
+        size_files = valid_files[valid_files['particle_size_nm'] == particle_size]
+        
+        if particle_size in [20, 50, 100]:
+            # For small particles: only use 60 FPS files
+            mode_files = size_files[size_files['mode'] == '60 FPS']
+            required_mode = "60 FPS"
+        else:
+            # For larger particles: only use 20 FPS files
+            mode_files = size_files[size_files['mode'] == '20 FPS']
+            required_mode = "20 FPS"
+        
+        print(f"\n{particle_size:.0f} nm: {len(size_files)} files total → "
+              f"{len(mode_files)} files with {required_mode} (using these)")
+        
+        if len(mode_files) == 0:
+            print(f"  ⚠ Warning: No {required_mode} files found for {particle_size:.0f} nm!")
+        
+        filtered_files.append(mode_files)
+    
+    valid_files = pd.concat(filtered_files, ignore_index=True) if filtered_files else pd.DataFrame()
+    
+    if valid_files.empty:
+        print("\n✗ No files remaining after FPS filtering!")
+        return pd.DataFrame()
+    
+    print(f"\n✓ Final file count after filtering: {len(valid_files)}")
+    print("=" * 70)
+    
+    print(f"\nCalculating iMSD for {len(valid_files)} files...")
+    print("-" * 70)
+    
+    for idx, row in valid_files.iterrows():
+        xml_path = Path(row['xml_path'])
+        fps = row['fps']
+        mpp = row['mpp']
+        mode = row['mode']
+        particle_size = row['particle_size_nm']
+        
+        size_info = f"{row['x_max']}×{row['y_max']}" if pd.notna(row['x_max']) else "unknown"
+        print(f"\n{particle_size:.0f} nm - {xml_path.name}")
+        print(f"  Mode: {mode} | Size: {size_info} | FPS: {fps:.2f} | mpp: {mpp} µm/px")
+        
+        # Calculate iMSD
+        imsd = calculate_imsd_for_file(xml_path, mpp, fps)
+        
+        if imsd is not None and not imsd.empty:
+            num_particles = len(imsd.columns)
+            num_lag_times = len(imsd)
+            
+            results.append({
+                'particle_size_nm': particle_size,
+                'xml_name': row['xml_name'],
+                'mode': mode,
+                'x_max': row['x_max'],
+                'y_max': row['y_max'],
+                'fps': fps,
+                'mpp': mpp,
+                'num_particles': num_particles,
+                'num_lag_times': num_lag_times,
+                'msd_data': imsd
+            })
+            
+            print(f"  ✓ {num_particles} particles tracked over {num_lag_times} lag times")
+        else:
+            print(f"  ✗ Failed to calculate MSD")
+    
+    return pd.DataFrame(results)
+
+
+def plot_msd_by_particle_size(msd_results_df: pd.DataFrame, save_path: Path):
+    """
+    Create MSD plots for each particle size.
+    
+    Args:
+        msd_results_df: DataFrame from analyze_all_msds()
+        save_path: Directory to save plots
+    """
+    if msd_results_df.empty:
+        return
+    
+    print("\n" + "=" * 70)
+    print("Creating MSD plots by particle size...")
+    print("-" * 70)
+    
+    for particle_size in sorted(msd_results_df['particle_size_nm'].unique()):
+        size_data = msd_results_df[msd_results_df['particle_size_nm'] == particle_size]
+        
+        fig, ax = plt.subplots(figsize=(10, 7))
+        
+        all_imsds = []
+        file_labels = []
+        
+        # Plot individual MSDs from each file
+        for idx, row in size_data.iterrows():
+            imsd = row['msd_data']
+            if imsd is not None and not imsd.empty:
+                all_imsds.append(imsd)
+                file_labels.append(f"{row['xml_name']} ({row['fps']:.1f} FPS)")
+                
+                # Plot individual particle MSDs with low alpha
+                for col in imsd.columns:
+                    ax.plot(imsd.index, imsd[col], 'k-', alpha=0.05, linewidth=0.5)
+        
+        # Calculate and plot ensemble MSD (average across all particles from all files)
+        if all_imsds:
+            # Combine all iMSDs
+            combined_imsd = pd.concat(all_imsds, axis=1, ignore_index=True)
+            
+            # Calculate ensemble MSD (mean across all particles)
+            emsd = combined_imsd.mean(axis=1)
+            
+            # Plot ensemble MSD
+            ax.plot(emsd.index, emsd, 'o-', color='blue', linewidth=2, 
+                   markersize=6, label=f'Ensemble MSD ({len(combined_imsd.columns)} particles)')
+            
+            # Fit power-law to ensemble MSD
+            try:
+                params = fit_powerlaw_with_errors(emsd, points=10, plot=False)
+                A = float(params.A[0])
+                n = float(params.n[0])
+                
+                # Plot fit
+                fit_x = emsd.iloc[0:10].index
+                fit_y = A * np.array(fit_x) ** n
+                ax.plot(fit_x, fit_y, 'r--', linewidth=2, 
+                       label=f'Fit: A={A:.2e}, n={n:.2f}')
+                
+                # Calculate diffusion coefficient
+                D = A / 4.0
+                ax.text(0.05, 0.95, f'D = {D:.2e} µm²/s', 
+                       transform=ax.transAxes, fontsize=12,
+                       verticalalignment='top', bbox=dict(boxstyle='round', 
+                       facecolor='wheat', alpha=0.5))
+            except Exception as e:
+                print(f"  Warning: Could not fit power-law for {particle_size:.0f} nm: {e}")
+        
+        # Format plot
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('Lag time [frames]', fontsize=12)
+        ax.set_ylabel(r'$\langle \Delta r^2 \rangle$ [µm²]', fontsize=12)
+        ax.set_title(f'Mean Squared Displacement - {particle_size:.0f} nm particles', 
+                    fontsize=14, fontweight='bold')
+        ax.legend(fontsize=10, loc='lower right')
+        ax.grid(True, alpha=0.3, which='both')
+        
+        # Add file info as text
+        info_text = f"Files: {len(size_data)}\n"
+        info_text += "\n".join([f"• {label}" for label in file_labels[:5]])  # Max 5 files
+        if len(file_labels) > 5:
+            info_text += f"\n... and {len(file_labels)-5} more"
+        
+        ax.text(0.95, 0.05, info_text, transform=ax.transAxes, 
+               fontsize=9, verticalalignment='bottom', horizontalalignment='right',
+               bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
+        
+        plt.tight_layout()
+        
+        # Save plot
+        plot_filename = save_path / f'MSD_{particle_size:.0f}nm.png'
+        plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Saved: {plot_filename.name}")
+        plt.close(fig)
+
 
 def count_particles_per_size(tracks_by_size: Dict[float, List[Path]]) -> pd.DataFrame:
     """
@@ -518,15 +934,10 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
         df_combined['particle'] = df_combined['particle'].astype(int)
 
         # Compute Mean Squared Displacements
+        # Tracks are already complete from TrackMate, no linking needed
         tp.quiet()  # Suppress trackpy warnings
-        
-        try:
-            # Attempt linking (may be unnecessary if tracks already labeled)
-            tp.link(df_combined, 12, memory=8)
-        except Exception:
-            pass
 
-        # Individual and ensemble MSDs
+        # Individual and ensemble MSDs with correct mpp and fps
         im = tp.imsd(df_combined, mpp, fps)  # Individual particle MSDs
         em = tp.emsd(df_combined, mpp, fps)  # Ensemble average MSD
 
@@ -579,7 +990,8 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
         
         plt.tight_layout()
         plt.savefig(save_path / f'combined_MSD_{size_nm}nm.png', dpi=300)
-        plt.close(fig)
+        plt.show()
+        #plt.close(fig)
 
     # Create comparison plot: measured vs theoretical diffusion coefficients
     sizes = sorted(combined_D.keys())
@@ -628,150 +1040,324 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
     return combined_D, combined_D_err
 
 
+def compare_diffusion_coefficients(pickle_path: Path, save_path: Path, 
+                                  points: int = 10) -> None:
+    """
+    Load MSD data from pickle, calculate D values, and compare with theory and DSL.
+    
+    Args:
+        pickle_path: Path to pickled MSD results DataFrame
+        save_path: Directory to save comparison plots
+        points: Number of points for power-law fitting
+    """
+    print("\nLoading MSD data from pickle...")
+    
+    # Load MSD results DataFrame
+    msd_results_df = pd.read_pickle(pickle_path)
+    
+    if msd_results_df.empty:
+        print("✗ No data found in pickle file!")
+        return
+    
+    print(f"✓ Loaded MSD data for {len(msd_results_df)} files")
+    
+    # DSL measurements (reference values)
+    DSL_MEASUREMENTS = {
+        20: 13.48,
+        50: 8.294646849,
+        200: 1.783746311,
+        500: 0.621773811,
+        1000: 0.394612505
+    }
+    
+    # Calculate D values for each particle size
+    D_values = {}
+    D_errors = {}
+    
+    print("\n" + "=" * 70)
+    print("CALCULATING DIFFUSION COEFFICIENTS")
+    print("=" * 70)
+    
+    for particle_size in sorted(msd_results_df['particle_size_nm'].unique()):
+        size_data = msd_results_df[msd_results_df['particle_size_nm'] == particle_size]
+        
+        print(f"\n{particle_size:.0f} nm particles ({len(size_data)} files):")
+        
+        # Combine all iMSD data for this particle size
+        all_imsds = []
+        for _, row in size_data.iterrows():
+            imsd = row['msd_data']
+            if imsd is not None and not imsd.empty:
+                all_imsds.append(imsd)
+        
+        if not all_imsds:
+            print("  ✗ No valid MSD data")
+            continue
+        
+        # Concatenate all individual MSDs
+        combined_imsd = pd.concat(all_imsds, axis=1, ignore_index=True)
+        
+        # Calculate ensemble MSD (mean over all particles)
+        ensemble_msd = combined_imsd.mean(axis=1)
+        
+        print(f"  Total particles: {len(combined_imsd.columns)}")
+        print(f"  Lag times: {len(ensemble_msd)}")
+        
+        # Fit power-law to ensemble MSD
+        try:
+            tp.quiet()
+            params = fit_powerlaw_with_errors(ensemble_msd, points=points, plot=False)
+            A = float(params.A[0])
+            A_err = float(params.A_err[0])
+            n = float(params.n[0])
+            n_err = float(params.n_err[0])
+            
+            # Calculate diffusion coefficient: MSD = 4*D*t for 2D
+            D = A / 4.0
+            D_err = A_err / 4.0
+            
+            D_values[particle_size] = D
+            D_errors[particle_size] = D_err
+            
+            print(f"  Power-law fit: A = {A:.4e} ± {A_err:.4e}, n = {n:.3f} ± {n_err:.3f}")
+            print(f"  Diffusion coefficient: D = {D:.4e} ± {D_err:.4e} µm²/s")
+            
+            # Calculate theoretical diameter from measured D
+            # D = kB*T / (6*pi*eta*R)  =>  R = kB*T / (6*pi*eta*D)
+            R_measured = (BOLTZMANN_CONSTANT * TEMPERATURE) / (6 * np.pi * WATER_VISCOSITY * D * 1e-12)
+            d_measured = 2 * R_measured * 1e9  # Convert to nm
+            print(f"  Calculated diameter from D: {d_measured:.1f} nm")
+            
+            # Create individual MSD plot
+            fig, ax = plt.subplots(figsize=(10, 7))
+            
+            # Plot individual particle MSDs
+            cols = list(combined_imsd.columns)
+            if cols:
+                ax.plot(combined_imsd.index, combined_imsd[cols[0]], 'k-', 
+                       alpha=0.2, linewidth=0.5, label='Individual MSDs')
+                for c in cols[1:]:
+                    ax.plot(combined_imsd.index, combined_imsd[c], 'k-', 
+                           alpha=0.05, linewidth=0.5)
+            
+            # Plot ensemble MSD
+            ax.plot(ensemble_msd.index, ensemble_msd, 'o', markersize=6, 
+                   color='blue', label='Ensemble MSD')
+            
+            # Plot fitting range
+            ax.plot(ensemble_msd.iloc[0:points].index, 
+                   ensemble_msd.iloc[0:points], 'o', markersize=4, 
+                   color='red', label='Fitting range')
+            
+            # Plot power-law fit
+            fit_x = ensemble_msd.iloc[0:points].index
+            fit_y = A * np.array(fit_x) ** n
+            ax.plot(fit_x, fit_y, 'g--', linewidth=3, alpha=0.8, 
+                   label=f'Fit: A={A:.2e}, n={n:.2f}')
+            
+            # Plot theoretical prediction
+            D_theory = calculate_theoretical_D(particle_size)
+            theory_y = 4 * D_theory * np.array(fit_x)
+            ax.plot(fit_x, theory_y, 'p--', linewidth=2, alpha=0.8, 
+                   color='purple', label=f'Theory: D={D_theory:.2e}')
+            
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+            ax.set_xlabel('Lag time [frames]', fontsize=12)
+            ax.set_ylabel(r'$\langle \Delta r^2 \rangle$ [µm²]', fontsize=12)
+            ax.set_title(f'Ensemble MSD for {particle_size:.0f} nm particles', 
+                        fontsize=14, fontweight='bold')
+            ax.legend(fontsize=10)
+            ax.grid(True, alpha=0.3, which='both')
+            
+            plt.tight_layout()
+            plt.savefig(save_path / f'MSD_fitted_{particle_size:.0f}nm.png', dpi=300)
+            plt.close(fig)
+            
+        except Exception as e:
+            print(f"  ✗ Error fitting MSD: {e}")
+    
+    # Create comparison plot
+    if not D_values:
+        print("\n✗ No diffusion coefficients calculated!")
+        return
+    
+    print("\n" + "=" * 70)
+    print("COMPARISON WITH THEORY AND DSL")
+    print("=" * 70)
+    
+    particle_sizes = sorted(D_values.keys())
+    measured_D = [D_values[s] for s in particle_sizes]
+    measured_D_err = [D_errors[s] for s in particle_sizes]
+    
+    # Calculate theoretical D for all sizes
+    theoretical_D = [calculate_theoretical_D(s) for s in particle_sizes]
+    
+    # Get DSL measurements (only for matching sizes)
+    dsl_sizes = [s for s in particle_sizes if s in DSL_MEASUREMENTS]
+    dsl_D = [DSL_MEASUREMENTS[s] for s in dsl_sizes]
+    
+    # Print comparison table
+    print("\nParticle | Measured D      | Theoretical D   | DSL D          ")
+    print("Size (nm)| (µm²/s)         | (µm²/s)         | (µm²/s)        ")
+    print("-" * 70)
+    for i, size in enumerate(particle_sizes):
+        dsl_str = f"{DSL_MEASUREMENTS[size]:.4e}" if size in DSL_MEASUREMENTS else "N/A"
+        print(f"{size:8.0f} | {measured_D[i]:.4e} ± {measured_D_err[i]:.2e} | "
+              f"{theoretical_D[i]:.4e} | {dsl_str}")
+    
+    # Create comparison plot
+    fig, ax = plt.subplots(figsize=(10, 7))
+    
+    # Plot measured values with error bars
+    ax.errorbar(particle_sizes, measured_D, yerr=measured_D_err, fmt='o', 
+               markersize=8, color='blue', ecolor='black', elinewidth=2, 
+               capsize=4, capthick=2, label='Measured D (SPT)')
+    
+    # Plot theoretical values
+    ax.scatter(particle_sizes, theoretical_D, s=100, color='black', 
+              marker='x', linewidths=2, label='Theoretical D (Stokes-Einstein)')
+    
+    # Plot DSL values
+    if dsl_sizes:
+        ax.scatter(dsl_sizes, dsl_D, s=120, color='gray', marker='*', 
+                  linewidths=1, edgecolors='black', label='D from DSL')
+    
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel('Particle size [nm]', fontsize=12)
+    ax.set_ylabel('Diffusion coefficient D [µm²/s]', fontsize=12)
+    ax.set_title('Overview of Diffusion Coefficients', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11, loc='best')
+    ax.grid(True, alpha=0.3, which='both')
+    
+    plt.tight_layout()
+    plt.savefig(save_path / 'Diffusionskoeffizienten_Übersicht.png', dpi=300)
+    print(f"\n✓ Comparison plot saved to: {save_path / 'Diffusionskoeffizienten_Übersicht.png'}")
+    plt.show()
+    plt.close(fig)
+
+
+def calculate_theoretical_D(particle_size_nm: float) -> float:
+    """
+    Calculate theoretical diffusion coefficient using Stokes-Einstein equation.
+    
+    D = kB*T / (6*pi*eta*R)
+    
+    Args:
+        particle_size_nm: Particle diameter in nanometers
+        
+    Returns:
+        Diffusion coefficient in µm²/s
+    """
+    d_m = particle_size_nm * 1e-9  # Convert nm to m
+    R = d_m / 2.0  # Radius in m
+    
+    # Stokes-Einstein equation
+    D_m2_s = BOLTZMANN_CONSTANT * TEMPERATURE / (6 * np.pi * WATER_VISCOSITY * R)
+    
+    # Convert m²/s to µm²/s
+    D_um2_s = D_m2_s * 1e12
+    
+    return D_um2_s
+
+
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
 def main():
     """
-    Main execution function for file collection and particle counting analysis.
+    Main execution function for XML-based MSD analysis.
     
     This function:
-    1. Scans the root directory for particle size folders
-    2. Collects all .tif, .rec, and .xml files
-    3. Creates a comprehensive file mapping
-    4. Counts particles per particle size from XML files
-    5. Generates summary reports and CSV exports
+    1. Scans for XML track files and extracts FPS from .rec files
+    2. Counts particles per particle size
+    3. Calculates individual MSD (iMSD) for each file
+    4. Creates plots and exports results
     """
     print("=" * 70)
-    print("TrackMate File Scanner & Particle Counter")
+    print("TrackMate MSD Analysis - XML-Focused Pipeline")
     print("=" * 70)
-    print(f"\nScanning directory: {ROOT_PATH}\n")
+    print(f"\nRoot directory: {ROOT_PATH}")
+    print(f"Save directory: {SAVE_PATH}\n")
     
-    # Step 1: Collect all files and their associations
-    print("Step 1: Collecting all .tif, .rec, and .xml files...")
-    print("-" * 70)
+    # Step 1: Collect XML files with FPS data
+    print("=" * 70)
+    print("Step 1: Scanning for XML track files and FPS data...")
+    print("=" * 70)
     
     files_df = collect_all_files_by_particle_size(ROOT_PATH)
     
     if files_df.empty:
-        print("✗ No files found in particle size subdirectories!")
+        print("\n✗ No XML files found in particle size subdirectories!")
         print("\nExpected directory structure:")
         print("  root/")
-        print("    └── 50nm/")
-        print("        ├── file1.tif")
-        print("        ├── file1.rec")
+        print("    └── 100nm/")
+        print("        ├── *.rec (for FPS extraction)")
         print("        └── Tracks/")
-        print("            └── file1.xml")
+        print("            └── *.xml (track data)")
         return
     
-    print(f"✓ Found {len(files_df)} file records across {files_df['particle_size_nm'].nunique()} particle sizes\n")
+    print(f"\n✓ Found {len(files_df)} XML files across {files_df['particle_size_nm'].nunique()} particle sizes")
     
-    # Display file associations
-    print("=" * 70)
-    print("FILE ASSOCIATIONS")
-    print("=" * 70)
-    
-    # Group by particle size for display
-    for particle_size in sorted(files_df['particle_size_nm'].unique()):
-        size_files = files_df[files_df['particle_size_nm'] == particle_size]
-        print(f"\n{particle_size} nm ({len(size_files)} records):")
-        print("-" * 70)
-        
-        for idx, row in size_files.iterrows():
-            print(f"  Record {idx + 1}:")
-            if row['tif_name']:
-                print(f"    TIF:  {row['tif_name']}")
-            if row['rec_name']:
-                fps_info = ""
-                if pd.notna(row['fps']):
-                    fps_info = f" [{row['fps_category']}: {row['fps']:.2f} FPS, Exp: {row['exposure_ms']:.2f} ms]"
-                print(f"    REC:  {row['rec_name']}{fps_info}")
-            if row['xml_name']:
-                print(f"    XML:  {row['xml_name']}")
-            if not (row['tif_name'] or row['rec_name'] or row['xml_name']):
-                print(f"    (empty record)")
-    
-    # Save complete file listing
-    output_files_csv = SAVE_PATH / "file_associations.csv"
+    # Save XML file listing
+    output_files_csv = SAVE_PATH / "xml_file_associations.csv"
     files_df.to_csv(output_files_csv, index=False)
-    print(f"\n✓ File associations saved to: {output_files_csv}")
+    print(f"✓ XML file associations saved to: {output_files_csv}")
     
     # Display FPS statistics
-    rec_with_fps = files_df[files_df['fps'].notna()]
-    if not rec_with_fps.empty:
+    xml_with_fps = files_df[files_df['fps'].notna()]
+    
+    if not xml_with_fps.empty:
         print("\n" + "=" * 70)
-        print("FPS ANALYSIS")
+        print("MODE DETECTION STATISTICS")
         print("=" * 70)
-        fps_values = rec_with_fps['fps'].values
-        print(f"\nTotal .rec files with FPS data: {len(rec_with_fps)}")
-        print(f"FPS range: {fps_values.min():.2f} - {fps_values.max():.2f}")
-        print(f"Mean FPS: {fps_values.mean():.2f}")
         
-        # Group by approximate FPS (20 or 60)
-        fps_20 = rec_with_fps[rec_with_fps['fps'].between(18, 22)]
-        fps_60 = rec_with_fps[rec_with_fps['fps'].between(55, 65)]
+        # Group by mode
+        mode_20 = xml_with_fps[xml_with_fps['mode'] == '20 FPS']
+        mode_60 = xml_with_fps[xml_with_fps['mode'] == '60 FPS']
+        mode_unknown = xml_with_fps[xml_with_fps['mode'] == 'Unknown']
         
-        print(f"\nFiles with ~20 FPS: {len(fps_20)} ({len(fps_20)/len(rec_with_fps)*100:.1f}%)")
-        print(f"Files with ~60 FPS: {len(fps_60)} ({len(fps_60)/len(rec_with_fps)*100:.1f}%)")
+        print(f"\nTotal XML files: {len(xml_with_fps)}")
+        print(f"  • 20 FPS mode: {len(mode_20)} files ({len(mode_20)/len(xml_with_fps)*100:.1f}%)")
+        print(f"  • 60 FPS mode: {len(mode_60)} files ({len(mode_60)/len(xml_with_fps)*100:.1f}%)")
+        if len(mode_unknown) > 0:
+            print(f"  • Unknown mode: {len(mode_unknown)} files ({len(mode_unknown)/len(xml_with_fps)*100:.1f}%)")
         
-        if len(fps_20) > 0:
-            print(f"  → Exposure times: {fps_20['exposure_ms'].min():.2f} - {fps_20['exposure_ms'].max():.2f} ms")
-        if len(fps_60) > 0:
-            print(f"  → Exposure times: {fps_60['exposure_ms'].min():.2f} - {fps_60['exposure_ms'].max():.2f} ms")
-        
-        # Detailed listing by FPS category
+        # Detailed breakdown by particle size
         print("\n" + "-" * 70)
-        print("DETAILED FPS BREAKDOWN BY FILE")
+        print("BREAKDOWN BY PARTICLE SIZE")
         print("-" * 70)
         
-        if len(fps_20) > 0:
-            print(f"\n~20 FPS Files ({len(fps_20)}):")
-            for idx, row in fps_20.iterrows():
-                print(f"  • {row['particle_size_nm']:.0f} nm: {row['rec_name']} "
-                      f"(Exp: {row['exposure_ms']:.2f} ms, FPS: {row['fps']:.2f})")
-        
-        if len(fps_60) > 0:
-            print(f"\n~60 FPS Files ({len(fps_60)}):")
-            for idx, row in fps_60.iterrows():
-                print(f"  • {row['particle_size_nm']:.0f} nm: {row['rec_name']} "
-                      f"(Exp: {row['exposure_ms']:.2f} ms, FPS: {row['fps']:.2f})")
-        
-        # Other FPS values (not 20 or 60)
-        other_fps = rec_with_fps[~rec_with_fps.index.isin(fps_20.index) & 
-                                 ~rec_with_fps.index.isin(fps_60.index)]
-        if len(other_fps) > 0:
-            print(f"\nOther FPS Files ({len(other_fps)}):")
-            for idx, row in other_fps.iterrows():
-                print(f"  • {row['particle_size_nm']:.0f} nm: {row['rec_name']} "
-                      f"(Exp: {row['exposure_ms']:.2f} ms, FPS: {row['fps']:.2f})")
+        for particle_size in sorted(xml_with_fps['particle_size_nm'].unique()):
+            size_files = xml_with_fps[xml_with_fps['particle_size_nm'] == particle_size]
+            print(f"\n{particle_size:.0f} nm ({len(size_files)} XML files):")
+            for _, row in size_files.iterrows():
+                size_str = f"{row['x_max']}×{row['y_max']}" if pd.notna(row['x_max']) else "unknown"
+                print(f"  • {row['xml_name']}: {row['mode']} ({size_str}, {row['mpp']} µm/px)")
+    else:
+        print("\n⚠ Warning: No data found - will use default values")
     
-    # Step 2: Count particles from XML files
+    # Step 2: Count particles
     print("\n" + "=" * 70)
-    print("Step 2: Counting particles from XML track files...")
-    print("-" * 70 + "\n")
-    
-    # Filter only records with XML files
-    xml_records = files_df[files_df['xml_path'].notna()]
-    
-    if xml_records.empty:
-        print("✗ No XML track files found!")
-        return
+    print("Step 2: Counting particles from XML files...")
+    print("=" * 70 + "\n")
     
     # Count particles per size
     particle_counts = []
-    for particle_size in sorted(xml_records['particle_size_nm'].unique()):
-        size_xmls = xml_records[xml_records['particle_size_nm'] == particle_size]
+    for particle_size in sorted(files_df['particle_size_nm'].unique()):
+        size_xmls = files_df[files_df['particle_size_nm'] == particle_size]
         total_particles = 0
         
-        print(f"{particle_size} nm:")
+        print(f"{particle_size:.0f} nm:")
         for _, row in size_xmls.iterrows():
             xml_path = Path(row['xml_path'])
             df = read_trackmate_xml(xml_path)
             if df is not None and not df.empty:
                 num_particles = df['particle'].nunique()
                 total_particles += num_particles
-                print(f"  {xml_path.name}: {num_particles} particles")
+                print(f"  • {row['xml_name']}: {num_particles} particles")
         
         particle_counts.append({
             'particle_size_nm': particle_size,
@@ -795,7 +1381,59 @@ def main():
     output_summary_csv = SAVE_PATH / "particle_count_summary.csv"
     summary_df.to_csv(output_summary_csv, index=False)
     print(f"\n✓ Particle count summary saved to: {output_summary_csv}")
-    print(f"✓ Analysis complete!\n")
+    
+    # Step 3: Calculate iMSD for all files
+    print("\n" + "=" * 70)
+    print("Step 3: Calculating individual MSD (iMSD) for each file...")
+    print("=" * 70)
+    
+    msd_results_df = analyze_all_msds(files_df)
+    
+    if not msd_results_df.empty:
+        # Summary by particle size
+        print("\n" + "=" * 70)
+        print("iMSD SUMMARY BY PARTICLE SIZE")
+        print("=" * 70)
+        
+        for particle_size in sorted(msd_results_df['particle_size_nm'].unique()):
+            size_data = msd_results_df[msd_results_df['particle_size_nm'] == particle_size]
+            total_particles = size_data['num_particles'].sum()
+            num_files = len(size_data)
+            
+            print(f"\n{particle_size:.0f} nm:")
+            print(f"  Files analyzed: {num_files}")
+            print(f"  Total particles: {total_particles}")
+            print(f"  Files:")
+            
+            for _, row in size_data.iterrows():
+                size_str = f"{row['x_max']}×{row['y_max']}" if pd.notna(row.get('x_max')) else "unknown"
+                print(f"    • {row['xml_name']}: {row['num_particles']} particles "
+                      f"({row['mode']}, {size_str}, {row['fps']:.2f} FPS, mpp={row['mpp']} µm/px)")
+        
+        # Save MSD summary (without the actual MSD data arrays)
+        msd_summary = msd_results_df.drop(columns=['msd_data'])
+        output_msd_csv = SAVE_PATH / "msd_analysis_summary.csv"
+        msd_summary.to_csv(output_msd_csv, index=False)
+        print(f"\n✓ MSD analysis summary saved to: {output_msd_csv}")
+        
+        # Save individual MSD data as pickle for later analysis
+        output_msd_pickle = SAVE_PATH / "msd_data_full.pkl"
+        msd_results_df.to_pickle(output_msd_pickle)
+        print(f"✓ Full MSD data (with arrays) saved to: {output_msd_pickle}")
+        
+        # Step 4: Create plots
+        print("\n" + "=" * 70)
+        print("Step 4: Creating MSD plots...")
+        print("=" * 70)
+        plot_msd_by_particle_size(msd_results_df, SAVE_PATH)
+        
+        # Step 5: Load saved MSD data and compare with theory
+        print("\n" + "=" * 70)
+        print("Step 5: Comparing measured D with theoretical and DSL values...")
+        print("=" * 70)
+        compare_diffusion_coefficients(output_msd_pickle, SAVE_PATH)
+    
+    print(f"\n✓ Analysis complete!\n")
 
 
 if __name__ == "__main__":
