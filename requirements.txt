@@ -1,12 +1,14 @@
 # Minimal dependencies for hydro_analysis (adjust versions as needed)
-numpy>=1.24,<2
-pandas>=2.0,<3
-scipy>=1.10,<2
-matplotlib>=3.6,<4
-trackpy>=0.6.0,<0.7
-pims>=0.6,<0.8
-imageio>=2.25,<3
-tqdm>=4.65,<5
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+matplotlib>=3.6
+matplotlib-scalebar>=0.8
+trackpy>=0.6.0
+pims>=0.6
+imageio>=2.25
+tqdm>=4.65
 pco_image
+plotly>=5.0
 # Dev / testing (optional)
-pytest>=7.2,<8
+pytest>=7.2

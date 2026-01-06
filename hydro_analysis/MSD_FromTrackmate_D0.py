@@ -936,10 +936,10 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
         # Compute Mean Squared Displacements
         # Tracks are already complete from TrackMate, no linking needed
         tp.quiet()  # Suppress trackpy warnings
-
+        df_filtered = tp.filter_stubs(df_combined, threshold=30)  # Remove very short tracks
         # Individual and ensemble MSDs with correct mpp and fps
-        im = tp.imsd(df_combined, mpp, fps)  # Individual particle MSDs
-        em = tp.emsd(df_combined, mpp, fps)  # Ensemble average MSD
+        im = tp.imsd(df_filtered, mpp, fps)  # Individual particle MSDs
+        em = tp.emsd(df_filtered, mpp, fps)  # Ensemble average MSD
 
         # Fit power-law to ensemble MSD
         params = fit_powerlaw_with_errors(em, points=points, plot=False)
@@ -1063,11 +1063,12 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     
     # DSL measurements (reference values)
     DSL_MEASUREMENTS = {
-        20: 13.48,
-        50: 8.294646849,
-        200: 1.783746311,
+        20: 12.38750325,
+        50: 8.201969711,
+        100: 4.139082033,
+        200: 1.745323167,
         500: 0.621773811,
-        1000: 0.394612505
+        1000: 0.356862091
     }
     
     # Calculate D values for each particle size
@@ -1105,75 +1106,115 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
         
         # Fit power-law to ensemble MSD
         try:
-            tp.quiet()
-            params = fit_powerlaw_with_errors(ensemble_msd, points=points, plot=False)
-            A = float(params.A[0])
-            A_err = float(params.A_err[0])
-            n = float(params.n[0])
-            n_err = float(params.n_err[0])
-            
-            # Calculate diffusion coefficient: MSD = 4*D*t for 2D
-            D = A / 4.0
-            D_err = A_err / 4.0
-            
-            D_values[particle_size] = D
-            D_errors[particle_size] = D_err
-            
-            print(f"  Power-law fit: A = {A:.4e} ± {A_err:.4e}, n = {n:.3f} ± {n_err:.3f}")
-            print(f"  Diffusion coefficient: D = {D:.4e} ± {D_err:.4e} µm²/s")
-            
-            # Calculate theoretical diameter from measured D
-            # D = kB*T / (6*pi*eta*R)  =>  R = kB*T / (6*pi*eta*D)
-            R_measured = (BOLTZMANN_CONSTANT * TEMPERATURE) / (6 * np.pi * WATER_VISCOSITY * D * 1e-12)
-            d_measured = 2 * R_measured * 1e9  # Convert to nm
-            print(f"  Calculated diameter from D: {d_measured:.1f} nm")
-            
-            # Create individual MSD plot
-            fig, ax = plt.subplots(figsize=(10, 7))
-            
-            # Plot individual particle MSDs
-            cols = list(combined_imsd.columns)
-            if cols:
-                ax.plot(combined_imsd.index, combined_imsd[cols[0]], 'k-', 
-                       alpha=0.2, linewidth=0.5, label='Individual MSDs')
-                for c in cols[1:]:
-                    ax.plot(combined_imsd.index, combined_imsd[c], 'k-', 
-                           alpha=0.05, linewidth=0.5)
-            
-            # Plot ensemble MSD
-            ax.plot(ensemble_msd.index, ensemble_msd, 'o', markersize=6, 
-                   color='blue', label='Ensemble MSD')
-            
-            # Plot fitting range
-            ax.plot(ensemble_msd.iloc[0:points].index, 
-                   ensemble_msd.iloc[0:points], 'o', markersize=4, 
-                   color='red', label='Fitting range')
-            
-            # Plot power-law fit
-            fit_x = ensemble_msd.iloc[0:points].index
-            fit_y = A * np.array(fit_x) ** n
-            ax.plot(fit_x, fit_y, 'g--', linewidth=3, alpha=0.8, 
-                   label=f'Fit: A={A:.2e}, n={n:.2f}')
-            
-            # Plot theoretical prediction
-            D_theory = calculate_theoretical_D(particle_size)
-            theory_y = 4 * D_theory * np.array(fit_x)
-            ax.plot(fit_x, theory_y, 'p--', linewidth=2, alpha=0.8, 
-                   color='purple', label=f'Theory: D={D_theory:.2e}')
-            
-            ax.set_xscale('log')
-            ax.set_yscale('log')
-            ax.set_xlabel('Lag time [frames]', fontsize=12)
-            ax.set_ylabel(r'$\langle \Delta r^2 \rangle$ [µm²]', fontsize=12)
-            ax.set_title(f'Ensemble MSD for {particle_size:.0f} nm particles', 
-                        fontsize=14, fontweight='bold')
-            ax.legend(fontsize=10)
-            ax.grid(True, alpha=0.3, which='both')
-            
-            plt.tight_layout()
-            plt.savefig(save_path / f'MSD_fitted_{particle_size:.0f}nm.png', dpi=300)
-            plt.close(fig)
-            
+            # First, fit each individual particle and filter by exponent
+                        valid_particles = []
+                        particle_exponents = []
+                        
+                        print(f"  Analyzing {len(combined_imsd.columns)} individual particles...")
+                        
+                        for particle_id in combined_imsd.columns:
+                            particle_msd = combined_imsd[particle_id].dropna()
+                            
+                            if len(particle_msd) < points:
+                                continue
+                            
+                            try:
+                                # Fit power-law to individual particle
+                                particle_params = fit_powerlaw_with_errors(particle_msd, points=points, plot=False)
+                                n_particle = float(particle_params.n[0])
+                                
+                                # Filter: only accept particles with n >= 0.85 (free diffusion)
+                                if n_particle >= 0.85:
+                                    valid_particles.append(particle_id)
+                                    particle_exponents.append(n_particle)
+                                
+                            except Exception:
+                                continue  # Skip particles that fail to fit
+                        
+                        print(f"  Filtered particles: {len(valid_particles)}/{len(combined_imsd.columns)} "
+                              f"(n >= 0.85)")
+                        
+                        if not valid_particles:
+                            print("  ✗ No valid particles after filtering!")
+                            continue
+                        
+                        # Recalculate ensemble MSD using only valid particles
+                        filtered_imsd = combined_imsd[valid_particles]
+                        ensemble_msd = filtered_imsd.mean(axis=1)
+                        
+                        print(f"  Mean exponent of valid particles: {np.mean(particle_exponents):.3f} "
+                              f"± {np.std(particle_exponents):.3f}")
+                        
+                        # Now fit the ensemble MSD
+                        tp.quiet()
+                        params = fit_powerlaw_with_errors(ensemble_msd, points=points, plot=False)
+                        A = float(params.A[0])
+                        A_err = float(params.A_err[0])
+                        n = float(params.n[0])
+                        n_err = float(params.n_err[0])
+                        
+                        # Calculate diffusion coefficient: MSD = 4*D*t for 2D
+                        D = A / 4.0
+                        D_err = A_err / 4.0
+                        
+                        D_values[particle_size] = D
+                        D_errors[particle_size] = D_err
+                        
+                        print(f"  Power-law fit: A = {A:.4e} ± {A_err:.4e}, n = {n:.3f} ± {n_err:.3f}")
+                        print(f"  Diffusion coefficient: D = {D:.4e} ± {D_err:.4e} µm²/s")
+                        
+                        # Calculate theoretical diameter from measured D
+                        # D = kB*T / (6*pi*eta*R)  =>  R = kB*T / (6*pi*eta*D)
+                        R_measured = (BOLTZMANN_CONSTANT * TEMPERATURE) / (6 * np.pi * WATER_VISCOSITY * D * 1e-12)
+                        d_measured = 2 * R_measured * 1e9  # Convert to nm
+                        print(f"  Calculated diameter from D: {d_measured:.1f} nm")
+                        
+                        # Create individual MSD plot
+                        fig, ax = plt.subplots(figsize=(10, 7))
+                        
+                        # Plot individual particle MSDs
+                        cols = list(combined_imsd.columns)
+                        if cols:
+                            ax.plot(combined_imsd.index, combined_imsd[cols[0]], 'k-', 
+                                alpha=0.2, linewidth=0.5, label='Individual MSDs')
+                            for c in cols[1:]:
+                                ax.plot(combined_imsd.index, combined_imsd[c], 'k-', 
+                                    alpha=0.05, linewidth=0.5)
+                        
+                        # Plot ensemble MSD
+                        ax.plot(ensemble_msd.index, ensemble_msd, 'o', markersize=6, 
+                            color='blue', label='Ensemble MSD')
+                        
+                        # Plot fitting range
+                        ax.plot(ensemble_msd.iloc[0:points].index, 
+                            ensemble_msd.iloc[0:points], 'o', markersize=4, 
+                            color='red', label='Fitting range')
+                        
+                        # Plot power-law fit
+                        fit_x = ensemble_msd.iloc[0:points].index
+                        fit_y = A * np.array(fit_x) ** n
+                        ax.plot(fit_x, fit_y, 'g--', linewidth=3, alpha=0.8, 
+                            label=f'Fit: A={A:.2e}, n={n:.2f}')
+                        
+                        # Plot theoretical prediction
+                        D_theory = calculate_theoretical_D(particle_size)
+                        theory_y = 4 * D_theory * np.array(fit_x)
+                        ax.plot(fit_x, theory_y, 'p--', linewidth=2, alpha=0.8, 
+                            color='purple', label=f'Theory: D={D_theory:.2e}')
+                        
+                        ax.set_xscale('log')
+                        ax.set_yscale('log')
+                        ax.set_xlabel('Lag time [frames]', fontsize=12)
+                        ax.set_ylabel(r'$\langle \Delta r^2 \rangle$ [µm²]', fontsize=12)
+                        ax.set_title(f'Ensemble MSD for {particle_size:.0f} nm particles', 
+                                    fontsize=14, fontweight='bold')
+                        ax.legend(fontsize=10)
+                        ax.grid(True, alpha=0.3, which='both')
+                        
+                        plt.tight_layout()
+                        plt.savefig(save_path / f'MSD_fitted_{particle_size:.0f}nm.png', dpi=300)
+                        plt.close(fig)
+                
         except Exception as e:
             print(f"  ✗ Error fitting MSD: {e}")
     
@@ -1289,15 +1330,7 @@ def main():
     
     files_df = collect_all_files_by_particle_size(ROOT_PATH)
     
-    if files_df.empty:
-        print("\n✗ No XML files found in particle size subdirectories!")
-        print("\nExpected directory structure:")
-        print("  root/")
-        print("    └── 100nm/")
-        print("        ├── *.rec (for FPS extraction)")
-        print("        └── Tracks/")
-        print("            └── *.xml (track data)")
-        return
+
     
     print(f"\n✓ Found {len(files_df)} XML files across {files_df['particle_size_nm'].nunique()} particle sizes")
     

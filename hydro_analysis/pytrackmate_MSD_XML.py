@@ -232,23 +232,30 @@ def read_trackmate_xml(xml_file_path):
         print(f"Ein Fehler ist aufgetreten: {e}")
         return None
 
-paths = [r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\Resultof50nm_3_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\Resultof50nm_2_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\1000nm.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\20nm_2.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\20 nm_2_Tracks_2.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\20nm_2_tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\20 nm_2_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\Resultof20nm_5_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\Resultof20nm_4_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\Resultof20nm_3_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\Resultof20nm_2_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\20 nm_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\50 nm_5_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\50 nm_4_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\50 nm_3_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\50 nm_2_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\50 nm_Tracks.xml",
+paths = [r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\20 nm_2_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\20 nm_2_Tracks_2.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\20 nm_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\20nm_2.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\20nm_2_tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\20nm_60fps_2_processed_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\20nm_processed_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\20nm_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\Resultof20nm_2_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\Resultof20nm_3_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\Resultof20nm_4_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\Resultof20nm_5_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks\ResultofResultof20nm_2_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\50 nm\Tracks\50 nm _ 3_processed_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\50 nm\Tracks\50 nm_2_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\50 nm\Tracks\50 nm_4_processed_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\50 nm\Tracks\50 nm_4_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_2_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_3_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_4_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_5_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_6_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_7_Tracks.xml",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks\100 nm TriSpuffer_Tracks.xml",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\200 nm_2_Tracks.xml",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\200 nm_Tracks.xml",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\500 nm_Tracks.xml",
@@ -259,7 +266,8 @@ r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\1000 nm_4_Tracks.xml",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\1000 nm_3_Tracks.xml",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\1000 nm_2_Tracks.xml",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\1000 nm_Tracks.xml",
-r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\ResultofResultof20nm_2_Tracks.xml"]
+
+r"E:\PhD Data Analysis\SPT 2025 II\2025.11.27\tracks\1000nm.xml"]
 # Dateipfad hier anpassen
 # group measured D (µm^2/s) and errors by nominal size (nm)
 
@@ -297,19 +305,16 @@ for p in paths[:]:
         # compute MSDs and fit
         tp.quiet()
         # linking is optional if particles already labeled; keep as in original script
-        try:
-            tp.link(df, 12, memory=8)
-        except Exception:
-            # linking may fail or be unnecessary; continue anyway
-            pass
+
         if df.x.max() > 200 and df.y.max() > 150:  # heuristic: small FOV likely means higher resolution
             mpp = 0.15
             fps = 22
         else: 
             mpp = 0.3
             fps = 60
-        im = tp.imsd(df, mpp, fps)
-        em = tp.emsd(df, mpp, fps)
+        df_corrected = tp.subtract_drift(df)    
+        im = tp.imsd(df_corrected, mpp, fps)
+        em = tp.emsd(df_corrected, mpp, fps)
         params = fit_powerlaw_with_errors(em, points=10, plot=False)
         A = float(params.A[0])
         A_err = float(params.A_err[0]) if hasattr(params, 'A_err') else np.nan
@@ -342,7 +347,7 @@ for s in sizes:
         measured_sem.append(np.nanmean(errs) if errs.size>0 else np.nan)
 
 # theoretical D for canonical diameters (20,50,200,500,1000 nm) in µm^2/s
-canonical = [20, 50, 200, 500, 1000]
+canonical = [20, 50,100, 200, 500, 1000]
 theory_D = {}
 for d_nm in canonical:
     d_m = d_nm * 1e-9
