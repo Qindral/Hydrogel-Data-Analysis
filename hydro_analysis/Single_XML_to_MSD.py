@@ -229,7 +229,7 @@ def compute_individual_msd(tracks: pd.DataFrame, mpp: float, fps: float,
 
 
 # Define reference diffusion coefficients for different particle sizes
-DSL_MEASUREMENTS = {
+DLS_MEASUREMENTS = {
     20: 12.38750325,
     50: 8.201969711,
     100: 4.139082033,
@@ -253,9 +253,9 @@ def plot_reference_lines(ax, fps: float, alpha: float = 1.0):
     """
     lag_times = np.logspace(-2, 2, 100)  # 0.01 to 100 seconds
     
-    colors = plt.cm.tab10(np.linspace(0, 1, len(DSL_MEASUREMENTS)))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(DLS_MEASUREMENTS)))
     
-    for (size, D), color in zip(DSL_MEASUREMENTS.items(), colors):
+    for (size, D), color in zip(DLS_MEASUREMENTS.items(), colors):
         # MSD = 4*D*tau^alpha
         msd_ref = 4 * D * (lag_times ** alpha)
         ax.loglog(lag_times, msd_ref, '--', linewidth=1.5, alpha=0.7, 

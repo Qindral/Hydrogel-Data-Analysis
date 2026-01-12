@@ -1043,7 +1043,7 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
 def compare_diffusion_coefficients(pickle_path: Path, save_path: Path, 
                                   points: int = 10) -> None:
     """
-    Load MSD data from pickle, calculate D values, and compare with theory and DSL.
+    Load MSD data from pickle, calculate D values, and compare with theory and DLS.
     
     Args:
         pickle_path: Path to pickled MSD results DataFrame
@@ -1061,8 +1061,8 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     
     print(f"✓ Loaded MSD data for {len(msd_results_df)} files")
     
-    # DSL measurements (reference values)
-    DSL_MEASUREMENTS = {
+    # DLS measurements (reference values)
+    DLS_MEASUREMENTS = {
         20: 12.38750325,
         50: 8.201969711,
         100: 4.139082033,
@@ -1224,7 +1224,7 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
         return
     
     print("\n" + "=" * 70)
-    print("COMPARISON WITH THEORY AND DSL")
+    print("COMPARISON WITH THEORY AND DLS")
     print("=" * 70)
     
     particle_sizes = sorted(D_values.keys())
@@ -1234,18 +1234,18 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     # Calculate theoretical D for all sizes
     theoretical_D = [calculate_theoretical_D(s) for s in particle_sizes]
     
-    # Get DSL measurements (only for matching sizes)
-    dsl_sizes = [s for s in particle_sizes if s in DSL_MEASUREMENTS]
-    dsl_D = [DSL_MEASUREMENTS[s] for s in dsl_sizes]
+    # Get DLS measurements (only for matching sizes)
+    dls_sizes = [s for s in particle_sizes if s in DLS_MEASUREMENTS]
+    dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
     
     # Print comparison table
-    print("\nParticle | Measured D      | Theoretical D   | DSL D          ")
+    print("\nParticle | Measured D      | Theoretical D   | DLS D          ")
     print("Size (nm)| (µm²/s)         | (µm²/s)         | (µm²/s)        ")
     print("-" * 70)
     for i, size in enumerate(particle_sizes):
-        dsl_str = f"{DSL_MEASUREMENTS[size]:.4e}" if size in DSL_MEASUREMENTS else "N/A"
+        dls_str = f"{DLS_MEASUREMENTS[size]:.4e}" if size in DLS_MEASUREMENTS else "N/A"
         print(f"{size:8.0f} | {measured_D[i]:.4e} ± {measured_D_err[i]:.2e} | "
-              f"{theoretical_D[i]:.4e} | {dsl_str}")
+              f"{theoretical_D[i]:.4e} | {dls_str}")
     
     # Create comparison plot
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -1259,10 +1259,10 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     ax.scatter(particle_sizes, theoretical_D, s=100, color='black', 
               marker='x', linewidths=2, label='Theoretical D (Stokes-Einstein)')
     
-    # Plot DSL values
-    if dsl_sizes:
-        ax.scatter(dsl_sizes, dsl_D, s=120, color='gray', marker='*', 
-                  linewidths=1, edgecolors='black', label='D from DSL')
+    # Plot DLS values
+    if dls_sizes:
+        ax.scatter(dls_sizes, dls_D, s=120, color='gray', marker='*', 
+                  linewidths=1, edgecolors='black', label='D from DLS')
     
     ax.set_xscale('log')
     ax.set_yscale('log')
@@ -1462,7 +1462,7 @@ def main():
         
         # Step 5: Load saved MSD data and compare with theory
         print("\n" + "=" * 70)
-        print("Step 5: Comparing measured D with theoretical and DSL values...")
+        print("Step 5: Comparing measured D with theoretical and DLS values...")
         print("=" * 70)
         compare_diffusion_coefficients(output_msd_pickle, SAVE_PATH)
     

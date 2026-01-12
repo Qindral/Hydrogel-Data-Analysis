@@ -50,6 +50,16 @@ BOLTZMANN_CONSTANT = 1.380649e-23  # J/K
 TEMPERATURE = 293.15  # K (20°C)
 WATER_VISCOSITY = 0.001002  # Pa·s (at 25°C)
 
+# DLS measurements (diffusion coefficients in water, µm²/s)
+DLS_MEASUREMENTS = {
+    20: 12.38750325,
+    50: 8.201969711,
+    100: 4.139082033,
+    200: 1.745323167,
+    500: 0.621773811,
+    1000: 0.356862091
+}
+
 # Default calibration parameters
 DEFAULT_MPP = 0.15  # micrometers per pixel
 DEFAULT_FPS = 20  # frames per second
@@ -813,6 +823,20 @@ def plot_msd_by_particle_size(msd_results_df: pd.DataFrame, save_path: Path):
                        transform=ax.transAxes, fontsize=12,
                        verticalalignment='top', bbox=dict(boxstyle='round', 
                        facecolor='wheat', alpha=0.5))
+                
+                # Plot theoretical MSD (Stokes-Einstein)
+                D_theory = calculate_theoretical_D(particle_size)
+                theory_msd = 4 * D_theory * np.array(emsd.index)
+                ax.plot(emsd.index, theory_msd, '--', linewidth=2, color='purple',
+                       label=f'Theory: D={D_theory:.2e} µm²/s', alpha=0.8)
+                
+                # Plot DLS MSD if available
+                if particle_size in DLS_MEASUREMENTS:
+                    D_dls = DLS_MEASUREMENTS[particle_size]
+                    dls_msd = 4 * D_dls * np.array(emsd.index)
+                    ax.plot(emsd.index, dls_msd, '--', linewidth=2, color='orange',
+                           label=f'DLS (water): D={D_dls:.2e} µm²/s', alpha=0.8)
+                
             except Exception as e:
                 print(f"  Warning: Could not fit power-law for {particle_size:.0f} nm: {e}")
         
@@ -1068,7 +1092,7 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
 def compare_diffusion_coefficients(pickle_path: Path, save_path: Path, 
                                   points: int = 10) -> None:
     """
-    Load MSD data from pickle, calculate D values, and compare with theory and DSL.
+    Load MSD data from pickle, calculate D values, and compare with theory and DLS.
     
     Args:
         pickle_path: Path to pickled MSD results DataFrame
@@ -1085,16 +1109,6 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
         return {}, {}
     
     print(f"✓ Loaded MSD data for {len(msd_results_df)} files")
-    
-    # DSL measurements (reference values)
-    DSL_MEASUREMENTS = {
-        20: 12.38750325,
-        50: 8.201969711,
-        100: 4.139082033,
-        200: 1.745323167,
-        500: 0.621773811,
-        1000: 0.356862091
-    }
     
     # Calculate D values for each particle size
     D_values = {}
@@ -1149,7 +1163,7 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
                                 n_particle = float(particle_params.n[0])
                                 
                                 # Filter: only accept particles with n >= 0.85 (free diffusion)
-                                if n_particle >= 0.3:
+                                if n_particle < 0.7:
                                     valid_particles.append(particle_id)
                                     particle_exponents.append(n_particle)
                                 
@@ -1223,9 +1237,16 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
                         
                         # Plot theoretical prediction
                         D_theory = calculate_theoretical_D(particle_size)
-                        theory_y = 4 * D_theory * np.array(fit_x)
-                        ax.plot(fit_x, theory_y, 'p--', linewidth=2, alpha=0.8, 
-                            color='purple', label=f'Theory: D={D_theory:.2e}')
+                        theory_msd = 4 * D_theory * np.array(ensemble_msd.index)
+                        ax.plot(ensemble_msd.index, theory_msd, '--', linewidth=2, alpha=0.8, 
+                            color='purple', label=f'Theory: D={D_theory:.2e} µm²/s')
+                        
+                        # Plot DLS prediction if available
+                        if particle_size in DLS_MEASUREMENTS:
+                            D_dls = DLS_MEASUREMENTS[particle_size]
+                            dls_msd = 4 * D_dls * np.array(ensemble_msd.index)
+                            ax.plot(ensemble_msd.index, dls_msd, '--', linewidth=2, alpha=0.8,
+                                   color='orange', label=f'DLS (water): D={D_dls:.2e} µm²/s')
                         
                         ax.set_xscale('log')
                         ax.set_yscale('log')
@@ -1249,45 +1270,52 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
         return {}, {}
     
     print("\n" + "=" * 70)
-    print("COMPARISON WITH THEORY AND DSL")
+    print("COMPARISON WITH THEORY AND DLS")
     print("=" * 70)
     
     particle_sizes = sorted(D_values.keys())
     measured_D = [D_values[s] for s in particle_sizes]
     measured_D_err = [D_errors[s] for s in particle_sizes]
     
-    # Calculate theoretical D for all sizes
-    theoretical_D = [calculate_theoretical_D(s) for s in particle_sizes]
+    # Define all theoretical particle sizes
+    all_theory_sizes = [20, 50, 100, 200, 500, 1000]
     
-    # Get DSL measurements (only for matching sizes)
-    dsl_sizes = [s for s in particle_sizes if s in DSL_MEASUREMENTS]
-    dsl_D = [DSL_MEASUREMENTS[s] for s in dsl_sizes]
+    # Calculate theoretical D for all standard sizes
+    theory_sizes = all_theory_sizes
+    theory_D = [calculate_theoretical_D(s) for s in theory_sizes]
+    
+    # Calculate theoretical D for measured sizes (for table)
+    measured_theoretical_D = [calculate_theoretical_D(s) for s in particle_sizes]
+    
+    # Get DLS measurements for all available sizes
+    dls_sizes = [s for s in all_theory_sizes if s in DLS_MEASUREMENTS]
+    dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
     
     # Print comparison table
-    print("\nParticle | Measured D      | Theoretical D   | DSL D          ")
+    print("\nParticle | Measured D      | Theoretical D   | DLS D          ")
     print("Size (nm)| (µm²/s)         | (µm²/s)         | (µm²/s)        ")
     print("-" * 70)
     for i, size in enumerate(particle_sizes):
-        dsl_str = f"{DSL_MEASUREMENTS[size]:.4e}" if size in DSL_MEASUREMENTS else "N/A"
+        dls_str = f"{DLS_MEASUREMENTS[size]:.4e}" if size in DLS_MEASUREMENTS else "N/A"
         print(f"{size:8.0f} | {measured_D[i]:.4e} ± {measured_D_err[i]:.2e} | "
-              f"{theoretical_D[i]:.4e} | {dsl_str}")
+              f"{measured_theoretical_D[i]:.4e} | {dls_str}")
     
     # Create comparison plot
     fig, ax = plt.subplots(figsize=(10, 7))
     
-    # Plot measured values with error bars
+    # Plot theoretical values (all sizes)
+    ax.scatter(theory_sizes, theory_D, s=100, color='black', 
+              marker='x', linewidths=2, label='Theoretical D (Stokes-Einstein)', zorder=2)
+    
+    # Plot DLS values (all available sizes)
+    if dls_sizes:
+        ax.scatter(dls_sizes, dls_D, s=120, color='gray', marker='*', 
+                  linewidths=1, edgecolors='black', label='D from DLS (water)', zorder=2)
+    
+    # Plot measured values with error bars (only measured sizes)
     ax.errorbar(particle_sizes, measured_D, yerr=measured_D_err, fmt='o', 
                markersize=8, color='blue', ecolor='black', elinewidth=2, 
-               capsize=4, capthick=2, label='Measured D (SPT)')
-    
-    # Plot theoretical values
-    ax.scatter(particle_sizes, theoretical_D, s=100, color='black', 
-              marker='x', linewidths=2, label='Theoretical D (Stokes-Einstein)')
-    
-    # Plot DSL values
-    if dsl_sizes:
-        ax.scatter(dsl_sizes, dsl_D, s=120, color='gray', marker='*', 
-                  linewidths=1, edgecolors='black', label='D from DSL')
+               capsize=4, capthick=2, label='Measured D (SPT)', zorder=3)
     
     ax.set_xscale('log')
     ax.set_yscale('log')
@@ -1298,8 +1326,8 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     ax.grid(True, alpha=0.3, which='both')
     
     plt.tight_layout()
-    plt.savefig(save_path / 'Diffusionskoeffizienten_Übersicht.png', dpi=300)
-    print(f"\n✓ Comparison plot saved to: {save_path / 'Diffusionskoeffizienten_Übersicht.png'}")
+    plt.savefig(save_path / 'Diffusionskoeffizienten_20mg_Hydrogel.png', dpi=300)
+    print(f"\n✓ Comparison plot saved to: {save_path / 'Diffusionskoeffizienten_20mg_Hydrogel.png'}")
     plt.show()
     plt.close(fig)
     
@@ -1489,7 +1517,7 @@ def main():
         
         # Step 5: Load saved MSD data and compare with theory
         print("\n" + "=" * 70)
-        print("Step 5: Comparing measured D with theoretical and DSL values...")
+        print("Step 5: Comparing measured D with theoretical and DLS values...")
         print("=" * 70)
         D_values, D_errors = compare_diffusion_coefficients(output_msd_pickle, SAVE_PATH)
     
@@ -1506,8 +1534,8 @@ def main():
     if not D_values:
         print("⚠ No diffusion coefficients available for normalization")
     else:
-        # DSL measurements (reference values in water)
-        DSL_MEASUREMENTS = {
+        # DLS measurements (reference values in water)
+        DLS_MEASUREMENTS = {
             20: 12.38750325,
             50: 8.201969711,
             100: 4.139082033,
@@ -1520,21 +1548,24 @@ def main():
         measured_D = np.array([D_values[s] for s in particle_sizes])
         measured_D_err = np.array([D_errors[s] for s in particle_sizes])
         
-        # Calculate theoretical D for normalization
+        # Define all theoretical particle sizes
+        all_theory_sizes = [20, 50, 100, 200, 500, 1000]
+        
+        # Calculate theoretical D for measured particle sizes (for normalization)
         theoretical_D = np.array([calculate_theoretical_D(s) for s in particle_sizes])
         
         # Normalize by theory
         D_norm_theory = measured_D / theoretical_D
         D_norm_theory_err = measured_D_err / theoretical_D
         
-        # Normalize by DSL (only for sizes with DSL data)
-        dsl_sizes = [s for s in particle_sizes if s in DSL_MEASUREMENTS]
-        dsl_indices = [i for i, s in enumerate(particle_sizes) if s in DSL_MEASUREMENTS]
+        # Normalize by DLS (only for sizes with DLS data)
+        dls_sizes = [s for s in particle_sizes if s in DLS_MEASUREMENTS]
+        dls_indices = [i for i, s in enumerate(particle_sizes) if s in DLS_MEASUREMENTS]
         
-        if dsl_sizes:
-            dsl_D = np.array([DSL_MEASUREMENTS[s] for s in dsl_sizes])
-            D_norm_dsl = measured_D[dsl_indices] / dsl_D
-            D_norm_dsl_err = measured_D_err[dsl_indices] / dsl_D
+        if dls_sizes:
+            dls_D = np.array([DLS_MEASUREMENTS[s] for s in dls_sizes])
+            D_norm_dls = measured_D[dls_indices] / dls_D
+            D_norm_dls_err = measured_D_err[dls_indices] / dls_D
         
         # Create figure with two subplots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
@@ -1547,6 +1578,8 @@ def main():
         ax1.axhline(y=1.0, color='black', linestyle='--', linewidth=2,
                    label='Theory (D/D$_{theory}$ = 1)')
         ax1.set_xscale('log')
+        ax1.set_xticks(all_theory_sizes)
+        ax1.set_xticklabels([str(s) for s in all_theory_sizes])
         ax1.set_xlabel('Particle size [nm]', fontsize=12)
         ax1.set_ylabel('D$_{measured}$ / D$_{theory}$', fontsize=12)
         ax1.set_title('Diffusion Coefficients Normalized by Theory\n(Stokes-Einstein)',
@@ -1555,29 +1588,31 @@ def main():
         ax1.grid(True, alpha=0.3, which='both')
         ax1.set_ylim([0, max(D_norm_theory) * 1.2])
         
-        # Plot 2: Normalized by DSL
-        if dsl_sizes:
-            ax2.errorbar(dsl_sizes, D_norm_dsl, yerr=D_norm_dsl_err,
+        # Plot 2: Normalized by DLS
+        if dls_sizes:
+            ax2.errorbar(dls_sizes, D_norm_dls, yerr=D_norm_dls_err,
                         fmt='o', markersize=8, color='green', ecolor='black',
                         elinewidth=2, capsize=4, capthick=2,
-                        label='D$_{measured}$ / D$_{DSL}$')
+                        label='D$_{measured}$ / D$_{DLS}$')
             ax2.axhline(y=1.0, color='gray', linestyle='--', linewidth=2,
-                       label='DSL in water (D/D$_{DSL}$ = 1)')
+                       label='DLS in water (D/D$_{DLS}$ = 1)')
             ax2.set_xscale('log')
+            ax2.set_xticks(all_theory_sizes)
+            ax2.set_xticklabels([str(s) for s in all_theory_sizes])
             ax2.set_xlabel('Particle size [nm]', fontsize=12)
-            ax2.set_ylabel('D$_{measured}$ / D$_{DSL}$', fontsize=12)
-            ax2.set_title('Diffusion Coefficients Normalized by DSL\n(Measured in Water)',
+            ax2.set_ylabel('D$_{measured}$ / D$_{DLS}$', fontsize=12)
+            ax2.set_title('Diffusion Coefficients Normalized by DLS\n(Measured in Water)',
                          fontsize=13, fontweight='bold')
             ax2.legend(fontsize=11, loc='best')
             ax2.grid(True, alpha=0.3, which='both')
-            ax2.set_ylim([0, max(D_norm_dsl) * 1.2])
+            ax2.set_ylim([0, max(D_norm_dls) * 1.2])
         else:
-            ax2.text(0.5, 0.5, 'No DSL data available',
+            ax2.text(0.5, 0.5, 'No DLS data available',
                     transform=ax2.transAxes, fontsize=14,
                     ha='center', va='center')
             ax2.set_xlabel('Particle size [nm]', fontsize=12)
-            ax2.set_ylabel('D$_{measured}$ / D$_{DSL}$', fontsize=12)
-            ax2.set_title('Diffusion Coefficients Normalized by DSL\n(Measured in Water)',
+            ax2.set_ylabel('D$_{measured}$ / D$_{DLS}$', fontsize=12)
+            ax2.set_title('Diffusion Coefficients Normalized by DLS\n(Measured in Water)',
                          fontsize=13, fontweight='bold')
         
         plt.tight_layout()
@@ -1593,16 +1628,16 @@ def main():
         print("\n" + "-" * 70)
         print("NORMALIZATION SUMMARY")
         print("-" * 70)
-        print(f"{'Size (nm)':>10} | {'D/D_theory':>12} | {'D/D_DSL':>12}")
+        print(f"{'Size (nm)':>10} | {'D/D_theory':>12} | {'D/D_DLS':>12}")
         print("-" * 70)
         for i, size in enumerate(particle_sizes):
             theory_str = f"{D_norm_theory[i]:.3f} ± {D_norm_theory_err[i]:.3f}"
-            if size in DSL_MEASUREMENTS:
-                idx = dsl_sizes.index(size)
-                dsl_str = f"{D_norm_dsl[idx]:.3f} ± {D_norm_dsl_err[idx]:.3f}"
+            if size in DLS_MEASUREMENTS:
+                idx = dls_sizes.index(size)
+                dls_str = f"{D_norm_dls[idx]:.3f} ± {D_norm_dls_err[idx]:.3f}"
             else:
-                dsl_str = "N/A"
-            print(f"{size:>10.0f} | {theory_str:>12} | {dsl_str:>12}")
+                dls_str = "N/A"
+            print(f"{size:>10.0f} | {theory_str:>12} | {dls_str:>12}")
         print("-" * 70)
     print(f"\n✓ Analysis complete!\n")
     # Step 7: Normalize by reference measurements (20mg C16 hydrogel)
@@ -1658,6 +1693,8 @@ def main():
             ax1.axhline(y=1.0, color='black', linestyle='--', linewidth=2,
                        label='Theory (D/D$_{theory}$ = 1)')
             ax1.set_xscale('log')
+            ax1.set_xticks(all_theory_sizes)
+            ax1.set_xticklabels([str(s) for s in all_theory_sizes])
             ax1.set_xlabel('Particle size [nm]', fontsize=12)
             ax1.set_ylabel('D$_{measured}$ / D$_{theory}$', fontsize=12)
             ax1.set_title('Normalized by Theory\n(Stokes-Einstein)',
@@ -1666,22 +1703,24 @@ def main():
             ax1.grid(True, alpha=0.3, which='both')
             ax1.set_ylim([0, max(D_norm_theory) * 1.2])
             
-            # Plot 2: Normalized by DSL
-            if dsl_sizes:
-                ax2.errorbar(dsl_sizes, D_norm_dsl, yerr=D_norm_dsl_err,
+            # Plot 2: Normalized by DLS
+            if dls_sizes:
+                ax2.errorbar(dls_sizes, D_norm_dls, yerr=D_norm_dls_err,
                             fmt='o', markersize=8, color='green', ecolor='black',
                             elinewidth=2, capsize=4, capthick=2,
-                            label='D$_{measured}$ / D$_{DSL}$')
+                            label='D$_{measured}$ / D$_{DLS}$')
                 ax2.axhline(y=1.0, color='gray', linestyle='--', linewidth=2,
-                           label='DSL in water (D/D$_{DSL}$ = 1)')
+                           label='DLS in water (D/D$_{DLS}$ = 1)')
                 ax2.set_xscale('log')
+                ax2.set_xticks(all_theory_sizes)
+                ax2.set_xticklabels([str(s) for s in all_theory_sizes])
                 ax2.set_xlabel('Particle size [nm]', fontsize=12)
-                ax2.set_ylabel('D$_{measured}$ / D$_{DSL}$', fontsize=12)
-                ax2.set_title('Normalized by DSL\n(Measured in Water)',
+                ax2.set_ylabel('D$_{measured}$ / D$_{DLS}$', fontsize=12)
+                ax2.set_title('Normalized by DLS\n(Measured in Water)',
                              fontsize=13, fontweight='bold')
                 ax2.legend(fontsize=10, loc='best')
                 ax2.grid(True, alpha=0.3, which='both')
-                ax2.set_ylim([0, max(D_norm_dsl) * 1.2])
+                ax2.set_ylim([0, max(D_norm_dls) * 1.2])
             
             # Plot 3: Normalized by reference measurements
             ax3.errorbar(ref_sizes, D_norm_ref, yerr=D_norm_ref_err,
@@ -1691,6 +1730,8 @@ def main():
             ax3.axhline(y=1.0, color='darkred', linestyle='--', linewidth=2,
                        label='20mg C16 reference (D/D$_{ref}$ = 1)')
             ax3.set_xscale('log')
+            ax3.set_xticks(all_theory_sizes)
+            ax3.set_xticklabels([str(s) for s in all_theory_sizes])
             ax3.set_xlabel('Particle size [nm]', fontsize=12)
             ax3.set_ylabel('D$_{measured}$ / D$_{ref}$', fontsize=12)
             ax3.set_title('Normalized by Reference\n(20mg C16 Hydrogel)',
@@ -1712,16 +1753,16 @@ def main():
             print("\n" + "-" * 80)
             print("COMPREHENSIVE NORMALIZATION SUMMARY")
             print("-" * 80)
-            print(f"{'Size (nm)':>10} | {'D/D_theory':>16} | {'D/D_DSL':>16} | {'D/D_ref':>16}")
+            print(f"{'Size (nm)':>10} | {'D/D_theory':>16} | {'D/D_DLS':>16} | {'D/D_ref':>16}")
             print("-" * 80)
             for i, size in enumerate(particle_sizes):
                 theory_str = f"{D_norm_theory[i]:.3f} ± {D_norm_theory_err[i]:.3f}"
                 
-                if size in DSL_MEASUREMENTS:
-                    idx = dsl_sizes.index(size)
-                    dsl_str = f"{D_norm_dsl[idx]:.3f} ± {D_norm_dsl_err[idx]:.3f}"
+                if size in DLS_MEASUREMENTS:
+                    idx = dls_sizes.index(size)
+                    dls_str = f"{D_norm_dls[idx]:.3f} ± {D_norm_dls_err[idx]:.3f}"
                 else:
-                    dsl_str = "N/A"
+                    dls_str = "N/A"
                 
                 if size in REFERENCE_20MG_C16:
                     idx = ref_sizes.index(size)
@@ -1729,7 +1770,7 @@ def main():
                 else:
                     ref_str = "N/A"
                 
-                print(f"{size:>10.0f} | {theory_str:>16} | {dsl_str:>16} | {ref_str:>16}")
+                print(f"{size:>10.0f} | {theory_str:>16} | {dls_str:>16} | {ref_str:>16}")
             print("-" * 80)
         else:
             print("⚠ No matching particle sizes found in reference measurements")

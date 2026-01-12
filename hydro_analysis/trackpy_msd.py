@@ -670,7 +670,7 @@ r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\20nm_4.tif", r"E:\PhD Data Analysi
     ax.errorbar(x_vals, d_val, yerr=d_val_err, fmt='o', color='blue',
                 ecolor='black', elinewidth=1, capsize=3,label='Gemessener D SPT')
     ax.scatter([20, 50, 200, 500, 1000], [(kb * T)/(6 * np.pi * d/2*nu*(1e-6)*1e-12) for d in [0.02, 0.05, 0.2, 0.5, 1.0]], color='black', marker='x', label='Theoretischer D')
-    ax.scatter([20, 50, 200, 500, 1000], [13.48,8.294646849,1.783746311,0.621773811,0.394612505], color='gray', marker='*', label='D DSL')
+    ax.scatter([20, 50, 200, 500, 1000], [13.48,8.294646849,1.783746311,0.621773811,0.394612505], color='gray', marker='*', label='D DLS')
     ax.legend()
     ax.set_ylabel('Diffusionskoeffizient D [µm²/s]')
     ax.set_xlabel('Partikelgröße [nm]')
