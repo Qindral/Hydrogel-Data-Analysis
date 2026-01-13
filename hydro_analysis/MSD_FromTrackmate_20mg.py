@@ -63,6 +63,11 @@ DLS_MEASUREMENTS = {
 # Default calibration parameters
 DEFAULT_MPP = 0.15  # micrometers per pixel
 DEFAULT_FPS = 20  # frames per second
+DEFAULT_POINTS = 6  # number of points for power-law fitting
+
+# Filter parameters
+MIN_TRACK_LENGTH = 30  # minimum number of frames for a valid track
+MIN_EXPONENT = 0.85  # minimum power-law exponent (n) for free diffusion
 
 
 # ============================================================================
@@ -133,7 +138,7 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
             total_time_ms = exposure + delay
             if total_time_ms > 0:
                 result['fps'] = 1000.0 / total_time_ms
-                print(f"    DEBUG REC: {rec_path.name} -> Exp={exposure:.2f}ms, Delay={delay:.2f}ms, FPS={result['fps']:.2f}")
+                print(f"    DEBUG REC: {rec_path.name} => Exp={exposure:.2f}ms, Delay={delay:.2f}ms, FPS={result['fps']:.2f}")
         else:
             print(f"    WARNING: Could not find Exposure/Delay in {rec_path.name}")
                 
@@ -411,8 +416,8 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
         # Extract particle size from folder name
         particle_size = extract_particle_size_from_path(subfolder)
         
-        print(f"\n📁 Folder: {subfolder.name}")
-        print(f"   Particle size: {particle_size} nm" if particle_size else "   ⚠ No particle size detected")
+        print(f"\n[Folder: {subfolder.name}]")
+        print(f"   Particle size: {particle_size} nm" if particle_size else "   [WARNING] No particle size detected")
         
         if particle_size is None:
             continue
@@ -440,9 +445,9 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
                 'fps': np.mean([x['fps'] for x in fps_info_list])
             }
             num_valid_rec = len(fps_info_list)
-            print(f"   → Average FPS: {avg_fps_info['fps']:.2f} (from {num_valid_rec} files)")
+            print(f"   => Average FPS: {avg_fps_info['fps']:.2f} (from {num_valid_rec} files)")
         else:
-            print(f"   ⚠ No valid FPS data from .rec files")
+            print(f"   [WARNING] No valid FPS data from .rec files")
         
         # Find all XML files in Tracks subfolder
         tracks_folder = subfolder / "Tracks"
@@ -452,10 +457,10 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
             xml_files = sorted(list(tracks_folder.glob("*.xml")))
             print(f"   Found {len(xml_files)} XML track files in Tracks/")
         else:
-            print(f"   ⚠ No Tracks/ subfolder found")
+            print(f"   [WARNING] No Tracks/ subfolder found")
         
         if len(xml_files) == 0:
-            print(f"   ⚠ Skipping - no XML files found")
+            print(f"   [WARNING] Skipping - no XML files found")
             continue
         
         # Create one record per XML file
@@ -486,12 +491,12 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
             })
             
             size_info = f"{x_max}×{y_max}" if x_max and y_max else "unknown size"
-            print(f"     ✓ {xml_file.name} [{size_info} → {mode}, {mpp} µm/px]")
+            print(f"     + {xml_file.name} [{size_info} -> {mode}, {mpp} um/px]")
         
-        print(f"   → Created {len(xml_files)} records")
+        print(f"   => Created {len(xml_files)} records")
     
     print(f"\n" + "=" * 70)
-    print(f"✓ Total XML files found: {len(file_records)}")
+    print(f"[OK] Total XML files found: {len(file_records)}")
     print("=" * 70 + "\n")
     
     df = pd.DataFrame(file_records)
@@ -538,10 +543,10 @@ def find_tracks_in_particle_folders(root_path: Path) -> Dict[float, List[Path]]:
         # Extract particle size from folder name
         particle_size = extract_particle_size_from_path(subfolder)
         
-        print(f"\n📁 {subfolder.name} → particle_size = {particle_size}")
+        print(f"\n[Folder] {subfolder.name} => particle_size = {particle_size}")
         
         if particle_size is None:
-            print(f"   ⚠ Skipping (no particle size detected)")
+            print(f"   [WARNING] Skipping (no particle size detected)")
             continue
         
         # Recursively find all "Tracks" folders at any depth
@@ -552,11 +557,11 @@ def find_tracks_in_particle_folders(root_path: Path) -> Dict[float, List[Path]]:
                 if xml_files:
                     tracks_by_size[particle_size].extend(xml_files)
                     rel_path = tracks_folder.relative_to(root_path)
-                    print(f"   ✓ Found {len(xml_files)} XML files in {rel_path}")
+                    print(f"   [OK] Found {len(xml_files)} XML files in {rel_path}")
                     found_any = True
         
         if not found_any:
-            print(f"   ⚠ No Tracks/ folders with XML files found")
+            print(f"   [WARNING] No Tracks/ folders with XML files found")
     
     print(f"\n" + "=" * 70)
     print(f"SUMMARY: Found {sum(len(v) for v in tracks_by_size.values())} XML files "
@@ -640,16 +645,15 @@ def calculate_imsd_for_file(xml_path: Path, mpp: float, fps: float) -> Optional[
         return None
 
 
-def analyze_all_msds(files_df: pd.DataFrame) -> pd.DataFrame:
+def analyze_all_msds(files_df: pd.DataFrame, points: int = DEFAULT_POINTS) -> pd.DataFrame:
     """
     Calculate iMSD for all files with both XML and REC data.
     
-    Filters files based on particle size and acquisition mode:
-    - 20, 50, 100 nm: Only use 60 FPS files
-    - All other sizes: Only use 20 FPS files
+    Uses all files regardless of FPS mode, but marks them for identification.
     
     Args:
         files_df: DataFrame from collect_all_files_by_particle_size()
+        points: Number of points for power-law fitting (stored in results)
         
     Returns:
         DataFrame with columns:
@@ -660,6 +664,7 @@ def analyze_all_msds(files_df: pd.DataFrame) -> pd.DataFrame:
         - mpp: Micrometers per pixel (based on fps)
         - num_particles: Number of tracked particles
         - num_lag_times: Number of lag times in MSD
+        - points: Number of points used for power-law fitting
         - msd_data: iMSD DataFrame (wide format)
     """
     results = []
@@ -677,45 +682,15 @@ def analyze_all_msds(files_df: pd.DataFrame) -> pd.DataFrame:
     print(f"DEBUG: Valid files (XML + FPS): {len(valid_files)}")
     
     if valid_files.empty:
-        print("⚠ No files with both XML tracks and FPS data found!")
+        print("[WARNING] No files with both XML tracks and FPS data found!")
         print("\nPossible issues:")
         print("  - XML files and REC files might have different base names")
         print("  - REC files might not be parsed correctly")
         return pd.DataFrame()
     
-    # Apply particle size-specific FPS filtering
+    # No FPS filtering - use all files (consistent with step size method)
     print("\n" + "=" * 70)
-    print("APPLYING FPS FILTERING BY PARTICLE SIZE")
-    print("=" * 70)
-    
-    filtered_files = []
-    for particle_size in sorted(valid_files['particle_size_nm'].unique()):
-        size_files = valid_files[valid_files['particle_size_nm'] == particle_size]
-        
-        if particle_size in [20, 50, 100]:
-            # For small particles: only use 60 FPS files
-            mode_files = size_files[size_files['mode'] == '60 FPS']
-            required_mode = "60 FPS"
-        else:
-            # For larger particles: only use 20 FPS files
-            mode_files = size_files[size_files['mode'] == '20 FPS']
-            required_mode = "20 FPS"
-        
-        print(f"\n{particle_size:.0f} nm: {len(size_files)} files total → "
-              f"{len(mode_files)} files with {required_mode} (using these)")
-        
-        if len(mode_files) == 0:
-            print(f"  ⚠ Warning: No {required_mode} files found for {particle_size:.0f} nm!")
-        
-        filtered_files.append(mode_files)
-    
-    valid_files = pd.concat(filtered_files, ignore_index=True) if filtered_files else pd.DataFrame()
-    
-    if valid_files.empty:
-        print("\n✗ No files remaining after FPS filtering!")
-        return pd.DataFrame()
-    
-    print(f"\n✓ Final file count after filtering: {len(valid_files)}")
+    print(f"Using all {len(valid_files)} files for analysis (no FPS filtering)")
     print("=" * 70)
     
     print(f"\nCalculating iMSD for {len(valid_files)} files...")
@@ -749,23 +724,25 @@ def analyze_all_msds(files_df: pd.DataFrame) -> pd.DataFrame:
                 'mpp': mpp,
                 'num_particles': num_particles,
                 'num_lag_times': num_lag_times,
+                'points': points,
                 'msd_data': imsd
             })
             
-            print(f"  ✓ {num_particles} particles tracked over {num_lag_times} lag times")
+            print(f"  [OK] {num_particles} particles tracked over {num_lag_times} lag times")
         else:
-            print(f"  ✗ Failed to calculate MSD")
+            print(f"  [FAILED] Failed to calculate MSD")
     
     return pd.DataFrame(results)
 
 
-def plot_msd_by_particle_size(msd_results_df: pd.DataFrame, save_path: Path):
+def plot_msd_by_particle_size(msd_results_df: pd.DataFrame, save_path: Path, points: int = DEFAULT_POINTS):
     """
-    Create MSD plots for each particle size.
+    Create MSD plots for each particle size, showing individual file results separately.
     
     Args:
         msd_results_df: DataFrame from analyze_all_msds()
         save_path: Directory to save plots
+        points: Number of points for power-law fitting
     """
     if msd_results_df.empty:
         return
@@ -774,98 +751,69 @@ def plot_msd_by_particle_size(msd_results_df: pd.DataFrame, save_path: Path):
     print("Creating MSD plots by particle size...")
     print("-" * 70)
     
+    # Color palette for different files
+    colors = plt.cm.tab10(np.linspace(0, 1, 10))
+    
     for particle_size in sorted(msd_results_df['particle_size_nm'].unique()):
         size_data = msd_results_df[msd_results_df['particle_size_nm'] == particle_size]
         
-        fig, ax = plt.subplots(figsize=(10, 7))
+        fig, ax = plt.subplots(figsize=(12, 8))
         
-        all_imsds = []
-        file_labels = []
-        
-        # Plot individual MSDs from each file
-        for idx, row in size_data.iterrows():
+        # Plot each file separately with its own ensemble MSD and fit
+        for file_idx, (idx, row) in enumerate(size_data.iterrows()):
             imsd = row['msd_data']
-            if imsd is not None and not imsd.empty:
-                all_imsds.append(imsd)
-                file_labels.append(f"{row['xml_name']} ({row['fps']:.1f} FPS)")
-                
-                # Plot individual particle MSDs with low alpha
-                for col in imsd.columns:
-                    ax.plot(imsd.index, imsd[col], 'k-', alpha=0.05, linewidth=0.5)
-        
-        # Calculate and plot ensemble MSD (average across all particles from all files)
-        if all_imsds:
-            # Combine all iMSDs
-            combined_imsd = pd.concat(all_imsds, axis=1, ignore_index=True)
+            if imsd is None or imsd.empty:
+                continue
             
-            # Calculate ensemble MSD (mean across all particles)
-            emsd = combined_imsd.mean(axis=1)
+            color = colors[file_idx % len(colors)]
+            file_label = f"{row['xml_name'].replace('.xml', '')} ({row['fps']:.1f} FPS)"
             
-            # Plot ensemble MSD
-            ax.plot(emsd.index, emsd, 'o-', color='blue', linewidth=2, 
-                   markersize=6, label=f'Ensemble MSD ({len(combined_imsd.columns)} particles)')
+            # Plot individual particle MSDs with low alpha
+            for col in imsd.columns:
+                ax.plot(imsd.index, imsd[col], color=color, alpha=0.1, linewidth=0.5)
             
-            # Fit power-law to ensemble MSD
+            # Calculate ensemble MSD for this file
+            emsd_file = imsd.mean(axis=1)
+            
+            # Plot ensemble MSD for this file
+            ax.plot(emsd_file.index, emsd_file, 'o-', color=color, linewidth=2, 
+                   markersize=5, label=f'{file_label} (n={len(imsd.columns)})', alpha=0.8)
+            
+            # Fit power-law to this file's ensemble MSD
             try:
-                params = fit_powerlaw_with_errors(emsd, points=10, plot=False)
+                params = fit_powerlaw_with_errors(emsd_file, points=points, plot=False)
                 A = float(params.A[0])
+                A_err = float(params.A_err[0])
                 n = float(params.n[0])
+                n_err = float(params.n_err[0])
+                D = A / 4.0
+                D_err = A_err / 4.0
                 
                 # Plot fit
-                fit_x = emsd.iloc[0:10].index
+                fit_x = emsd_file.iloc[0:points].index
                 fit_y = A * np.array(fit_x) ** n
-                ax.plot(fit_x, fit_y, 'r--', linewidth=2, 
-                       label=f'Fit: A={A:.2e}, n={n:.2f}')
+                ax.plot(fit_x, fit_y, '--', color=color, linewidth=2, alpha=0.7)
                 
-                # Calculate diffusion coefficient
-                D = A / 4.0
-                ax.text(0.05, 0.95, f'D = {D:.2e} µm²/s', 
-                       transform=ax.transAxes, fontsize=12,
-                       verticalalignment='top', bbox=dict(boxstyle='round', 
-                       facecolor='wheat', alpha=0.5))
-                
-                # Plot theoretical MSD (Stokes-Einstein)
-                D_theory = calculate_theoretical_D(particle_size)
-                theory_msd = 4 * D_theory * np.array(emsd.index)
-                ax.plot(emsd.index, theory_msd, '--', linewidth=2, color='purple',
-                       label=f'Theory: D={D_theory:.2e} µm²/s', alpha=0.8)
-                
-                # Plot DLS MSD if available
-                if particle_size in DLS_MEASUREMENTS:
-                    D_dls = DLS_MEASUREMENTS[particle_size]
-                    dls_msd = 4 * D_dls * np.array(emsd.index)
-                    ax.plot(emsd.index, dls_msd, '--', linewidth=2, color='orange',
-                           label=f'DLS (water): D={D_dls:.2e} µm²/s', alpha=0.8)
-                
+                print(f"  {file_label}: D = {D:.4e} ± {D_err:.4e} µm²/s, n = {n:.3f} ± {n_err:.3f}")
             except Exception as e:
-                print(f"  Warning: Could not fit power-law for {particle_size:.0f} nm: {e}")
+                print(f"  Warning: Could not fit power-law for {file_label}: {e}")
         
         # Format plot
         ax.set_xscale('log')
         ax.set_yscale('log')
         ax.set_xlabel('Lag time [frames]', fontsize=12)
         ax.set_ylabel(r'$\langle \Delta r^2 \rangle$ [µm²]', fontsize=12)
-        ax.set_title(f'Mean Squared Displacement - {particle_size:.0f} nm particles', 
+        ax.set_title(f'Mean Squared Displacement - {particle_size:.0f} nm particles (Individual Files)', 
                     fontsize=14, fontweight='bold')
-        ax.legend(fontsize=10, loc='lower right')
+        ax.legend(fontsize=9, loc='best', ncol=1 if len(size_data) <= 4 else 2)
         ax.grid(True, alpha=0.3, which='both')
-        
-        # Add file info as text
-        info_text = f"Files: {len(size_data)}\n"
-        info_text += "\n".join([f"• {label}" for label in file_labels[:5]])  # Max 5 files
-        if len(file_labels) > 5:
-            info_text += f"\n... and {len(file_labels)-5} more"
-        
-        ax.text(0.95, 0.05, info_text, transform=ax.transAxes, 
-               fontsize=9, verticalalignment='bottom', horizontalalignment='right',
-               bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
         
         plt.tight_layout()
         
         # Save plot
-        plot_filename = save_path / f'MSD_{particle_size:.0f}nm.png'
+        plot_filename = save_path / f'hydrogel_20mg_MSD_{particle_size:.0f}nm_individual_files.png'
         plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
-        print(f"  ✓ Saved: {plot_filename.name}")
+        print(f"  [OK] Saved: {plot_filename.name}")
         plt.close(fig)
 
 
@@ -1090,7 +1038,7 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
 
 
 def compare_diffusion_coefficients(pickle_path: Path, save_path: Path, 
-                                  points: int = 10) -> None:
+                                  points: int = 10, min_exponent: float = MIN_EXPONENT) -> tuple[Dict[int, float], Dict[int, float]]:
     """
     Load MSD data from pickle, calculate D values, and compare with theory and DLS.
     
@@ -1098,6 +1046,10 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
         pickle_path: Path to pickled MSD results DataFrame
         save_path: Directory to save comparison plots
         points: Number of points for power-law fitting
+        min_exponent: Minimum power-law exponent for filtering particles
+        
+    Returns:
+        Tuple of (D_values, D_errors) dictionaries keyed by particle size
     """
     print("\nLoading MSD data from pickle...")
     
@@ -1105,10 +1057,10 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     msd_results_df = pd.read_pickle(pickle_path)
     
     if msd_results_df.empty:
-        print("✗ No data found in pickle file!")
+        print("[FAILED] No data found in pickle file!")
         return {}, {}
     
-    print(f"✓ Loaded MSD data for {len(msd_results_df)} files")
+    print(f"[OK] Loaded MSD data for {len(msd_results_df)} files")
     
     # Calculate D values for each particle size
     D_values = {}
@@ -1118,155 +1070,172 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     print("CALCULATING DIFFUSION COEFFICIENTS")
     print("=" * 70)
     
+    # Store D values for each file separately
+    file_D_values = []  # List of dicts for per-file analysis
+    
     for particle_size in sorted(msd_results_df['particle_size_nm'].unique()):
         size_data = msd_results_df[msd_results_df['particle_size_nm'] == particle_size]
         
         print(f"\n{particle_size:.0f} nm particles ({len(size_data)} files):")
         
-        # Combine all iMSD data for this particle size
-        all_imsds = []
-        for _, row in size_data.iterrows():
+        # Analyze each file separately
+        size_D_values = []
+        for file_idx, (_, row) in enumerate(size_data.iterrows()):
             imsd = row['msd_data']
-            if imsd is not None and not imsd.empty:
-                all_imsds.append(imsd)
-        
-        if not all_imsds:
-            print("  ✗ No valid MSD data")
-            continue
-        
-        # Concatenate all individual MSDs
-        combined_imsd = pd.concat(all_imsds, axis=1, ignore_index=True)
-        
-        # Calculate ensemble MSD (mean over all particles)
-        ensemble_msd = combined_imsd.mean(axis=1)
-        
-        print(f"  Total particles: {len(combined_imsd.columns)}")
-        print(f"  Lag times: {len(ensemble_msd)}")
-        
-        # Fit power-law to ensemble MSD
-        try:
-            # First, fit each individual particle and filter by exponent
-                        valid_particles = []
-                        particle_exponents = []
-                        
-                        print(f"  Analyzing {len(combined_imsd.columns)} individual particles...")
-                        
-                        for particle_id in combined_imsd.columns:
-                            particle_msd = combined_imsd[particle_id].dropna()
-                            
-                            if len(particle_msd) < points:
-                                continue
-                            
-                            try:
-                                # Fit power-law to individual particle
-                                particle_params = fit_powerlaw_with_errors(particle_msd, points=points, plot=False)
-                                n_particle = float(particle_params.n[0])
-                                
-                                # Filter: only accept particles with n >= 0.85 (free diffusion)
-                                if n_particle < 0.7:
-                                    valid_particles.append(particle_id)
-                                    particle_exponents.append(n_particle)
-                                
-                            except Exception:
-                                continue  # Skip particles that fail to fit
-                        
-                        print(f"  Filtered particles: {len(valid_particles)}/{len(combined_imsd.columns)} "
-                              f"(n >= 0.85)")
-                        
-                        if not valid_particles:
-                            print("  ✗ No valid particles after filtering!")
-                            continue
-                        
-                        # Recalculate ensemble MSD using only valid particles
-                        filtered_imsd = combined_imsd[valid_particles]
-                        ensemble_msd = filtered_imsd.mean(axis=1)
-                        
-                        print(f"  Mean exponent of valid particles: {np.mean(particle_exponents):.3f} "
-                              f"± {np.std(particle_exponents):.3f}")
-                        
-                        # Now fit the ensemble MSD
-                        tp.quiet()
-                        params = fit_powerlaw_with_errors(ensemble_msd, points=points, plot=False)
-                        A = float(params.A[0])
-                        A_err = float(params.A_err[0])
-                        n = float(params.n[0])
-                        n_err = float(params.n_err[0])
-                        
-                        # Calculate diffusion coefficient: MSD = 4*D*t for 2D
-                        D = A / 4.0
-                        D_err = A_err / 4.0
-                        
-                        D_values[particle_size] = D
-                        D_errors[particle_size] = D_err
-                        
-                        print(f"  Power-law fit: A = {A:.4e} ± {A_err:.4e}, n = {n:.3f} ± {n_err:.3f}")
-                        print(f"  Diffusion coefficient: D = {D:.4e} ± {D_err:.4e} µm²/s")
-                        
-                        # Calculate theoretical diameter from measured D
-                        # D = kB*T / (6*pi*eta*R)  =>  R = kB*T / (6*pi*eta*D)
-                        R_measured = (BOLTZMANN_CONSTANT * TEMPERATURE) / (6 * np.pi * WATER_VISCOSITY * D * 1e-12)
-                        d_measured = 2 * R_measured * 1e9  # Convert to nm
-                        print(f"  Calculated diameter from D: {d_measured:.1f} nm")
-                        
-                        # Create individual MSD plot
-                        fig, ax = plt.subplots(figsize=(10, 7))
-                        
-                        # Plot individual particle MSDs
-                        cols = list(combined_imsd.columns)
-                        if cols:
-                            ax.plot(combined_imsd.index, combined_imsd[cols[0]], 'k-', 
-                                alpha=0.2, linewidth=0.5, label='Individual MSDs')
-                            for c in cols[1:]:
-                                ax.plot(combined_imsd.index, combined_imsd[c], 'k-', 
-                                    alpha=0.05, linewidth=0.5)
-                        
-                        # Plot ensemble MSD
-                        ax.plot(ensemble_msd.index, ensemble_msd, 'o', markersize=6, 
-                            color='blue', label='Ensemble MSD')
-                        
-                        # Plot fitting range
-                        ax.plot(ensemble_msd.iloc[0:points].index, 
-                            ensemble_msd.iloc[0:points], 'o', markersize=4, 
-                            color='red', label='Fitting range')
-                        
-                        # Plot power-law fit
-                        fit_x = ensemble_msd.iloc[0:points].index
-                        fit_y = A * np.array(fit_x) ** n
-                        ax.plot(fit_x, fit_y, 'g--', linewidth=3, alpha=0.8, 
-                            label=f'Fit: A={A:.2e}, n={n:.2f}')
-                        
-                        # Plot theoretical prediction
-                        D_theory = calculate_theoretical_D(particle_size)
-                        theory_msd = 4 * D_theory * np.array(ensemble_msd.index)
-                        ax.plot(ensemble_msd.index, theory_msd, '--', linewidth=2, alpha=0.8, 
-                            color='purple', label=f'Theory: D={D_theory:.2e} µm²/s')
-                        
-                        # Plot DLS prediction if available
-                        if particle_size in DLS_MEASUREMENTS:
-                            D_dls = DLS_MEASUREMENTS[particle_size]
-                            dls_msd = 4 * D_dls * np.array(ensemble_msd.index)
-                            ax.plot(ensemble_msd.index, dls_msd, '--', linewidth=2, alpha=0.8,
-                                   color='orange', label=f'DLS (water): D={D_dls:.2e} µm²/s')
-                        
-                        ax.set_xscale('log')
-                        ax.set_yscale('log')
-                        ax.set_xlabel('Lag time [frames]', fontsize=12)
-                        ax.set_ylabel(r'$\langle \Delta r^2 \rangle$ [µm²]', fontsize=12)
-                        ax.set_title(f'Ensemble MSD for {particle_size:.0f} nm particles', 
-                                    fontsize=14, fontweight='bold')
-                        ax.legend(fontsize=10)
-                        ax.grid(True, alpha=0.3, which='both')
-                        
-                        plt.tight_layout()
-                        plt.savefig(save_path / f'MSD_fitted_{particle_size:.0f}nm.png', dpi=300)
-                        plt.close(fig)
+            if imsd is None or imsd.empty:
+                print(f"  [FAILED] {row['xml_name']}: No valid MSD data")
+                continue
+            
+            file_label = row['xml_name'].replace('.xml', '')
+            print(f"\n  File: {file_label}")
+            print(f"    Particles: {len(imsd.columns)}, Lag times: {len(imsd)}")
+            
+            # Filter particles by exponent (n >= min_exponent for free diffusion)
+            valid_particles = []
+            particle_exponents = []
+            
+            for particle_id in imsd.columns:
+                particle_msd = imsd[particle_id].dropna()
                 
-        except Exception as e:
-            print(f"  ✗ Error fitting MSD: {e}")
+                if len(particle_msd) < points:
+                    continue
+                
+                try:
+                    particle_params = fit_powerlaw_with_errors(particle_msd, points=points, plot=False)
+                    n_particle = float(particle_params.n[0])
+                    
+                    if n_particle >= min_exponent:
+                        valid_particles.append(particle_id)
+                        particle_exponents.append(n_particle)
+                except Exception:
+                    continue
+            
+            if not valid_particles:
+                print(f"    [FAILED] No valid particles after filtering (n >= {min_exponent:.2f})")
+                continue
+            
+            print(f"    Valid particles: {len(valid_particles)}/{len(imsd.columns)} (n >= {min_exponent:.2f})")
+            print(f"    Mean exponent: {np.mean(particle_exponents):.3f} ± {np.std(particle_exponents):.3f}")
+            
+            # Calculate ensemble MSD for valid particles
+            filtered_imsd = imsd[valid_particles]
+            ensemble_msd = filtered_imsd.mean(axis=1)
+            
+            # Fit power-law to ensemble MSD
+            try:
+                tp.quiet()
+                params = fit_powerlaw_with_errors(ensemble_msd, points=points, plot=False)
+                A = float(params.A[0])
+                A_err = float(params.A_err[0])
+                n = float(params.n[0])
+                n_err = float(params.n_err[0])
+                
+                # Calculate diffusion coefficient: MSD = 4*D*t for 2D
+                D = A / 4.0
+                D_err = A_err / 4.0
+                
+                size_D_values.append(D)
+                file_D_values.append({
+                    'particle_size_nm': particle_size,
+                    'file_name': file_label,
+                    'D': D,
+                    'D_err': D_err,
+                    'A': A,
+                    'A_err': A_err,
+                    'n': n,
+                    'n_err': n_err,
+                    'num_particles': len(valid_particles)
+                })
+                
+                print(f"    Power-law fit: A = {A:.4e} ± {A_err:.4e}, n = {n:.3f} ± {n_err:.3f}")
+                print(f"    Diffusion coefficient: D = {D:.4e} ± {D_err:.4e} µm²/s")
+                
+                # Calculate theoretical diameter from measured D
+                R_measured = (BOLTZMANN_CONSTANT * TEMPERATURE) / (6 * np.pi * WATER_VISCOSITY * D * 1e-12)
+                d_measured = 2 * R_measured * 1e9
+                print(f"    Calculated diameter from D: {d_measured:.1f} nm")
+                
+                # Create individual MSD plot for this file
+                fig, ax = plt.subplots(figsize=(10, 7))
+                
+                # Plot individual particle MSDs
+                cols = list(filtered_imsd.columns)
+                if cols:
+                    ax.plot(filtered_imsd.index, filtered_imsd[cols[0]], 'k-', 
+                        alpha=0.2, linewidth=0.5, label='Individual MSDs')
+                    for c in cols[1:]:
+                        ax.plot(filtered_imsd.index, filtered_imsd[c], 'k-', 
+                            alpha=0.05, linewidth=0.5)
+                
+                # Plot ensemble MSD
+                ax.plot(ensemble_msd.index, ensemble_msd, 'o', markersize=6, 
+                    color='blue', label='Ensemble MSD')
+                
+                # Plot fitting range
+                ax.plot(ensemble_msd.iloc[0:points].index, 
+                    ensemble_msd.iloc[0:points], 'o', markersize=4, 
+                    color='red', label='Fitting range')
+                
+                # Plot power-law fit
+                fit_x = ensemble_msd.iloc[0:points].index
+                fit_y = A * np.array(fit_x) ** n
+                ax.plot(fit_x, fit_y, 'g--', linewidth=3, alpha=0.8, 
+                    label=f'Fit: A={A:.2e}, n={n:.2f}')
+                
+                # Plot theoretical prediction
+                D_theory = calculate_theoretical_D(particle_size)
+                theory_msd = 4 * D_theory * np.array(ensemble_msd.index)
+                ax.plot(ensemble_msd.index, theory_msd, '--', linewidth=2, alpha=0.8, 
+                    color='purple', label=f'Theory: D={D_theory:.2e} µm²/s')
+                
+                # Plot DLS prediction if available
+                if particle_size in DLS_MEASUREMENTS:
+                    D_dls = DLS_MEASUREMENTS[particle_size]
+                    dls_msd = 4 * D_dls * np.array(ensemble_msd.index)
+                    ax.plot(ensemble_msd.index, dls_msd, '--', linewidth=2, alpha=0.8,
+                           color='orange', label=f'DLS (water): D={D_dls:.2e} µm²/s')
+                
+                ax.set_xscale('log')
+                ax.set_yscale('log')
+                ax.set_xlabel('Lag time [frames]', fontsize=12)
+                ax.set_ylabel(r'$\langle \Delta r^2 \rangle$ [µm²]', fontsize=12)
+                ax.set_title(f'MSD Analysis - {particle_size:.0f} nm - {file_label}', 
+                            fontsize=14, fontweight='bold')
+                ax.legend(fontsize=10)
+                ax.grid(True, alpha=0.3, which='both')
+                
+                plt.tight_layout()
+                # Save with unique filename per file
+                safe_filename = file_label.replace(' ', '_').replace('/', '_')
+                plt.savefig(save_path / f'hydrogel_20mg_MSD_fit_{particle_size:.0f}nm_{safe_filename}.png', dpi=300)
+                print(f"    [OK] Saved: hydrogel_20mg_MSD_fit_{particle_size:.0f}nm_{safe_filename}.png")
+                plt.close(fig)
+                
+            except Exception as e:
+                print(f"    [FAILED] Error fitting power-law: {e}")
+        
+        # Calculate mean D for this particle size (across files)
+        if size_D_values:
+            D_mean = np.mean(size_D_values)
+            D_std = np.std(size_D_values)
+            D_values[particle_size] = D_mean
+            D_errors[particle_size] = D_std
+            print(f"\n  Overall {particle_size:.0f} nm: D = {D_mean:.4e} ± {D_std:.4e} µm²/s (mean ± std across {len(size_D_values)} files)")
+        else:
+            print(f"\n  No valid files for {particle_size:.0f} nm particles")
+        
+        print("-" * 70)
+    
+    # Save per-file D values to CSV
+    if file_D_values:
+        file_D_df = pd.DataFrame(file_D_values)
+        file_D_csv = save_path / 'hydrogel_20mg_diffusion_coefficients_per_file.csv'
+        file_D_df.to_csv(file_D_csv, index=False)
+        print(f"\n[OK] Per-file diffusion coefficients saved to: {file_D_csv}")
     
     # Create comparison plot
     if not D_values:
-        print("\n✗ No diffusion coefficients calculated!")
+        print("\n[FAILED] No diffusion coefficients calculated!")
         return {}, {}
     
     print("\n" + "=" * 70)
@@ -1277,18 +1246,11 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     measured_D = [D_values[s] for s in particle_sizes]
     measured_D_err = [D_errors[s] for s in particle_sizes]
     
-    # Define all theoretical particle sizes
-    all_theory_sizes = [20, 50, 100, 200, 500, 1000]
+    # Calculate theoretical D for all sizes
+    theoretical_D = [calculate_theoretical_D(s) for s in particle_sizes]
     
-    # Calculate theoretical D for all standard sizes
-    theory_sizes = all_theory_sizes
-    theory_D = [calculate_theoretical_D(s) for s in theory_sizes]
-    
-    # Calculate theoretical D for measured sizes (for table)
-    measured_theoretical_D = [calculate_theoretical_D(s) for s in particle_sizes]
-    
-    # Get DLS measurements for all available sizes
-    dls_sizes = [s for s in all_theory_sizes if s in DLS_MEASUREMENTS]
+    # Get DLS measurements (only for matching sizes)
+    dls_sizes = [s for s in particle_sizes if s in DLS_MEASUREMENTS]
     dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
     
     # Print comparison table
@@ -1298,36 +1260,97 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     for i, size in enumerate(particle_sizes):
         dls_str = f"{DLS_MEASUREMENTS[size]:.4e}" if size in DLS_MEASUREMENTS else "N/A"
         print(f"{size:8.0f} | {measured_D[i]:.4e} ± {measured_D_err[i]:.2e} | "
-              f"{measured_theoretical_D[i]:.4e} | {dls_str}")
+              f"{theoretical_D[i]:.4e} | {dls_str}")
     
-    # Create comparison plot
-    fig, ax = plt.subplots(figsize=(10, 7))
+    # Create comparison plot with individual files shown discretely
+    fig, ax = plt.subplots(figsize=(12, 8))
     
-    # Plot theoretical values (all sizes)
-    ax.scatter(theory_sizes, theory_D, s=100, color='black', 
-              marker='x', linewidths=2, label='Theoretical D (Stokes-Einstein)', zorder=2)
+    # Color palette for different particle sizes
+    colors_by_size = plt.cm.tab10(np.linspace(0, 1, len(particle_sizes)))
+    size_to_color = dict(zip(particle_sizes, colors_by_size))
     
-    # Plot DLS values (all available sizes)
+    # Plot individual files with small horizontal offset for visibility
+    # Use different markers for different FPS modes
+    offset_scale = 0.15  # Adjust this to control horizontal spread
+    for file_data in file_D_values:
+        size = file_data['particle_size_nm']
+        D = file_data['D']
+        D_err = file_data['D_err']
+        
+        # Get corresponding row from msd_results_df to find mode
+        matching_row = msd_results_df[
+            (msd_results_df['particle_size_nm'] == size) & 
+            (msd_results_df['xml_name'] == file_data['file_name'] + '.xml')
+        ]
+        
+        if not matching_row.empty:
+            mode = matching_row.iloc[0]['mode']
+        else:
+            mode = 'Unknown'
+        
+        # Different markers for different FPS modes
+        if mode == '60 FPS':
+            marker = '^'  # Triangle up for 60 FPS
+            alpha = 0.8
+        elif mode == '20 FPS':
+            marker = 's'  # Square for 20 FPS
+            alpha = 0.7
+        else:
+            marker = 'o'  # Circle for unknown
+            alpha = 0.6
+        
+        # Calculate how many files we have for this size and create offset
+        size_files = [f for f in file_D_values if f['particle_size_nm'] == size]
+        file_index = size_files.index(file_data)
+        num_files = len(size_files)
+        
+        # Center the offsets around the nominal size
+        if num_files > 1:
+            offset = (file_index - (num_files - 1) / 2) * (size * offset_scale / num_files)
+        else:
+            offset = 0
+        
+        x_pos = size + offset
+        
+        # Plot individual file with error bar
+        ax.errorbar(x_pos, D, yerr=D_err, fmt=marker, 
+                   markersize=7, color=size_to_color[size], 
+                   ecolor=size_to_color[size], elinewidth=1.5, 
+                   capsize=3, capthick=1.5, alpha=alpha)
+    
+    # Add custom legend entries for different FPS modes
+    ax.errorbar([], [], [], fmt='^', markersize=7, color='gray', 
+               ecolor='gray', elinewidth=1.5, capsize=3, capthick=1.5,
+               label='Individual Files (60 FPS)', alpha=0.8)
+    ax.errorbar([], [], [], fmt='s', markersize=7, color='gray', 
+               ecolor='gray', elinewidth=1.5, capsize=3, capthick=1.5,
+               label='Individual Files (20 FPS)', alpha=0.7)
+    
+    # Plot mean values for each size (larger markers)
+    ax.errorbar(particle_sizes, measured_D, yerr=measured_D_err, fmt='D', 
+               markersize=10, color='blue', ecolor='black', elinewidth=2, 
+               capsize=5, capthick=2, label='Mean D per Size ± Std', zorder=5)
+    
+    # Plot theoretical values
+    ax.scatter(particle_sizes, theoretical_D, s=150, color='black', 
+              marker='x', linewidths=3, label='Theoretical D (Stokes-Einstein)', zorder=6)
+    
+    # Plot DLS values
     if dls_sizes:
-        ax.scatter(dls_sizes, dls_D, s=120, color='gray', marker='*', 
-                  linewidths=1, edgecolors='black', label='D from DLS (water)', zorder=2)
-    
-    # Plot measured values with error bars (only measured sizes)
-    ax.errorbar(particle_sizes, measured_D, yerr=measured_D_err, fmt='o', 
-               markersize=8, color='blue', ecolor='black', elinewidth=2, 
-               capsize=4, capthick=2, label='Measured D (SPT)', zorder=3)
+        ax.scatter(dls_sizes, dls_D, s=150, color='red', marker='*', 
+                  linewidths=2, edgecolors='darkred', label='D from DLS (water)', zorder=6)
     
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Particle size [nm]', fontsize=12)
     ax.set_ylabel('Diffusion coefficient D [µm²/s]', fontsize=12)
-    ax.set_title('Overview of Diffusion Coefficients', fontsize=14, fontweight='bold')
+    ax.set_title('Overview of Diffusion Coefficients - 20mg Hydrogel', fontsize=14, fontweight='bold')
     ax.legend(fontsize=11, loc='best')
     ax.grid(True, alpha=0.3, which='both')
     
     plt.tight_layout()
-    plt.savefig(save_path / 'Diffusionskoeffizienten_20mg_Hydrogel.png', dpi=300)
-    print(f"\n✓ Comparison plot saved to: {save_path / 'Diffusionskoeffizienten_20mg_Hydrogel.png'}")
+    plt.savefig(save_path / 'hydrogel_20mg_Diffusionskoeffizienten_Übersicht.png', dpi=300)
+    print(f"\n[OK] Comparison plot saved to: {save_path / 'hydrogel_20mg_Diffusionskoeffizienten_Übersicht.png'}")
     plt.show()
     plt.close(fig)
     
@@ -1387,12 +1410,12 @@ def main():
     
 
     
-    print(f"\n✓ Found {len(files_df)} XML files across {files_df['particle_size_nm'].nunique()} particle sizes")
+    print(f"\n[OK] Found {len(files_df)} XML files across {files_df['particle_size_nm'].nunique()} particle sizes")
     
     # Save XML file listing
     output_files_csv = SAVE_PATH / "xml_file_associations.csv"
     files_df.to_csv(output_files_csv, index=False)
-    print(f"✓ XML file associations saved to: {output_files_csv}")
+    print(f"\n[OK] XML file associations saved to: {output_files_csv}")
     
     # Display FPS statistics
     xml_with_fps = files_df[files_df['fps'].notna()]
@@ -1425,7 +1448,7 @@ def main():
                 size_str = f"{row['x_max']}×{row['y_max']}" if pd.notna(row['x_max']) else "unknown"
                 print(f"  • {row['xml_name']}: {row['mode']} ({size_str}, {row['mpp']} µm/px)")
     else:
-        print("\n⚠ Warning: No data found - will use default values")
+        print("\n[WARNING] Warning: No data found - will use default values")
     
     # Step 2: Count particles
     print("\n" + "=" * 70)
@@ -1453,7 +1476,7 @@ def main():
             'total_particles': total_particles
         })
         
-        print(f"  → Total: {total_particles} particles from {len(size_xmls)} files\n")
+        print(f"  => Total: {total_particles} particles from {len(size_xmls)} files\n")
     
     # Create summary DataFrame
     summary_df = pd.DataFrame(particle_counts)
@@ -1468,14 +1491,14 @@ def main():
     # Save particle count summary
     output_summary_csv = SAVE_PATH / "particle_count_summary.csv"
     summary_df.to_csv(output_summary_csv, index=False)
-    print(f"\n✓ Particle count summary saved to: {output_summary_csv}")
+    print(f"\n[OK] Particle count summary saved to: {output_summary_csv}")
     
     # Step 3: Calculate iMSD for all files
     print("\n" + "=" * 70)
-    print("Step 3: Calculating individual MSD (iMSD) for each file...")
+    print(f"Step 3: Calculating individual MSD (iMSD) for each file (using {DEFAULT_POINTS} points for fitting)...")
     print("=" * 70)
     
-    msd_results_df = analyze_all_msds(files_df)
+    msd_results_df = analyze_all_msds(files_df, points=DEFAULT_POINTS)
     
     if not msd_results_df.empty:
         # Summary by particle size
@@ -1496,30 +1519,31 @@ def main():
             for _, row in size_data.iterrows():
                 size_str = f"{row['x_max']}×{row['y_max']}" if pd.notna(row.get('x_max')) else "unknown"
                 print(f"    • {row['xml_name']}: {row['num_particles']} particles "
-                      f"({row['mode']}, {size_str}, {row['fps']:.2f} FPS, mpp={row['mpp']} µm/px)")
+                      f"({row['mode']}, {size_str}, {row['fps']:.2f} FPS, mpp={row['mpp']} µm/px, points={row['points']})")
         
         # Save MSD summary (without the actual MSD data arrays)
         msd_summary = msd_results_df.drop(columns=['msd_data'])
         output_msd_csv = SAVE_PATH / "msd_analysis_summary.csv"
         msd_summary.to_csv(output_msd_csv, index=False)
-        print(f"\n✓ MSD analysis summary saved to: {output_msd_csv}")
+        print(f"\n[OK] MSD analysis summary saved to: {output_msd_csv}")
         
         # Save individual MSD data as pickle for later analysis
         output_msd_pickle = SAVE_PATH / "msd_data_full.pkl"
         msd_results_df.to_pickle(output_msd_pickle)
-        print(f"✓ Full MSD data (with arrays) saved to: {output_msd_pickle}")
+        print(f"[OK] Full MSD data (with arrays) saved to: {output_msd_pickle}")
         
         # Step 4: Create plots
         print("\n" + "=" * 70)
         print("Step 4: Creating MSD plots...")
         print("=" * 70)
-        plot_msd_by_particle_size(msd_results_df, SAVE_PATH)
+        plot_msd_by_particle_size(msd_results_df, SAVE_PATH, points=DEFAULT_POINTS)
         
         # Step 5: Load saved MSD data and compare with theory
         print("\n" + "=" * 70)
-        print("Step 5: Comparing measured D with theoretical and DLS values...")
+        print(f"Step 5: Comparing measured D with theoretical and DLS values (using {DEFAULT_POINTS} points for fitting)...")
+        print(f"Filter settings: min_exponent={MIN_EXPONENT:.2f}")
         print("=" * 70)
-        D_values, D_errors = compare_diffusion_coefficients(output_msd_pickle, SAVE_PATH)
+        D_values, D_errors = compare_diffusion_coefficients(output_msd_pickle, SAVE_PATH, points=DEFAULT_POINTS, min_exponent=MIN_EXPONENT)
     
     # Step 6: Create normalized diffusion coefficient plots
     print("\n" + "=" * 70)
@@ -1532,8 +1556,17 @@ def main():
         D_errors = {}
     
     if not D_values:
-        print("⚠ No diffusion coefficients available for normalization")
+        print("[WARNING] No diffusion coefficients available for normalization")
     else:
+        # Load per-file D values from CSV
+        file_D_csv = SAVE_PATH / 'hydrogel_20mg_diffusion_coefficients_per_file.csv'
+        if not file_D_csv.exists():
+            print(f"[WARNING] Per-file CSV not found: {file_D_csv}")
+            file_D_values = []
+        else:
+            file_D_df = pd.read_csv(file_D_csv)
+            file_D_values = file_D_df.to_dict('records')
+        
         # DLS measurements (reference values in water)
         DLS_MEASUREMENTS = {
             20: 12.38750325,
@@ -1554,7 +1587,7 @@ def main():
         # Calculate theoretical D for measured particle sizes (for normalization)
         theoretical_D = np.array([calculate_theoretical_D(s) for s in particle_sizes])
         
-        # Normalize by theory
+        # Normalize by theory (mean values)
         D_norm_theory = measured_D / theoretical_D
         D_norm_theory_err = measured_D_err / theoretical_D
         
@@ -1570,13 +1603,79 @@ def main():
         # Create figure with two subplots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
         
-        # Plot 1: Normalized by theory
+        # Color palette for different particle sizes
+        colors_by_size = plt.cm.tab10(np.linspace(0, 1, len(particle_sizes)))
+        size_to_color = dict(zip(particle_sizes, colors_by_size))
+        
+        # Plot 1: Normalized by theory with individual files
+        offset_scale = 0.15
+        
+        # Plot individual files first
+        for file_data in file_D_values:
+            size = file_data['particle_size_nm']
+            D = file_data['D']
+            D_err = file_data['D_err']
+            
+            # Get mode for marker style
+            matching_row = msd_results_df[
+                (msd_results_df['particle_size_nm'] == size) & 
+                (msd_results_df['xml_name'] == file_data['file_name'] + '.xml')
+            ]
+            
+            if not matching_row.empty:
+                mode = matching_row.iloc[0]['mode']
+            else:
+                mode = 'Unknown'
+            
+            if mode == '60 FPS':
+                marker = '^'
+                alpha = 0.6
+            elif mode == '20 FPS':
+                marker = 's'
+                alpha = 0.5
+            else:
+                marker = 'o'
+                alpha = 0.4
+            
+            # Calculate offset
+            size_files = [f for f in file_D_values if f['particle_size_nm'] == size]
+            file_index = size_files.index(file_data)
+            num_files = len(size_files)
+            
+            if num_files > 1:
+                offset = (file_index - (num_files - 1) / 2) * (size * offset_scale / num_files)
+            else:
+                offset = 0
+            
+            x_pos = size + offset
+            
+            # Normalize by theory
+            D_theory = calculate_theoretical_D(size)
+            D_norm = D / D_theory
+            D_norm_err = D_err / D_theory
+            
+            ax1.errorbar(x_pos, D_norm, yerr=D_norm_err, fmt=marker, 
+                       markersize=6, color=size_to_color[size], 
+                       ecolor=size_to_color[size], elinewidth=1, 
+                       capsize=2, capthick=1, alpha=alpha)
+        
+        # Plot mean values
         ax1.errorbar(particle_sizes, D_norm_theory, yerr=D_norm_theory_err,
-                    fmt='o', markersize=8, color='blue', ecolor='black',
-                    elinewidth=2, capsize=4, capthick=2,
-                    label='D$_{measured}$ / D$_{theory}$')
+                    fmt='D', markersize=10, color='blue', ecolor='black',
+                    elinewidth=2, capsize=5, capthick=2,
+                    label='Mean D / D$_{theory}$ ± Std', zorder=5)
+        
         ax1.axhline(y=1.0, color='black', linestyle='--', linewidth=2,
-                   label='Theory (D/D$_{theory}$ = 1)')
+                   label='Theory (D/D$_{theory}$ = 1)', zorder=6)
+        
+        # Legend entries for file markers
+        ax1.errorbar([], [], [], fmt='^', markersize=6, color='gray', 
+                   ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                   label='Individual Files (60 FPS)', alpha=0.6)
+        ax1.errorbar([], [], [], fmt='s', markersize=6, color='gray', 
+                   ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                   label='Individual Files (20 FPS)', alpha=0.5)
+        
         ax1.set_xscale('log')
         ax1.set_xticks(all_theory_sizes)
         ax1.set_xticklabels([str(s) for s in all_theory_sizes])
@@ -1584,18 +1683,78 @@ def main():
         ax1.set_ylabel('D$_{measured}$ / D$_{theory}$', fontsize=12)
         ax1.set_title('Diffusion Coefficients Normalized by Theory\n(Stokes-Einstein)',
                      fontsize=13, fontweight='bold')
-        ax1.legend(fontsize=11, loc='best')
+        ax1.legend(fontsize=9, loc='best')
         ax1.grid(True, alpha=0.3, which='both')
-        ax1.set_ylim([0, max(D_norm_theory) * 1.2])
         
-        # Plot 2: Normalized by DLS
+        # Plot 2: Normalized by DLS with individual files
         if dls_sizes:
+            # Plot individual files
+            for file_data in file_D_values:
+                size = file_data['particle_size_nm']
+                if size not in DLS_MEASUREMENTS:
+                    continue
+                
+                D = file_data['D']
+                D_err = file_data['D_err']
+                
+                matching_row = msd_results_df[
+                    (msd_results_df['particle_size_nm'] == size) & 
+                    (msd_results_df['xml_name'] == file_data['file_name'] + '.xml')
+                ]
+                
+                if not matching_row.empty:
+                    mode = matching_row.iloc[0]['mode']
+                else:
+                    mode = 'Unknown'
+                
+                if mode == '60 FPS':
+                    marker = '^'
+                    alpha = 0.6
+                elif mode == '20 FPS':
+                    marker = 's'
+                    alpha = 0.5
+                else:
+                    marker = 'o'
+                    alpha = 0.4
+                
+                size_files = [f for f in file_D_values if f['particle_size_nm'] == size]
+                file_index = size_files.index(file_data)
+                num_files = len(size_files)
+                
+                if num_files > 1:
+                    offset = (file_index - (num_files - 1) / 2) * (size * offset_scale / num_files)
+                else:
+                    offset = 0
+                
+                x_pos = size + offset
+                
+                # Normalize by DLS
+                D_dls = DLS_MEASUREMENTS[size]
+                D_norm = D / D_dls
+                D_norm_err = D_err / D_dls
+                
+                ax2.errorbar(x_pos, D_norm, yerr=D_norm_err, fmt=marker, 
+                           markersize=6, color=size_to_color[size], 
+                           ecolor=size_to_color[size], elinewidth=1, 
+                           capsize=2, capthick=1, alpha=alpha)
+            
+            # Plot mean values
             ax2.errorbar(dls_sizes, D_norm_dls, yerr=D_norm_dls_err,
-                        fmt='o', markersize=8, color='green', ecolor='black',
-                        elinewidth=2, capsize=4, capthick=2,
-                        label='D$_{measured}$ / D$_{DLS}$')
+                        fmt='D', markersize=10, color='green', ecolor='black',
+                        elinewidth=2, capsize=5, capthick=2,
+                        label='Mean D / D$_{DLS}$ ± Std', zorder=5)
+            
             ax2.axhline(y=1.0, color='gray', linestyle='--', linewidth=2,
-                       label='DLS in water (D/D$_{DLS}$ = 1)')
+                       label='DLS in water (D/D$_{DLS}$ = 1)', zorder=6)
+            
+            # Legend entries
+            ax2.errorbar([], [], [], fmt='^', markersize=6, color='gray', 
+                       ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                       label='Individual Files (60 FPS)', alpha=0.6)
+            ax2.errorbar([], [], [], fmt='s', markersize=6, color='gray', 
+                       ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                       label='Individual Files (20 FPS)', alpha=0.5)
+            
             ax2.set_xscale('log')
             ax2.set_xticks(all_theory_sizes)
             ax2.set_xticklabels([str(s) for s in all_theory_sizes])
@@ -1603,9 +1762,8 @@ def main():
             ax2.set_ylabel('D$_{measured}$ / D$_{DLS}$', fontsize=12)
             ax2.set_title('Diffusion Coefficients Normalized by DLS\n(Measured in Water)',
                          fontsize=13, fontweight='bold')
-            ax2.legend(fontsize=11, loc='best')
+            ax2.legend(fontsize=9, loc='best')
             ax2.grid(True, alpha=0.3, which='both')
-            ax2.set_ylim([0, max(D_norm_dls) * 1.2])
         else:
             ax2.text(0.5, 0.5, 'No DLS data available',
                     transform=ax2.transAxes, fontsize=14,
@@ -1620,7 +1778,7 @@ def main():
         # Save normalized plot
         output_norm_plot = SAVE_PATH / 'normalized_diffusion_coefficients.png'
         plt.savefig(output_norm_plot, dpi=300, bbox_inches='tight')
-        print(f"✓ Normalized diffusion plot saved to: {output_norm_plot}")
+        print(f"[OK] Normalized diffusion plot saved to: {output_norm_plot}")
         plt.show()
         plt.close(fig)
         
@@ -1639,7 +1797,7 @@ def main():
                 dls_str = "N/A"
             print(f"{size:>10.0f} | {theory_str:>12} | {dls_str:>12}")
         print("-" * 70)
-    print(f"\n✓ Analysis complete!\n")
+    print(f"\n[OK] Analysis complete!\n")
     # Step 7: Normalize by reference measurements (20mg C16 hydrogel)
     print("\n" + "=" * 70)
     print("Step 7: Normalizing by reference measurements (20mg C16 hydrogel)...")
@@ -1665,7 +1823,7 @@ def main():
     }
     
     if not D_values:
-        print("⚠ No diffusion coefficients available for normalization")
+        print("[WARNING] No diffusion coefficients available for normalization")
     else:
         # Normalize by reference measurements (only for sizes with reference data)
         ref_sizes = [s for s in particle_sizes if s in REFERENCE_20MG_C16]
@@ -1685,13 +1843,66 @@ def main():
             # Create updated comparison figure with three subplots
             fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
             
-            # Plot 1: Normalized by theory
+            # Plot 1: Normalized by theory with individual files
+            for file_data in file_D_values:
+                size = file_data['particle_size_nm']
+                D = file_data['D']
+                D_err = file_data['D_err']
+                
+                matching_row = msd_results_df[
+                    (msd_results_df['particle_size_nm'] == size) & 
+                    (msd_results_df['xml_name'] == file_data['file_name'] + '.xml')
+                ]
+                
+                if not matching_row.empty:
+                    mode = matching_row.iloc[0]['mode']
+                else:
+                    mode = 'Unknown'
+                
+                if mode == '60 FPS':
+                    marker = '^'
+                    alpha = 0.5
+                elif mode == '20 FPS':
+                    marker = 's'
+                    alpha = 0.4
+                else:
+                    marker = 'o'
+                    alpha = 0.3
+                
+                size_files = [f for f in file_D_values if f['particle_size_nm'] == size]
+                file_index = size_files.index(file_data)
+                num_files = len(size_files)
+                
+                if num_files > 1:
+                    offset = (file_index - (num_files - 1) / 2) * (size * offset_scale / num_files)
+                else:
+                    offset = 0
+                
+                x_pos = size + offset
+                
+                D_theory = calculate_theoretical_D(size)
+                D_norm = D / D_theory
+                D_norm_err = D_err / D_theory
+                
+                ax1.errorbar(x_pos, D_norm, yerr=D_norm_err, fmt=marker, 
+                           markersize=5, color=size_to_color[size], 
+                           ecolor=size_to_color[size], elinewidth=1, 
+                           capsize=2, capthick=1, alpha=alpha)
+            
             ax1.errorbar(particle_sizes, D_norm_theory, yerr=D_norm_theory_err,
-                        fmt='o', markersize=8, color='blue', ecolor='black',
+                        fmt='D', markersize=9, color='blue', ecolor='black',
                         elinewidth=2, capsize=4, capthick=2,
-                        label='D$_{measured}$ / D$_{theory}$')
+                        label='Mean D / D$_{theory}$ ± Std', zorder=5)
             ax1.axhline(y=1.0, color='black', linestyle='--', linewidth=2,
-                       label='Theory (D/D$_{theory}$ = 1)')
+                       label='Theory (D/D$_{theory}$ = 1)', zorder=6)
+            
+            ax1.errorbar([], [], [], fmt='^', markersize=5, color='gray', 
+                       ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                       label='Files (60 FPS)', alpha=0.5)
+            ax1.errorbar([], [], [], fmt='s', markersize=5, color='gray', 
+                       ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                       label='Files (20 FPS)', alpha=0.4)
+            
             ax1.set_xscale('log')
             ax1.set_xticks(all_theory_sizes)
             ax1.set_xticklabels([str(s) for s in all_theory_sizes])
@@ -1699,18 +1910,73 @@ def main():
             ax1.set_ylabel('D$_{measured}$ / D$_{theory}$', fontsize=12)
             ax1.set_title('Normalized by Theory\n(Stokes-Einstein)',
                          fontsize=13, fontweight='bold')
-            ax1.legend(fontsize=10, loc='best')
+            ax1.legend(fontsize=8, loc='best')
             ax1.grid(True, alpha=0.3, which='both')
-            ax1.set_ylim([0, max(D_norm_theory) * 1.2])
             
-            # Plot 2: Normalized by DLS
+            # Plot 2: Normalized by DLS with individual files
             if dls_sizes:
+                for file_data in file_D_values:
+                    size = file_data['particle_size_nm']
+                    if size not in DLS_MEASUREMENTS:
+                        continue
+                    
+                    D = file_data['D']
+                    D_err = file_data['D_err']
+                    
+                    matching_row = msd_results_df[
+                        (msd_results_df['particle_size_nm'] == size) & 
+                        (msd_results_df['xml_name'] == file_data['file_name'] + '.xml')
+                    ]
+                    
+                    if not matching_row.empty:
+                        mode = matching_row.iloc[0]['mode']
+                    else:
+                        mode = 'Unknown'
+                    
+                    if mode == '60 FPS':
+                        marker = '^'
+                        alpha = 0.5
+                    elif mode == '20 FPS':
+                        marker = 's'
+                        alpha = 0.4
+                    else:
+                        marker = 'o'
+                        alpha = 0.3
+                    
+                    size_files = [f for f in file_D_values if f['particle_size_nm'] == size]
+                    file_index = size_files.index(file_data)
+                    num_files = len(size_files)
+                    
+                    if num_files > 1:
+                        offset = (file_index - (num_files - 1) / 2) * (size * offset_scale / num_files)
+                    else:
+                        offset = 0
+                    
+                    x_pos = size + offset
+                    
+                    D_dls = DLS_MEASUREMENTS[size]
+                    D_norm = D / D_dls
+                    D_norm_err = D_err / D_dls
+                    
+                    ax2.errorbar(x_pos, D_norm, yerr=D_norm_err, fmt=marker, 
+                               markersize=5, color=size_to_color[size], 
+                               ecolor=size_to_color[size], elinewidth=1, 
+                               capsize=2, capthick=1, alpha=alpha)
+                
                 ax2.errorbar(dls_sizes, D_norm_dls, yerr=D_norm_dls_err,
-                            fmt='o', markersize=8, color='green', ecolor='black',
+                            fmt='D', markersize=9, color='green', ecolor='black',
                             elinewidth=2, capsize=4, capthick=2,
-                            label='D$_{measured}$ / D$_{DLS}$')
+                            label='Mean D / D$_{DLS}$ ± Std', zorder=5)
                 ax2.axhline(y=1.0, color='gray', linestyle='--', linewidth=2,
-                           label='DLS in water (D/D$_{DLS}$ = 1)')
+                           label='DLS in water (D/D$_{DLS}$ = 1)', zorder=6)
+                
+                ax2.errorbar([], [], [], fmt='^', markersize=5, color='gray', 
+                           ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                           label='Files (60 FPS)', alpha=0.5)
+                ax2.errorbar([], [], [], fmt='s', markersize=5, color='gray', 
+                           ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                           label='Files (20 FPS)', alpha=0.4)
+                
                 ax2.set_xscale('log')
                 ax2.set_xticks(all_theory_sizes)
                 ax2.set_xticklabels([str(s) for s in all_theory_sizes])
@@ -1718,17 +1984,72 @@ def main():
                 ax2.set_ylabel('D$_{measured}$ / D$_{DLS}$', fontsize=12)
                 ax2.set_title('Normalized by DLS\n(Measured in Water)',
                              fontsize=13, fontweight='bold')
-                ax2.legend(fontsize=10, loc='best')
+                ax2.legend(fontsize=8, loc='best')
                 ax2.grid(True, alpha=0.3, which='both')
-                ax2.set_ylim([0, max(D_norm_dls) * 1.2])
             
-            # Plot 3: Normalized by reference measurements
+            # Plot 3: Normalized by reference measurements with individual files
+            for file_data in file_D_values:
+                size = file_data['particle_size_nm']
+                if size not in REFERENCE_20MG_C16:
+                    continue
+                
+                D = file_data['D']
+                D_err = file_data['D_err']
+                
+                matching_row = msd_results_df[
+                    (msd_results_df['particle_size_nm'] == size) & 
+                    (msd_results_df['xml_name'] == file_data['file_name'] + '.xml')
+                ]
+                
+                if not matching_row.empty:
+                    mode = matching_row.iloc[0]['mode']
+                else:
+                    mode = 'Unknown'
+                
+                if mode == '60 FPS':
+                    marker = '^'
+                    alpha = 0.5
+                elif mode == '20 FPS':
+                    marker = 's'
+                    alpha = 0.4
+                else:
+                    marker = 'o'
+                    alpha = 0.3
+                
+                size_files = [f for f in file_D_values if f['particle_size_nm'] == size]
+                file_index = size_files.index(file_data)
+                num_files = len(size_files)
+                
+                if num_files > 1:
+                    offset = (file_index - (num_files - 1) / 2) * (size * offset_scale / num_files)
+                else:
+                    offset = 0
+                
+                x_pos = size + offset
+                
+                D_ref = REFERENCE_20MG_C16[size]
+                D_norm = D / D_ref
+                D_norm_err = D_err / D_ref
+                
+                ax3.errorbar(x_pos, D_norm, yerr=D_norm_err, fmt=marker, 
+                           markersize=5, color=size_to_color[size], 
+                           ecolor=size_to_color[size], elinewidth=1, 
+                           capsize=2, capthick=1, alpha=alpha)
+            
             ax3.errorbar(ref_sizes, D_norm_ref, yerr=D_norm_ref_err,
-                        fmt='o', markersize=8, color='red', ecolor='black',
+                        fmt='D', markersize=9, color='red', ecolor='black',
                         elinewidth=2, capsize=4, capthick=2,
-                        label='D$_{measured}$ / D$_{ref}$')
+                        label='Mean D / D$_{ref}$ ± Std', zorder=5)
             ax3.axhline(y=1.0, color='darkred', linestyle='--', linewidth=2,
-                       label='20mg C16 reference (D/D$_{ref}$ = 1)')
+                       label='20mg C16 reference (D/D$_{ref}$ = 1)', zorder=6)
+            
+            ax3.errorbar([], [], [], fmt='^', markersize=5, color='gray', 
+                       ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                       label='Files (60 FPS)', alpha=0.5)
+            ax3.errorbar([], [], [], fmt='s', markersize=5, color='gray', 
+                       ecolor='gray', elinewidth=1, capsize=2, capthick=1,
+                       label='Files (20 FPS)', alpha=0.4)
+            
             ax3.set_xscale('log')
             ax3.set_xticks(all_theory_sizes)
             ax3.set_xticklabels([str(s) for s in all_theory_sizes])
@@ -1736,16 +2057,15 @@ def main():
             ax3.set_ylabel('D$_{measured}$ / D$_{ref}$', fontsize=12)
             ax3.set_title('Normalized by Reference\n(20mg C16 Hydrogel)',
                          fontsize=13, fontweight='bold')
-            ax3.legend(fontsize=10, loc='best')
+            ax3.legend(fontsize=8, loc='best')
             ax3.grid(True, alpha=0.3, which='both')
-            ax3.set_ylim([0, max(D_norm_ref) * 1.2])
             
             plt.tight_layout()
             
             # Save comprehensive normalized plot
             output_norm_comprehensive = SAVE_PATH / 'normalized_diffusion_all_methods.png'
             plt.savefig(output_norm_comprehensive, dpi=300, bbox_inches='tight')
-            print(f"✓ Comprehensive normalized diffusion plot saved to: {output_norm_comprehensive}")
+            print(f"[OK] Comprehensive normalized diffusion plot saved to: {output_norm_comprehensive}")
             plt.show()
             plt.close(fig)
             
@@ -1773,7 +2093,7 @@ def main():
                 print(f"{size:>10.0f} | {theory_str:>16} | {dls_str:>16} | {ref_str:>16}")
             print("-" * 80)
         else:
-            print("⚠ No matching particle sizes found in reference measurements")
+            print("[WARNING] No matching particle sizes found in reference measurements")
 
 if __name__ == "__main__":
     main()
