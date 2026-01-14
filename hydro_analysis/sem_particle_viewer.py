@@ -11,7 +11,7 @@ from matplotlib.figure import Figure
 from qtpy import QtCore, QtGui, QtWidgets
 from skimage import util
 
-from .sem_particle_analysis import ParticleStatistics, create_overlay, perform_analysis, load_image_with_dpi
+from sem_particle_analysis import ParticleStatistics, create_overlay, perform_analysis, load_image_with_dpi
 
 
 def _ensure_float_image(image: np.ndarray) -> np.ndarray:
