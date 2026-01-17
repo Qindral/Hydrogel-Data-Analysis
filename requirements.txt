@@ -1,5 +1,6 @@
+''' venv\Scripts\activate .venv\Scripts\activate'''
 # Minimal dependencies for hydro_analysis (adjust versions as needed)
-numpy>=1.24
+numpy>=2.0,<2.4
 pandas>=2.0
 scipy>=1.10
 matplotlib>=3.6
@@ -12,3 +13,15 @@ pco_image
 plotly>=5.0
 # Dev / testing (optional)
 pytest>=7.2
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+tifffile>=2023.0.0
+trackpy>=0.6.0
+matplotlib>=3.7.0
+Pillow>=10.0.0
+opencv-python>=4.8.0
+napari>=0.4.18
+magicgui>=0.7.0
+qtpy>=2.3.0
+scikit-image>=0.21.0
