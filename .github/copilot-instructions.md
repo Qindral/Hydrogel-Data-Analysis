@@ -1,33 +1,33 @@
 # AI Coding Agent Instructions for Hydrogel-Data-Analysis
 
 ## Project Overview
-**Hydrogel-Data-Analysis** is a python image analysis plugin for hydrogel particle dynamics research. It combines TIFF image loading with particle tracking (trackpy) and mean-squared displacement (MSD) analysis to characterize particle motion in hydrogel systems.
+**Hydrogel-Data-Analysis** is a Python image analysis toolkit for hydrogel particle dynamics research. It combines TIFF image loading with particle tracking (trackpy) and multiple analysis methods to characterize particle motion in hydrogel and aqueous systems.
 
 ### Core Domains
 - **Image I/O**: Load TIFF files with OME, Leica, and PCO metadata extraction
 - **Metadata Management**: Standardize instrument metadata into unified `DatasetMetadata` objects
-- **Particle Tracking**: Use trackpy for spot detection and trajectory linking
-- **Dynamics Analysis**: Compute MSD and fit power-law exponents to measure diffusion
-- **UI/Visualization**: napari plugin with Qt-based info and display panels
+- **Particle Tracking**: Use trackpy for spot detection and trajectory linking; also imports TrackMate XML
+- **Dynamics Analysis**: Three methods — MSD (mean-squared displacement), step size distributions, and SEM particle sizing
+- **UI/Visualization**: Interactive parameter tuner (matplotlib-based) and SEM particle viewer (Qt-based)
 
 ## Critical Architecture Patterns
 
-### 1. Data Pipeline: LoadedDataset → MSD Analysis
+### 1. Data Pipeline: LoadedDataset → Analysis
 ```
 TIFF → DatasetLoader → LoadedDataset (data + DatasetMetadata)
                     ↓
-              napari Viewer (Raw/Filtered layers)
-                    ↓
-          trackpy_msd.main() or pytrackmate_MSD_XML()
-                    ↓
-              MSD DataFrame & plots
+              Three analysis paths:
+              1. trackpy_msd.main() - Spot detection → MSD
+              2. MSD_Trackpy_clean.py - TrackMate XML → MSD  
+              3. Schrittweiten_methode_*.py - TrackMate XML → Step size D
 ```
 
 **Key Files**:
-- [data_loader.py](data_loader.py): `DatasetLoader` class handles TIFF parsing
-- [metadata.py](metadata.py): `DatasetMetadata` dataclass + utilities
-- [trackpy_msd.py](trackpy_msd.py): Unified MSD computation pipeline
-- [napari_plugin.py](napari_plugin.py): Entry points for napari integration
+- [data_loader.py](hydro_analysis/data_loader.py): `DatasetLoader` class handles TIFF parsing
+- [metadata.py](hydro_analysis/metadata.py): `DatasetMetadata` dataclass + utilities
+- [trackpy_msd.py](hydro_analysis/trackpy_msd.py): Main MSD computation with spot detection
+- [MSD_Trackpy_clean.py](hydro_analysis/MSD_Trackpy_clean.py): Cleaner XML→MSD pipeline
+- [Particle_Parameter_Tuner.py](hydro_analysis/Particle_Parameter_Tuner.py): Interactive GUI for tuning detection params
 
 ### 2. Metadata Extraction Strategy
 The loader applies **cascading metadata sources**:
@@ -59,23 +59,39 @@ This hints at analysis strategy without requiring explicit user input.
 - MSD computed via trackpy's built-in; power-law fitting via `fit_powerlaw_with_errors()`
 
 **Files**:
-- [MSD_Trackpy_clean.py](MSD_Trackpy_clean.py): Cleaner version; prefer this
-- [pytrackmate_MSD_XML.py](pytrackmate_MSD_XML.py): Loads from external TrackMate XML
-- [MSD_Trackpy.py](MSD_Trackpy.py): Older version; legacy
+- [MSD_Trackpy_clean.py](hydro_analysis/MSD_Trackpy_clean.py): XML parsing with `load_tracks_xml()`; outputs trackpy-compatible DataFrame
+- [pytrackmate_MSD_XML.py](hydro_analysis/pytrackmate_MSD_XML.py): Batch analysis over multiple TrackMate XMLs; includes particle size detection
+- [trackpy_msd.py](hydro_analysis/trackpy_msd.py): End-to-end: TIFF → spot detection → linking → MSD
+- [MSD_Trackpy.py](hydro_analysis/MSD_Trackpy.py): Older version; legacy
 
-### 5. Qt/Napari Integration
-- **DisplayPanel** ([_qt.py](\_qt.py)): Colormap, sigma filter, scalebar toggles
-- **InfoPanel** ([_qt.py](\_qt.py)): Read-only metadata display (calibration, kind, axes)
-- **Docking**: `open_dataset_dialog()` creates "Raw" and "Filtered" image layers; attaches panels to viewer
+### 5. Interactive Parameter Tuning
+[Particle_Parameter_Tuner.py](hydro_analysis/Particle_Parameter_Tuner.py) provides a matplotlib-based GUI for optimizing trackpy parameters:
+- **Real-time preview**: Shows detected spots overlaid on selected frame
+- **Live linking**: Displays particle trajectories as they're linked
+- **Adjustable params**: Sliders for diameter, minmass, search_range, memory, rolling-ball/Gaussian filters
+- **Frame navigation**: Step through video to verify detection quality
+- **Export tracks**: Save linked DataFrame to pickle when satisfied
 
-**Scale Setting**: `_update_scale()` applies physical units (µm/px, µm) to napari layers based on metadata.
+**Usage Pattern**: Run standalone on a TIFF to find optimal parameters before batch processing.
+
+### 6. SEM Particle Analysis
+Two complementary tools for analyzing scanning electron microscopy images of hydrogel particles:
+- [sem_particle_analysis.py](hydro_analysis/sem_particle_analysis.py): Core analysis logic (watershed segmentation, diameter measurement)
+- [sem_particle_viewer.py](hydro_analysis/sem_particle_viewer.py): Qt GUI with histogram display, overlay visualization, and parameter adjustment
 
 ## Developer Workflows
 
-### Running Tests
-No formal test suite yet. Use:
+### Running Scripts Directly
+Most scripts are standalone modules with `main()` functions:
 ```bash
-python -m pytest hydro_analysis/ -v
+# MSD analysis from TIFF
+python -m hydro_analysis.trackpy_msd
+
+# Interactive parameter tuning
+python hydro_analysis/Particle_Parameter_Tuner.py
+
+# Step size diffusion analysis (batch)
+python hydro_analysis/Schrittweiten_methode_D0.py
 ```
 
 ### Loading a Dataset Interactively
@@ -102,10 +118,12 @@ main(
 )
 ```
 
-### Napari Plugin Launch
+### Running Parameter Tuner
 ```bash
-napari
-# Then use Plugins → Hydro Analysis → Open Dataset…
+# Launch interactive GUI for parameter optimization
+python hydro_analysis/Particle_Parameter_Tuner.py
+# Select TIFF file via dialog, adjust sliders in real-time
+# Export linked tracks via "Export Tracks" button
 ```
 
 ## Code Conventions
@@ -163,10 +181,14 @@ Trackpy's MSD functions rely on these attributes; always set them.
 [pytrackmate_MSD_XML.py](pytrackmate_MSD_XML.py) parses TrackMate outputs with frame interval and spatial unit metadata. Converts to trackpy-compatible DataFrame.
 
 ### PCO Image Files
-[frequency_check_Pco.py](frequency_check_Pco.py) reads PCO-specific TIFF tags. Integrated into `_populate_metadata_from_standard_tags()`.
+[frequency_check_Pco.py](hydro_analysis/frequency_check_Pco.py) reads PCO-specific TIFF tags. Integrated into `_populate_metadata_from_standard_tags()`.
 
-### Napari Layers & Metadata Storage
-Metadata attached to napari layers as `raw_layer.metadata["metadata"] = DatasetMetadata(...)`. Allows UI panels to query calibration without disk I/O.
+### Step Size Diffusion Analysis
+- [Stepsize.py](hydro_analysis/Stepsize.py): Core step size (displacement) calculation utilities
+- [Schrittweiten_methode_D0.py](hydro_analysis/Schrittweiten_methode_D0.py): Batch processing of TrackMate XML for water measurements
+- [Schrittweiten_methode_20mg.py](hydro_analysis/Schrittweiten_methode_20mg.py): Analysis for 20mg/ml hydrogel samples
+
+**Method**: Calculates diffusion coefficient from frame-to-frame displacement distributions (dx, dy) by fitting Gaussians and using D = σ² / (2*dt).
 
 ## Common Pitfalls
 
@@ -174,7 +196,7 @@ Metadata attached to napari layers as `raw_layer.metadata["metadata"] = DatasetM
 2. **Background Subtraction**: Rolling-ball radius must match (2×radius) not radius alone for cv2 kernels.
 3. **Frame Indexing**: XML frame indices are 0-based; ensure consistency with pandas DataFrames.
 4. **Missing Metadata**: Gracefully handle absent calibration; infer_kind() uses heuristics, not guarantees.
-5. **Qt Thread Safety**: Use `@thread_worker` for long-running trackpy operations to avoid blocking napari UI.
+5. **Parameter Tuning**: Always use Particle_Parameter_Tuner.py before batch processing to find optimal trackpy parameters for your specific data.
 
 ## File Organization
 ```
@@ -182,16 +204,40 @@ hydro_analysis/
   __init__.py              # Module exports (DatasetLoader, DatasetMetadata)
   data_loader.py           # TIFF I/O & metadata extraction
   metadata.py              # DatasetMetadata + utilities
-  napari_plugin.py         # napari entry points & dialogs
-  _qt.py                   # InfoPanel, DisplayPanel widgets
   trackpy_msd.py           # Main MSD analysis pipeline
   MSD_Trackpy_clean.py     # Cleaner trackpy wrapper (prefer)
   pytrackmate_MSD_XML.py   # TrackMate XML parsing
-  plots.py                 # Visualization helpers
   Particle_Parameter_Tuner.py  # Interactive parameter UI
   frequency_check_Pco.py   # PCO-specific metadata
   Stepsize.py              # Step/displacement analysis
+  Schrittweiten_methode_D0.py    # Batch step size analysis (water)
+  Schrittweiten_methode_20mg.py  # Batch step size analysis (20mg/ml)
+  sem_particle_analysis.py       # SEM particle core analysis
+  sem_particle_viewer.py         # Qt-based SEM GUI
 ```
 
 Data stored in `Data/` with instrument-dated subdirectories (e.g., `2025_09_01_16_03_50--FRAP/`).
+
+## Refactoring Guidelines
+
+**⚠️ IMPORTANT**: This codebase is undergoing active refactoring. See [REFACTORING_PLAN.md](../REFACTORING_PLAN.md) for the comprehensive restructuring strategy.
+
+### Current Refactoring Goals
+1. **Consolidate Duplicate Code**: Functions like `fit_powerlaw_with_errors()`, `load_tracks_xml()`, and `subtract_background()` are duplicated across 4-7 files
+2. **Create Core Modules**: Centralized `core/` directory for io, analysis, tracking, visualization
+3. **Flexible Processing**: Support single-file, batch, and folder processing modes automatically
+4. **Parallelization**: Enable multi-threaded processing for independent files
+5. **Structured Logging**: Replace print statements with proper logging (especially for batch operations)
+6. **Deferred Visualization**: Collect results first, then aggregate and save figures (not immediate saving)
+
+### When Adding New Analysis Code
+- **Don't duplicate**: Check if similar functions exist in other scripts first
+- **Use core modules**: If refactored `core/` modules exist, import from there
+- **Follow workflow pattern**: Inherit from `BaseWorkflow` if implementing new analysis types
+- **Log, don't print**: Use `logging` module instead of print() for batch processing
+- **Return figures**: Visualization functions should return `plt.Figure` objects, not save directly
+- **Support flexibility**: Design functions to work with single files or lists of files
+
+### Migration Status
+Check [REFACTORING_PLAN.md](../REFACTORING_PLAN.md) for current phase and which modules have been refactored.
 
