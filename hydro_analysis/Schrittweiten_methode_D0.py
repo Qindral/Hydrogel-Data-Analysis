@@ -104,8 +104,9 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
     """
     Parse .rec file to extract acquisition parameters.
     
-    Looks for exposure time and delay to calculate FPS.
+    Looks for exposure time, delay, and image size to calculate FPS and MPP.
     Format: "Exposure / Delay        : 50.000000 ms / 0.000000 ms"
+    Format: "Picture Size horz./vert.: 200/150"
     
     Args:
         rec_path: Path to .rec file
@@ -115,19 +116,25 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
         - exposure_ms: Exposure time in milliseconds
         - delay_ms: Delay time in milliseconds
         - fps: Calculated frames per second (1000 / (exposure + delay))
+        - size_x: Image width in pixels
+        - size_y: Image height in pixels
     """
     result = {
         'exposure_ms': None,
         'delay_ms': None,
-        'fps': None
+        'fps': None,
+        'size_x': None,
+        'size_y': None
     }
     
     try:
-        with open(rec_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
+        # Try UTF-16 first (PCO CamWare standard), then UTF-8
+        try:
+            content = rec_path.read_text(encoding='utf-16', errors='replace')
+        except:
+            content = rec_path.read_text(encoding='utf-8', errors='replace')
             
         # Search for exposure/delay line
-        # Pattern: "Exposure / Delay        : 50.000000 ms / 0.000000 ms"
         match = re.search(r'Exposure\s*/\s*Delay\s*:\s*([\d.]+)\s*ms\s*/\s*([\d.]+)\s*ms', 
                          content, re.IGNORECASE)
         
@@ -142,9 +149,12 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
             total_time_ms = exposure + delay
             if total_time_ms > 0:
                 result['fps'] = 1000.0 / total_time_ms
-                print(f"    DEBUG REC: {rec_path.name} -> Exp={exposure:.2f}ms, Delay={delay:.2f}ms, FPS={result['fps']:.2f}")
-        else:
-            print(f"    WARNING: Could not find Exposure/Delay in {rec_path.name}")
+        
+        # Search for image size
+        match = re.search(r'Picture Size\s*horz\./vert\.\s*:\s*(\d+)\s*/\s*(\d+)', content)
+        if match:
+            result['size_x'] = int(match.group(1))
+            result['size_y'] = int(match.group(2))
                 
     except Exception as e:
         print(f"    ERROR: Could not parse {rec_path.name}: {e}")
@@ -213,6 +223,37 @@ def get_mpp_from_fps(fps: float) -> float:
         # Default to 20 FPS calibration for other rates
         print(f"Warning: Unusual FPS {fps:.2f}, using default mpp=0.15")
         return 0.15
+
+
+def get_mpp_from_size(width: int, height: int) -> float:
+    """
+    Determine micrometers per pixel based on image dimensions.
+    Based on known camera configurations.
+    
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels
+        
+    Returns:
+        Micrometers per pixel calibration value
+    """
+    # Known dimension to mpp mappings
+    dimension_map = {
+        (200, 150): 0.3,
+        (400, 300): 0.15,
+        (696, 520): 0.149,
+    }
+    
+    if (width, height) in dimension_map:
+        return dimension_map[(width, height)]
+    
+    # Fallback: assume smaller images have higher magnification
+    if width <= 250 and height <= 200:
+        return 0.3
+    elif width <= 450 and height <= 350:
+        return 0.15
+    else:
+        return 0.149
 
 
 # ============================================================================
@@ -384,16 +425,22 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
         rec_files = sorted(list(subfolder.glob("*.rec")))
         print(f"   Found {len(rec_files)} .rec files")
         
-        # Parse all REC files to get FPS information for this particle size
+        # Parse all REC files to get FPS and size information
         fps_info_list = []
+        size_from_rec = None
+        
         for rec_file in rec_files:
             rec_info = parse_rec_file(rec_file)
             if rec_info['fps'] is not None:
                 fps_info_list.append(rec_info)
-                print(f"     • {rec_file.name}: {rec_info['fps']:.2f} fps")
+                # Get size from first REC file that has it
+                if size_from_rec is None and rec_info['size_x'] is not None:
+                    size_from_rec = (rec_info['size_x'], rec_info['size_y'])
+                print(f"     • {rec_file.name}: {rec_info['fps']:.2f} fps, size={rec_info['size_x']}x{rec_info['size_y']} px" 
+                      if rec_info['size_x'] else f"     • {rec_file.name}: {rec_info['fps']:.2f} fps")
         
         # Calculate average FPS for this particle size
-        avg_fps_info = {'exposure_ms': None, 'delay_ms': None, 'fps': None}
+        avg_fps_info = {'exposure_ms': None, 'delay_ms': None, 'fps': None, 'size_x': None, 'size_y': None}
         num_valid_rec = 0
         
         if fps_info_list:
@@ -402,8 +449,15 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
                 'delay_ms': np.mean([x['delay_ms'] for x in fps_info_list]),
                 'fps': np.mean([x['fps'] for x in fps_info_list])
             }
+            # Add size from REC if available
+            if size_from_rec:
+                avg_fps_info['size_x'] = size_from_rec[0]
+                avg_fps_info['size_y'] = size_from_rec[1]
+            
             num_valid_rec = len(fps_info_list)
-            print(f"   → Average FPS: {avg_fps_info['fps']:.2f} (from {num_valid_rec} files)")
+            print(f"   -> Average FPS: {avg_fps_info['fps']:.2f} (from {num_valid_rec} files)")
+            if size_from_rec:
+                print(f"   -> Image size from REC: {size_from_rec[0]}x{size_from_rec[1]} px")
         else:
             print(f"   Warning: No valid FPS data from .rec files")
         
@@ -423,15 +477,26 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
         
         # Create one record per XML file
         for xml_file in xml_files:
-            # Extract image dimensions from XML
+            # Extract image dimensions from XML (fallback if not in REC)
             x_max, y_max = extract_image_dimensions_from_xml(xml_file)
             
-            # Determine mpp and fps based on image size and/or .rec data
-            mpp, fps, mode = get_mpp_from_fps_and_size(
-                fps=avg_fps_info['fps'],
-                x_max=x_max,
-                y_max=y_max
-            )
+            # Prefer size from REC file if available, otherwise use XML
+            if avg_fps_info.get('size_x') is not None:
+                x_max = avg_fps_info['size_x']
+                y_max = avg_fps_info['size_y']
+            
+            # Determine mpp based on image size (prioritize), then fps
+            if x_max is not None and y_max is not None:
+                mpp = get_mpp_from_size(x_max, y_max)
+                fps = avg_fps_info['fps'] if avg_fps_info['fps'] else DEFAULT_FPS
+                mode = f'{x_max}x{y_max}px'
+            else:
+                # Fallback to fps-based detection
+                mpp, fps, mode = get_mpp_from_fps_and_size(
+                    fps=avg_fps_info['fps'],
+                    x_max=x_max,
+                    y_max=y_max
+                )
             
             file_records.append({
                 'particle_size_nm': particle_size,
@@ -448,10 +513,10 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
                 'num_rec_files': num_valid_rec,
             })
             
-            size_info = f"{x_max}×{y_max}" if x_max and y_max else "unknown size"
-            print(f"     [OK] {xml_file.name} [{size_info} → {mode}, {mpp} µm/px]")
+            size_info = f"{x_max}x{y_max}" if x_max and y_max else "unknown size"
+            print(f"     [OK] {xml_file.name} [{size_info} -> {mode}, {mpp} um/px]")
         
-        print(f"   → Created {len(xml_files)} records")
+        print(f"   -> Created {len(xml_files)} records")
     
     print(f"\n" + "=" * 70)
     print(f"[OK] Total XML files found: {len(file_records)}")
@@ -1180,7 +1245,7 @@ def plot_diffusion_comparison(combined_df: pd.DataFrame, results_df: pd.DataFram
     ax.set_yscale('log')
     ax.set_xlabel('Particle size [nm]', fontsize=12)
     ax.set_ylabel('Diffusion coefficient D [µm²/s]', fontsize=12)
-    ax.set_title('Diffusion Coefficients: Step Size Method vs Theory (Individual Files)', 
+    ax.set_title('Diffusion Coefficients in water: Comparing two analysis methods\nStep Size Method vs Theory', 
                 fontsize=14, fontweight='bold')
     ax.legend(fontsize=10, loc='best')
     ax.grid(True, alpha=0.3, which='both')

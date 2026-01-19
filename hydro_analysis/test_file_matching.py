@@ -1,40 +1,52 @@
-"""Test the new file matching system."""
+"""Test the new DatasetIndex file matching system."""
 
 from pathlib import Path
-from core import find_dataset_files
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from hydro_analysis.core.io import DatasetIndex
 
 def test_file_matching():
-    """Test file discovery and matching."""
+    """Test file discovery and matching with DatasetIndex."""
     
-    test_path = Path(r"C:\Users\Jonas\Documents\GitHub\Hydrogel-Data-Analysis\Data\29Aug_lang\TileScan 2\B\2")
+    test_path = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\50 nm")
     
     if not test_path.exists():
         print(f"Test path not found: {test_path}")
         return
     
-    print("Testing file matching system")
+    print("Testing DatasetIndex file matching")
     print("="*70)
     print(f"Path: {test_path}\n")
     
-    datasets = find_dataset_files(test_path)
+    # Build index
+    idx = DatasetIndex.from_root(test_path)
     
-    print(f"Found {len(datasets)} datasets:\n")
+    print(f"Found {len(idx.datasets)} datasets:\n")
     
-    for i, ds in enumerate(datasets, 1):
-        print(f"{i}. {ds.base_name}")
-        print(f"   XML: {ds.xml_path.name} {'✓' if ds.xml_path.exists() else '✗'}")
-        print(f"   TIF: {ds.tif_path.name if ds.tif_path else 'NOT FOUND'} {'✓' if ds.tif_path and ds.tif_path.exists() else '✗' if ds.tif_path else '-'}")
+    for i, base_name in enumerate(idx.list_bases(), 1):
+        ds = idx.get(base_name)
+        print(f"{i}. {base_name}")
+        print(f"   TIF: {ds.base_tif.name} {'✓' if ds.base_tif.exists() else '✗'}")
         print(f"   REC: {ds.rec_path.name if ds.rec_path else 'NOT FOUND'} {'✓' if ds.rec_path and ds.rec_path.exists() else '✗' if ds.rec_path else '-'}")
+        print(f"   XMLs: {len(ds.xml_paths)}")
+        for xml in ds.xml_paths:
+            print(f"      - {xml.name} {'✓' if xml.exists() else '✗'}")
+        if ds.processed_tifs:
+            print(f"   Processed TIFs: {len(ds.processed_tifs)}")
+            for p_tif in ds.processed_tifs:
+                print(f"      - {p_tif.name} {'✓' if p_tif.exists() else '✗'}")
         print()
     
     # Summary
-    matched_tif = sum(1 for ds in datasets if ds.tif_path)
-    matched_rec = sum(1 for ds in datasets if ds.rec_path)
+    matched_rec = sum(1 for name in idx.list_bases() if idx.get(name).rec_path)
+    has_processed = sum(1 for name in idx.list_bases() if idx.get(name).processed_tifs)
     
     print("="*70)
-    print(f"Summary: {len(datasets)} XML files")
-    print(f"         {matched_tif} matched TIF files")
-    print(f"         {matched_rec} matched REC files")
+    print(f"Summary: {len(idx.datasets)} datasets")
+    print(f"         {matched_rec} with REC files")
+    print(f"         {has_processed} with processed versions")
 
 if __name__ == "__main__":
     test_file_matching()

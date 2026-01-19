@@ -1,394 +1,692 @@
-"""I/O functions for loading tracks from XML."""
+# spt_dataset_index.py
+from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional, List, Tuple
-from dataclasses import dataclass
-import xml.etree.ElementTree as ET
-import pandas as pd
-import numpy as np
 import re
+import json
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+from typing import Dict, List, Optional, Iterable, Tuple, Any
 
+
+# -----------------------------
+# Dataclass requested by you
+# -----------------------------
 
 @dataclass
 class DatasetFiles:
-    """Container for a dataset with base TIF, REC, processed TIFs, and XMLs."""
+    """Container for a dataset with base TIF, REC, processed TIFs, and XMLs.
+
+    XMLs are grouped by suffix/variant:
+    - 'base': XMLs for the original TIF
+    - 'processed': XMLs for processed versions
+    - other suffixes as found
+    """
     base_tif: Path
-    rec_path: Path
+    rec_path: Optional[Path]
     processed_tifs: List[Path]
-    xml_paths: List[Path]
+    xml_paths: List[Path]  # All XMLs (backward compatibility)
+    xml_groups: Dict[str, List[Path]]  # {'base': [...], 'processed': [...], ...}
     base_name: str
-    
+
+    # Optional: store parsed rec metadata cache here (lazy)
+    _rec_meta_cache: Optional[Dict[str, Any]] = field(default=None, repr=False)
+
     @property
     def all_tifs(self) -> List[Path]:
         """All TIF files (base + processed)."""
-        return [self.base_tif] + self.processed_tifs
+        return [self.base_tif] + list(self.processed_tifs)
+
+    @property
+    def base_xmls(self) -> List[Path]:
+        """XMLs for the base (non-processed) TIF."""
+        return self.xml_groups.get("base", [])
+
+    @property
+    def processed_xmls(self) -> List[Path]:
+        """XMLs for processed versions."""
+        return self.xml_groups.get("processed", [])
+
+    @property
+    def rec_metadata(self) -> Optional[Dict[str, Any]]:
+        """Parsed metadata from .rec (PCO CamWare comment file), if available."""
+        if self.rec_path is None:
+            return None
+        if self._rec_meta_cache is None:
+            try:
+                text = self.rec_path.read_text(encoding="utf-8", errors="replace")
+                self._rec_meta_cache = parse_pco_camware_rec_text(text)
+                self._rec_meta_cache["rec_file"] = str(self.rec_path)
+            except Exception as e:
+                self._rec_meta_cache = {"rec_file": str(self.rec_path), "error": str(e)}
+        return self._rec_meta_cache
 
 
-class TrackLoader:
-    """Unified track loading from TrackMate XML."""
-    
-    @staticmethod
-    def from_trackmate_xml(
-        xml_path: Path,
-        mpp: Optional[float] = None,
-        fps: Optional[float] = None,
-        min_length: int = 10,
-        rec_path: Optional[Path] = None
-    ) -> pd.DataFrame:
-        """Load tracks from TrackMate XML with automatic metadata extraction.
-        
-        Args:
-            xml_path: Path to XML file
-            mpp: Micrometers per pixel (if None, extracts from .rec or XML)
-            fps: Frames per second (if None, extracts from .rec or XML)
-            min_length: Minimum track length to include
-            rec_path: Optional path to .rec file for metadata extraction
-        
-        Returns:
-            DataFrame with columns: ['particle', 'frame', 'x', 'y']
-            and attrs: {'mpp': float, 'fps': float, 'mode': str}
+# -----------------------------
+# REC parsing (your format)
+# -----------------------------
+
+def _to_float(s: str) -> float:
+    return float(s.strip().replace(",", "."))
+
+def parse_pco_camware_rec_text(text: str) -> Dict[str, Any]:
+    """
+    Parser for 'PCO - CamWare Recorder Comment File' (text .rec).
+    Extracts picture size, ROI, binning, exposure/delay, nominal fps, etc.
+    """
+    out: Dict[str, Any] = {}
+
+    def grab(pattern: str, flags=0) -> Optional[re.Match]:
+        return re.search(pattern, text, flags)
+
+    m = grab(r"Camera Type\s*:\s*(.+)")
+    if m:
+        out["camera_type"] = m.group(1).strip()
+
+    m = grab(r"Picture Size\s*horz\./vert\.\s*:\s*(\d+)\s*/\s*(\d+)")
+    if m:
+        out["size_px"] = {"x": int(m.group(1)), "y": int(m.group(2))}
+
+    m = grab(r"ROI\s*horz\./vert\.\s*:\s*(\d+)\s*-\s*(\d+)\s*/\s*(\d+)\s*-\s*(\d+)")
+    if m:
+        out["roi_px"] = {"x0": int(m.group(1)), "x1": int(m.group(2)),
+                         "y0": int(m.group(3)), "y1": int(m.group(4))}
+        out["roi_size_px"] = {"x": out["roi_px"]["x1"] - out["roi_px"]["x0"] + 1,
+                              "y": out["roi_px"]["y1"] - out["roi_px"]["y0"] + 1}
+
+    m = grab(r"Binning\s*horz\./vert\.\s*:\s*x(\d+)\s*/\s*x(\d+)", flags=re.IGNORECASE)
+    if m:
+        out["binning"] = {"x": int(m.group(1)), "y": int(m.group(2))}
+
+    m = grab(r"Exposure\s*/\s*Delay\s*:\s*([0-9\.,]+)\s*ms\s*/\s*([0-9\.,]+)\s*ms",
+             flags=re.IGNORECASE)
+    if m:
+        exposure_ms = _to_float(m.group(1))
+        delay_ms = _to_float(m.group(2))
+        out["exposure_ms"] = exposure_ms
+        out["delay_ms"] = delay_ms
+        frame_period_ms = exposure_ms + delay_ms
+        out["frame_period_ms_nominal"] = frame_period_ms
+        out["fps_nominal"] = (1000.0 / frame_period_ms) if frame_period_ms > 0 else None
+
+    m = grab(r"Pixelrate\s*:\s*([0-9\.,]+)\s*MHz", flags=re.IGNORECASE)
+    if m:
+        out["pixelrate_mhz"] = _to_float(m.group(1))
+
+    m = grab(r"Camera serial number\s*:\s*(\S+)")
+    if m:
+        out["camera_serial"] = m.group(1).strip()
+
+    m = grab(r"Comment:\s*(.*)\Z", flags=re.DOTALL)
+    if m:
+        out["comment_raw"] = m.group(1).strip()
+
+    return out
+
+
+# -----------------------------
+# Canonicalization / grouping
+# -----------------------------
+
+TIFF_EXT = {".tif", ".tiff"}
+REC_EXT = {".rec"}
+XML_EXT = {".xml"}
+
+# repeated suffixes at end: processed, Tracks, track
+END_TOKEN_RE = re.compile(r"([ _\-.]+)(processed|tracks|track)\Z", re.IGNORECASE)
+
+def _norm_spaces(s: str) -> str:
+    return re.sub(r"\s+", " ", s.strip())
+
+def canonical_base(stem: str) -> str:
+    """
+    Make a stable base name from any derived filename:
+      A4_xxx_processed_processed -> A4_xxx
+      A4_xxx_Tracks -> A4_xxx
+    """
+    s = _norm_spaces(stem)
+    while True:
+        m = END_TOKEN_RE.search(s)
+        if not m:
+            break
+        s = s[:m.start()].rstrip(" _-.\t")
+        s = _norm_spaces(s)
+    return s
+
+def processed_level(stem: str) -> int:
+    """Count how often 'processed' appears at the end (processed_processed => 2)."""
+    s = _norm_spaces(stem)
+    level = 0
+    while True:
+        m = re.search(r"([ _\-.]+)processed\Z", s, flags=re.IGNORECASE)
+        if not m:
+            break
+        level += 1
+        s = s[:m.start()].rstrip(" _-.\t")
+        s = _norm_spaces(s)
+    return level
+
+def xml_variant_from_path(xml_path: Path) -> str:
+    """
+    Classify XML variant mainly by name:
+      - contains processed -> 'processed'
+      - else -> 'base'
+    You can extend this later with more variants.
+    """
+    name = xml_path.stem.lower()
+    if "processed" in name:
+        return "processed"
+    return "base"
+
+
+# -----------------------------
+# Index class: universal usage
+# -----------------------------
+
+class DatasetIndex:
+    """
+    Build once per experiment folder and use everywhere:
+      idx = DatasetIndex.from_root(root)
+      ds  = idx.from_any_path(tif_or_rec_or_xml)
+    """
+
+    def __init__(self, datasets: Dict[str, DatasetFiles]):
+        self._datasets = datasets
+
+        # Lookup tables for fast resolution from arbitrary path
+        self._by_tif: Dict[Path, str] = {}
+        self._by_rec: Dict[Path, str] = {}
+        self._by_xml: Dict[Path, str] = {}
+
+        for base, ds in datasets.items():
+            self._by_tif[ds.base_tif] = base
+            for p in ds.processed_tifs:
+                self._by_tif[p] = base
+            if ds.rec_path:
+                self._by_rec[ds.rec_path] = base
+            for x in ds.xml_paths:
+                self._by_xml[x] = base
+
+    @property
+    def datasets(self) -> Dict[str, DatasetFiles]:
+        return self._datasets
+
+    def list_bases(self) -> List[str]:
+        return sorted(self._datasets.keys())
+
+    def get(self, base_name: str) -> DatasetFiles:
+        return self._datasets[base_name]
+
+    def from_any_path(self, path: Path) -> DatasetFiles:
         """
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
-        
-        # Try to get metadata from .rec file first
-        rec_metadata = {}
-        if rec_path and rec_path.exists():
-            rec_metadata = parse_rec_file(rec_path)
-        
-        # Extract metadata from XML if not provided
-        x_max, y_max = TrackLoader._extract_image_dimensions(root)
-        
-        # Use .rec file dimensions if available
-        if 'width' in rec_metadata and 'height' in rec_metadata:
-            x_max = rec_metadata['width']
-            y_max = rec_metadata['height']
-        
-        # FPS: prefer .rec, then manual, then XML
-        if fps is None:
-            if rec_metadata.get('fps'):
-                fps = rec_metadata['fps']
-            else:
-                frame_interval = float(root.get('frameInterval', '1.0'))
-                fps = 1.0 / frame_interval if frame_interval > 0 else 20.0
-        
-        # MPP: prefer manual, then dimension-based, then mode detection
-        if mpp is None:
-            if x_max and y_max:
-                mpp = get_mpp_from_dimensions(x_max, y_max)
-                mode = f'{x_max}x{y_max}'
-            else:
-                mpp, fps, mode = TrackLoader._detect_mode(fps, x_max, y_max)
-        else:
-            mode = 'Custom'
-        
-        # Parse tracks
-        data = []
-        for pid, particle in enumerate(root.findall('particle')):
-            for detection in particle.findall('detection'):
-                data.append({
-                    'particle': pid,
-                    'frame': int(float(detection.get('t'))),
-                    'x': float(detection.get('x')),
-                    'y': float(detection.get('y')),
-                })
-        
-        if not data:
-            df = pd.DataFrame(columns=['particle', 'frame', 'x', 'y'])
-        else:
-            df = pd.DataFrame(data)
-            df = df.sort_values(['particle', 'frame']).reset_index(drop=True)
-        
-        # Filter by track length
-        if not df.empty and min_length > 0:
-            counts = df.groupby('particle').size()
-            valid = counts[counts >= min_length].index
-            df = df[df['particle'].isin(valid)].reset_index(drop=True)
-            
-            # Renumber particles consecutively
-            if not df.empty:
-                unique_ids = sorted(df['particle'].unique())
-                id_map = {old: new for new, old in enumerate(unique_ids)}
-                df['particle'] = df['particle'].map(id_map)
-        
-        df.attrs['mpp'] = mpp
-        df.attrs['fps'] = fps
-        df.attrs['mode'] = mode
-        
-        return df
-    
-    @staticmethod
-    def _extract_image_dimensions(root: ET.Element) -> Tuple[Optional[int], Optional[int]]:
-        """Extract max x, y coordinates from XML."""
-        x_coords, y_coords = [], []
-        
-        for particle in root.findall('particle'):
-            for detection in particle.findall('detection'):
-                x_raw = detection.get('x')
-                y_raw = detection.get('y')
-                if x_raw and y_raw:
-                    x_coords.append(float(x_raw))
-                    y_coords.append(float(y_raw))
-        
-        if x_coords and y_coords:
-            return int(np.ceil(max(x_coords))), int(np.ceil(max(y_coords)))
-        return None, None
-    
-    @staticmethod
-    def _detect_mode(fps: float, x_max: Optional[int], y_max: Optional[int]) -> Tuple[float, float, str]:
-        """Detect acquisition mode and return (mpp, fps, mode_name)."""
-        # First try image size
-        if x_max is not None and y_max is not None:
-            if x_max <= 250 and y_max <= 200:
-                return 0.3, 60.0, '60 FPS'
-            else:
-                return 0.15, 20.0, '20 FPS'
-        
-        # Fallback to FPS
-        if 50 <= fps <= 70:
-            return 0.3, fps, '60 FPS'
-        elif 15 <= fps <= 30:
-            return 0.15, fps, '20 FPS'
-        
-        return 0.15, 20.0, 'Unknown'
+        Given a .tif/.rec/.xml path (raw or processed), return the connected DatasetFiles.
+        If it's a derived file we haven't stored by exact Path (e.g., relative vs absolute),
+        we try canonical resolution.
+        """
+        p = Path(path).resolve()
+
+        # Direct hit
+        if p in self._by_tif:
+            return self._datasets[self._by_tif[p]]
+        if p in self._by_rec:
+            return self._datasets[self._by_rec[p]]
+        if p in self._by_xml:
+            return self._datasets[self._by_xml[p]]
+
+        # Fallback: infer base from name
+        ext = p.suffix.lower()
+        if ext in TIFF_EXT or ext in REC_EXT:
+            base = canonical_base(p.stem)
+            if base in self._datasets:
+                return self._datasets[base]
+        if ext in XML_EXT:
+            # remove trailing _Tracks if present and canonicalize
+            stem = re.sub(r"([ _\-.]+)tracks\Z", "", p.stem, flags=re.IGNORECASE)
+            base = canonical_base(stem)
+            if base in self._datasets:
+                return self._datasets[base]
+
+        raise KeyError(f"Could not resolve dataset for path: {p}")
+
+    @classmethod
+    def from_root(cls, root: Path) -> "DatasetIndex":
+        datasets = build_datasets(root)
+        return cls(datasets)
 
 
-def _extract_base_name(filename: str) -> str:
-    """Extract base name by removing only specific prefixes/suffixes.
-    
-    Preserves: spaces, underscores, capitalization, numbers like _1, _01
-    Removes: Resultof, processed_, preprocessed_ (prefix), _Tracks, _processed (suffix)
+# -----------------------------
+# Builder: scan folder and bundle
+# -----------------------------
+
+def _iter_files(root: Path) -> Iterable[Path]:
+    for p in Path(root).rglob("*"):
+        if p.is_file():
+            yield p.resolve()
+
+def build_datasets(root: Path) -> Dict[str, DatasetFiles]:
     """
-    name = filename
-    
-    # Remove prefixes (case-insensitive)
-    for prefix in ['Resultof', 'resultof', 'processed_', 'preprocessed_']:
-        if name.lower().startswith(prefix.lower()):
-            name = name[len(prefix):]
-            break
-    
-    # Remove suffixes (case-insensitive)
-    for suffix in ['_Tracks', '_tracks', '_processed', '_preprocessed']:
-        if name.lower().endswith(suffix.lower()):
-            name = name[:-len(suffix)]
-            break
-    
-    return name
-
-
-def find_dataset_files(root_path: Path) -> List[DatasetFiles]:
-    """Find and group TIF files with their REC and XML files.
-    
-    Handles:
-    - Single file input: match that file specifically
-    - Folder without subfolders: search files in that folder
-    - Folder with subfolders: search recursively
-    
-    Matching rules:
-    - TIF filename is the base name (preserved exactly)
-    - REC: basename.tif.rec or basename.rec
-    - XML: can have prefixes (Resultof) or suffixes (_Tracks, _processed)
+    Scan root and build DatasetFiles bundles keyed by canonical base_name.
+    Requires at least one base tif per dataset (will pick a best candidate).
     """
-    # Case A: Single file input
-    if root_path.is_file():
-        if root_path.suffix == '.tif':
-            return [_match_single_tif(root_path)]
+    root = Path(root).resolve()
+
+    # temp collections keyed by base
+    tifs_raw: Dict[str, List[Path]] = {}
+    tifs_processed: Dict[str, List[Tuple[int, Path]]] = {}
+    recs: Dict[str, List[Path]] = {}
+    xmls: Dict[str, List[Path]] = {}
+
+    for p in _iter_files(root):
+        ext = p.suffix.lower()
+
+        if ext in TIFF_EXT:
+            base = canonical_base(p.stem)
+            lvl = processed_level(p.stem)
+            # also treat anything inside preprocess/ as processed candidate
+            is_proc_folder = p.parent.name.lower() in {"preprocess", "processed", "proc"}
+            if lvl > 0 or is_proc_folder:
+                tifs_processed.setdefault(base, []).append((lvl, p))
+            else:
+                tifs_raw.setdefault(base, []).append(p)
+
+        elif ext in REC_EXT:
+            base = canonical_base(p.stem)
+            recs.setdefault(base, []).append(p)
+
+        elif ext in XML_EXT:
+            # accept XML from Analysis/ or Tracks/ or containing "tracks"
+            name_low = p.name.lower()
+            if ("tracks" in name_low) or (p.parent.name.lower() in {"analysis", "tracks"}):
+                stem = re.sub(r"([ _\-.]+)tracks\Z", "", p.stem, flags=re.IGNORECASE)
+                base = canonical_base(stem)
+                xmls.setdefault(base, []).append(p)
+
+    # union of all seen bases
+    all_bases = set(tifs_raw) | set(tifs_processed) | set(recs) | set(xmls)
+
+    datasets: Dict[str, DatasetFiles] = {}
+    for base in sorted(all_bases):
+        raw_list = sorted(set(tifs_raw.get(base, [])))
+        proc_list = sorted(set(tifs_processed.get(base, [])), key=lambda x: (x[0], str(x[1])))
+        rec_list = sorted(set(recs.get(base, [])))
+        xml_list = sorted(set(xmls.get(base, [])))
+
+        # choose base tif:
+        # prefer a true raw tif; else fall back to first processed (still better than nothing)
+        if raw_list:
+            base_tif = raw_list[0]
+        elif proc_list:
+            base_tif = proc_list[0][1]
         else:
-            return []
-    
-    # Case B: Folder - check for subfolders
-    subfolders = [d for d in root_path.iterdir() if d.is_dir()]
-    
-    if not subfolders:
-        # No subfolders: search files in this folder only
-        return _search_folder(root_path, search_subfolders=False)
-    else:
-        # Has subfolders: search recursively
-        datasets = []
-        datasets.extend(_search_folder(root_path, search_subfolders=False))  # Root files
-        for subfolder in subfolders:
-            datasets.extend(_search_folder(subfolder, search_subfolders=False))  # Subfolder files
-        return datasets
+            # No tif at all: skip dataset (or raise). Here we skip to avoid broken bundles.
+            continue
 
+        rec_path = rec_list[0] if rec_list else None
+        processed_tifs = [p for _, p in proc_list]
 
-def _search_folder(folder: Path, search_subfolders: bool) -> List[DatasetFiles]:
-    """Search for TIF files in a folder and match with REC/XML."""
-    tif_files = list(folder.glob("*.tif"))
-    
-    # Group by exact base name
-    tif_groups = {}
-    for tif in tif_files:
-        base = _extract_base_name(tif.stem)
-        if base not in tif_groups:
-            tif_groups[base] = []
-        tif_groups[base].append(tif)
-    
-    # Build datasets
-    datasets = []
-    for base_name, tifs in sorted(tif_groups.items()):
-        # Sort: non-processed first
-        tifs_sorted = sorted(tifs, key=lambda t: (
-            'processed' in t.stem.lower(),
-            'preprocessed' in t.stem.lower(),
-            t.stem
-        ))
-        
-        base_tif = tifs_sorted[0]
-        processed_tifs = tifs_sorted[1:]
-        
-        # Find REC
-        rec_path = None
-        for rec_name in [f"{base_tif.name}.rec", f"{base_tif.stem}.rec"]:
-            rec_candidate = base_tif.parent / rec_name
-            if rec_candidate.exists():
-                rec_path = rec_candidate
-                break
-        
-        if not rec_path:
-            continue  # Skip if no REC
-        
-        # Find XMLs - search in same folder and Tracks subfolder
-        xml_paths = _find_xmls_for_base(base_name, folder)
-        
-        datasets.append(DatasetFiles(
+        # group xmls
+        xml_groups: Dict[str, List[Path]] = {}
+        for x in xml_list:
+            v = xml_variant_from_path(x)
+            xml_groups.setdefault(v, []).append(x)
+
+        datasets[base] = DatasetFiles(
             base_tif=base_tif,
             rec_path=rec_path,
             processed_tifs=processed_tifs,
-            xml_paths=xml_paths,
-            base_name=base_name
-        ))
-    
+            xml_paths=xml_list,
+            xml_groups={k: sorted(v) for k, v in xml_groups.items()},
+            base_name=base,
+        )
+
     return datasets
 
 
-def _match_single_tif(tif_path: Path) -> DatasetFiles:
-    """Match a single TIF file with its REC and XMLs."""
-    folder = tif_path.parent
-    base_name = _extract_base_name(tif_path.stem)
-    
-    # Find REC
-    rec_path = None
-    for rec_name in [f"{tif_path.name}.rec", f"{tif_path.stem}.rec"]:
-        rec_candidate = folder / rec_name
-        if rec_candidate.exists():
-            rec_path = rec_candidate
-            break
-    
-    if not rec_path:
-        raise FileNotFoundError(f"No REC file found for {tif_path.name}")
-    
-    # Find processed versions
-    processed_tifs = []
-    for pattern in [f"processed_{tif_path.name}", f"preprocessed_{tif_path.name}"]:
-        candidate = folder / pattern
-        if candidate.exists():
-            processed_tifs.append(candidate)
-    
-    # Find XMLs
-    xml_paths = _find_xmls_for_base(base_name, folder)
-    
-    return DatasetFiles(
-        base_tif=tif_path,
-        rec_path=rec_path,
-        processed_tifs=processed_tifs,
-        xml_paths=xml_paths,
-        base_name=base_name
+def _to_float(s: str) -> float:
+    # akzeptiert auch Komma als Dezimaltrenner
+    return float(s.strip().replace(",", "."))
+
+
+def parse_pco_camware_rec_text(text: str) -> Dict[str, Any]:
+    """
+    Parser für 'PCO - CamWare Recorder Comment File' (Textformat).
+    Extrahiert: camera type, picture size, ROI, binning, exposure/delay (ms), pixelrate, etc.
+    Berechnet nominale fps ~ 1000/(exposure_ms + delay_ms).
+    """
+    out: Dict[str, Any] = {}
+
+    # Hilfsfunktion: einzelne Zeile per Regex holen
+    def grab(pattern: str, flags=0) -> Optional[re.Match]:
+        return re.search(pattern, text, flags)
+
+    # Camera Type
+    m = grab(r"Camera Type\s*:\s*(.+)")
+    if m:
+        out["camera_type"] = m.group(1).strip()
+
+    # Picture Size horz./vert.: 696/520
+    m = grab(r"Picture Size\s*horz\./vert\.\s*:\s*(\d+)\s*/\s*(\d+)")
+    if m:
+        out["size_px"] = {"x": int(m.group(1)), "y": int(m.group(2))}
+
+    # ROI horz./vert.: 1-696/1-520
+    m = grab(r"ROI\s*horz\./vert\.\s*:\s*(\d+)\s*-\s*(\d+)\s*/\s*(\d+)\s*-\s*(\d+)")
+    if m:
+        out["roi_px"] = {
+            "x0": int(m.group(1)), "x1": int(m.group(2)),
+            "y0": int(m.group(3)), "y1": int(m.group(4)),
+        }
+        out["roi_size_px"] = {
+            "x": out["roi_px"]["x1"] - out["roi_px"]["x0"] + 1,
+            "y": out["roi_px"]["y1"] - out["roi_px"]["y0"] + 1,
+        }
+
+    # Binning horz./vert.: x2/x2
+    m = grab(r"Binning\s*horz\./vert\.\s*:\s*x(\d+)\s*/\s*x(\d+)", flags=re.IGNORECASE)
+    if m:
+        out["binning"] = {"x": int(m.group(1)), "y": int(m.group(2))}
+
+    # Exposure / Delay : 50.000000 ms / 0.000000 ms
+    m = grab(
+        r"Exposure\s*/\s*Delay\s*:\s*([0-9\.,]+)\s*ms\s*/\s*([0-9\.,]+)\s*ms",
+        flags=re.IGNORECASE
     )
+    if m:
+        exposure_ms = _to_float(m.group(1))
+        delay_ms = _to_float(m.group(2))
+        out["exposure_ms"] = exposure_ms
+        out["delay_ms"] = delay_ms
+
+        frame_period_ms = exposure_ms + delay_ms
+        out["frame_period_ms_nominal"] = frame_period_ms
+        out["fps_nominal"] = (1000.0 / frame_period_ms) if frame_period_ms > 0 else None
+
+    # Pixelrate: 24 MHz
+    m = grab(r"Pixelrate\s*:\s*([0-9\.,]+)\s*MHz", flags=re.IGNORECASE)
+    if m:
+        out["pixelrate_mhz"] = _to_float(m.group(1))
+
+    # Camera serial number
+    m = grab(r"Camera serial number\s*:\s*(\S+)")
+    if m:
+        out["camera_serial"] = m.group(1).strip()
+
+    # Optional: Comment Block (alles nach "Comment:")
+    m = grab(r"Comment:\s*(.*)\Z", flags=re.DOTALL)
+    if m:
+        out["comment_raw"] = m.group(1).strip()
+
+    return out
 
 
-def _find_xmls_for_base(base_name: str, folder: Path) -> List[Path]:
-    """Find XMLs matching the base name (exact match, case-insensitive)."""
-    xml_folders = [folder]
-    for sub in ["Tracks", "Track"]:
-        sub_path = folder / sub
-        if sub_path.exists():
-            xml_folders.append(sub_path)
-    
-    matched = []
-    for xml_folder in xml_folders:
-        for xml in xml_folder.glob("*.xml"):
-            xml_base = _extract_base_name(xml.stem)
-            # Exact match, case-insensitive
-            if xml_base.lower() == base_name.lower():
-                matched.append(xml)
-    
-    return sorted(set(matched))
+def parse_pco_camware_rec_file(rec_path: Path) -> Dict[str, Any]:
+    text = rec_path.read_text(encoding="utf-8", errors="replace")
+    meta = parse_pco_camware_rec_text(text)
+    meta["rec_file"] = str(rec_path)
+    return meta
 
 
-def find_xml_files(root_path: Path, pattern: str = "**/*Tracks.xml") -> List[Path]:
-    """Legacy function - use find_dataset_files() instead."""
-    datasets = find_dataset_files(root_path)
-    return [ds.xml_path for ds in datasets]
+
+# -----------------------------
+# Datenmodell
+# -----------------------------
+
+@dataclass
+class TrackFile:
+    path: Path
+    source: str               # "TracksFolder" | "AnalysisFolder" | "Unknown"
+    variant: str              # "raw" | "processed" | "unknown"
+
+@dataclass
+class ImageFile:
+    path: Path
+    kind: str                 # "raw" | "processed"
+    processing_level: int = 0
+
+@dataclass
+class Dataset:
+    base: str
+    tiffs: List[ImageFile] = field(default_factory=list)
+    recs: List[Path] = field(default_factory=list)
+    tracks: List[TrackFile] = field(default_factory=list)
+    logs: List[Path] = field(default_factory=list)
+    notes: List[str] = field(default_factory=list)
+
+    def best_raw_tiff(self) -> Optional[Path]:
+        raws = [x.path for x in self.tiffs if x.kind == "raw"]
+        return sorted(raws)[0] if raws else None
+
+    def best_rec(self) -> Optional[Path]:
+        return sorted(self.recs)[0] if self.recs else None
+
+    def processed_candidates(self) -> List[Path]:
+        procs = [x for x in self.tiffs if x.kind == "processed"]
+        # sortiert: level 1 vor level 2, usw.
+        procs_sorted = sorted(procs, key=lambda x: (x.processing_level, str(x.path)))
+        return [x.path for x in procs_sorted]
 
 
-def _normalize_name(name: str) -> str:
-    """Normalize filename for fuzzy matching (lowercase, no spaces/underscores)."""
-    return name.lower().replace(' ', '').replace('_', '').replace('-', '')
+# -----------------------------
+# Normalisierung / Canonical Base
+# -----------------------------
 
+# Tokens, die wir am ENDE wiederholt abstrippen
+STRIP_END_TOKENS = {
+    "processed", "tracks", "track", "xml", "tif", "tiff"
+}
 
-def parse_rec_file(rec_path: Path) -> dict:
-    """Parse PCO .rec file for camera metadata.
-    
-    Returns dict with 'fps', 'width', 'height', 'exposure_ms'
+# matcht _processed, " processed", -processed, .processed am Ende (wiederholt)
+END_TOKEN_RE = re.compile(r"([ _\-.]+)(processed|tracks|track)\Z", re.IGNORECASE)
+
+def normalize_spaces(s: str) -> str:
+    # mehrere Spaces/Tabs -> ein Space
+    s = re.sub(r"\s+", " ", s.strip())
+    return s
+
+def canonical_base_from_stem(stem: str) -> str:
     """
-    metadata = {}
-    
-    try:
-        with open(rec_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        
-        # Extract picture size: "Picture Size horz./vert.: 200/150"
-        size_match = re.search(r'Picture Size horz\./vert\.\s*:\s*(\d+)/(\d+)', content)
-        if size_match:
-            metadata['width'] = int(size_match.group(1))
-            metadata['height'] = int(size_match.group(2))
-        
-        # Extract exposure time: "Exposure / Delay : 15.000000 ms"
-        exposure_match = re.search(r'Exposure / Delay\s*:\s*([\d.]+)\s*ms', content)
-        if exposure_match:
-            exposure_ms = float(exposure_match.group(1))
-            metadata['exposure_ms'] = exposure_ms
-            # FPS = 1000 / exposure_ms (assuming no delay between frames)
-            metadata['fps'] = 1000.0 / exposure_ms if exposure_ms > 0 else None
-    
-    except Exception:
-        pass
-    
-    return metadata
-
-
-def get_mpp_from_dimensions(width: int, height: int) -> float:
-    """Get micrometers per pixel based on image dimensions.
-    
-    Args:
-        width: Image width in pixels
-        height: Image height in pixels
-    
-    Returns:
-        mpp in µm/px
+    Macht aus z.B.:
+      "B3_inside_1d_1mmfrom injection_50_20mg_processed_processed"
+    -> "B3_inside_1d_1mmfrom injection_50_20mg"
     """
-    # Known dimension → mpp mappings
-    dimension_map = {
-        (200, 150): 0.3,
-        (400, 300): 0.15,
-        (696, 520): 0.149,
-    }
-    
-    # Check exact match
-    if (width, height) in dimension_map:
-        return dimension_map[(width, height)]
-    
-    # Fallback: estimate based on known mappings
-    # Assuming inverse relationship: larger image = smaller mpp
-    if width <= 200:
-        return 0.3
-    elif width <= 400:
-        return 0.15
-    else:
-        return 0.149
+    s = normalize_spaces(stem)
+    while True:
+        m = END_TOKEN_RE.search(s)
+        if not m:
+            break
+        # entferne den token-Teil am Ende
+        s = s[:m.start()].rstrip(" _-.\t")
+        s = normalize_spaces(s)
+    return s
+
+def processed_level_from_stem(stem: str) -> int:
+    """
+    Zählt wie oft 'processed' am Ende (in Kaskade) vorkommt.
+    """
+    s = normalize_spaces(stem)
+    level = 0
+    while True:
+        m = re.search(r"([ _\-.]+)processed\Z", s, flags=re.IGNORECASE)
+        if not m:
+            break
+        level += 1
+        s = s[:m.start()].rstrip(" _-.\t")
+        s = normalize_spaces(s)
+    return level
 
 
-def extract_particle_size_from_path(path: Path) -> Optional[float]:
-    """Extract particle size (nm) from folder or file name."""
-    match = re.search(r'(\d+)\s*nm', path.name, re.IGNORECASE)
-    return float(match.group(1)) if match else None
+# -----------------------------
+# Erkennung nach Datei/Ordner
+# -----------------------------
+
+TIFF_EXT = {".tif", ".tiff"}
+
+def iter_files(root: Path) -> Iterable[Path]:
+    for p in root.rglob("*"):
+        if p.is_file():
+            yield p
+
+def classify_track_source(path: Path) -> str:
+    parent = path.parent.name.lower()
+    if parent == "tracks":
+        return "TracksFolder"
+    if parent == "analysis":
+        return "AnalysisFolder"
+    return "Unknown"
+
+def infer_track_variant_from_name(path: Path) -> str:
+    name = path.stem.lower()
+    # erkennt ..._processed_Tracks.xml oder ..._processed.xml
+    if re.search(r"processed(\Z|[_ \-.])", name):
+        return "processed"
+    # erkennt ..._Tracks.xml oder ... .xml
+    return "raw"
+
+
+# -----------------------------
+# Index builder
+# -----------------------------
+
+def build_index(root: Path) -> Dict[str, Dataset]:
+    root = root.resolve()
+    datasets: Dict[str, Dataset] = {}
+
+    def ds(base: str) -> Dataset:
+        if base not in datasets:
+            datasets[base] = Dataset(base=base)
+        return datasets[base]
+
+    for p in iter_files(root):
+        ext = p.suffix.lower()
+
+        # TIFF
+        if ext in TIFF_EXT:
+            stem = p.stem
+            base = canonical_base_from_stem(stem)
+            level = processed_level_from_stem(stem)
+            kind = "processed" if level > 0 or p.parent.name.lower() in {"preprocess", "processed", "proc"} else "raw"
+            ds(base).tiffs.append(ImageFile(path=p, kind=kind, processing_level=level))
+
+        # REC
+        elif ext == ".rec":
+            stem = p.stem
+            base = canonical_base_from_stem(stem)
+            ds(base).recs.append(p)
+
+        # Logs aus preprocess
+        elif ext == ".txt" and p.name.lower().endswith("_log.txt"):
+            stem = p.stem
+            base = canonical_base_from_stem(stem.replace("_log", ""))
+            ds(base).logs.append(p)
+
+        # XML (Tracks oder Analysis)
+        elif ext == ".xml":
+            # nur als Track-XML zählen, wenn:
+            # - in Analysis/ liegt ODER in Tracks/ liegt ODER Name enthält "tracks"
+            name_low = p.name.lower()
+            if ("tracks" in name_low) or (p.parent.name.lower() in {"analysis", "tracks"}):
+                stem = p.stem
+                # falls Dateiname "..._Tracks" -> entfernen
+                stem = re.sub(r"([ _\-.]+)tracks\Z", "", stem, flags=re.IGNORECASE)
+                base = canonical_base_from_stem(stem)
+                ds(base).tracks.append(
+                    TrackFile(
+                        path=p,
+                        source=classify_track_source(p),
+                        variant=infer_track_variant_from_name(p),
+                    )
+                )
+
+    # Post-checks
+    for base, d in datasets.items():
+        if d.tiffs and not d.recs:
+            d.notes.append("TIFF vorhanden, aber keine .rec Datei gefunden.")
+        if d.recs and not d.tiffs:
+            d.notes.append("REC vorhanden, aber keine TIFF Datei gefunden.")
+        if d.tiffs and not d.tracks:
+            d.notes.append("TIFF vorhanden, aber keine Track-XML gefunden.")
+        # “processed_processed” Hinweis
+        if any(x.processing_level >= 2 for x in d.tiffs):
+            d.notes.append("Mehrfach preprocess erkannt (processed_processed).")
+
+        # sortieren für stabile Ausgabe
+        d.tiffs.sort(key=lambda x: (x.kind != "raw", x.processing_level, str(x.path)))
+        d.recs.sort()
+        d.logs.sort()
+        d.tracks.sort(key=lambda x: (x.source, x.variant, str(x.path)))
+
+    return datasets
+
+
+def export_index_json(datasets: Dict[str, Dataset], out_path: Path) -> None:
+    payload: Dict[str, Any] = {}
+    for base, d in datasets.items():
+        payload[base] = {
+            "base": base,
+            "tiffs": [
+                {"path": str(x.path), "kind": x.kind, "processing_level": x.processing_level}
+                for x in d.tiffs
+            ],
+            "recs": [str(p) for p in d.recs],
+            "logs": [str(p) for p in d.logs],
+            "tracks": [
+                {"path": str(t.path), "source": t.source, "variant": t.variant}
+                for t in d.tracks
+            ],
+            "best_raw_tiff": str(d.best_raw_tiff()) if d.best_raw_tiff() else None,
+            "processed_candidates": [str(p) for p in d.processed_candidates()],
+            "best_rec": str(d.best_rec()) if d.best_rec() else None,
+            "notes": d.notes,
+        }
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+# -----------------------------
+# CLI
+# -----------------------------
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("root", type=str)
+    ap.add_argument("--export", type=str, default="")
+    ap.add_argument("--show", type=str, default="")
+    args = ap.parse_args()
+
+    root = Path(args.root)
+    datasets = build_index(root)
+    print(f"Datasets gefunden: {len(datasets)}")
+
+    if args.export:
+        out = Path(args.export)
+        export_index_json(datasets, out)
+        print(f"Index geschrieben: {out}")
+
+    if args.show:
+        base = args.show
+        if base not in datasets:
+            # hilfreiches Fallback: show arbeitet auch mit "ungefährem" base-string
+            candidates = [b for b in datasets.keys() if base.lower() in b.lower()]
+            raise KeyError(f"Base '{base}' nicht gefunden. Kandidaten: {candidates[:20]}")
+        d = datasets[base]
+        print(json.dumps({
+            "base": d.base,
+            "best_raw_tiff": str(d.best_raw_tiff()) if d.best_raw_tiff() else None,
+            "processed_candidates": [str(p) for p in d.processed_candidates()],
+            "best_rec": str(d.best_rec()) if d.best_rec() else None,
+            "tracks": [{"path": str(t.path), "source": t.source, "variant": t.variant} for t in d.tracks],
+            "notes": d.notes,
+        }, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
+
+
+# -----------------------------
+# Convenience helper functions
+# -----------------------------
+
+def load_index(root: Path) -> DatasetIndex:
+    """Small convenience wrapper."""
+    return DatasetIndex.from_root(root)

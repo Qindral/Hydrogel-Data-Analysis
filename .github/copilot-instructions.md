@@ -220,7 +220,7 @@ Data stored in `Data/` with instrument-dated subdirectories (e.g., `2025_09_01_1
 
 ## Refactoring Guidelines
 
-**⚠️ IMPORTANT**: This codebase is undergoing active refactoring. See [REFACTORING_PLAN.md](../REFACTORING_PLAN.md) for the comprehensive restructuring strategy.
+**IMPORTANT**: This codebase is undergoing active refactoring. See [REFACTORING_PLAN.md](../REFACTORING_PLAN.md) for the comprehensive restructuring strategy.
 
 ### Current Refactoring Goals
 1. **Consolidate Duplicate Code**: Functions like `fit_powerlaw_with_errors()`, `load_tracks_xml()`, and `subtract_background()` are duplicated across 4-7 files
@@ -237,6 +237,7 @@ Data stored in `Data/` with instrument-dated subdirectories (e.g., `2025_09_01_1
 - **Log, don't print**: Use `logging` module instead of print() for batch processing
 - **Return figures**: Visualization functions should return `plt.Figure` objects, not save directly
 - **Support flexibility**: Design functions to work with single files or lists of files
+- **Comments**: Comments and Print statements should be as few as possible but with necessary decision making explanations. No emojis, no exclamation marks. Formal tone only.
 
 ### Migration Status
 Check [REFACTORING_PLAN.md](../REFACTORING_PLAN.md) for current phase and which modules have been refactored.

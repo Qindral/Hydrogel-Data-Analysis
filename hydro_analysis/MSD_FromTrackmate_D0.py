@@ -90,8 +90,9 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
     """
     Parse .rec file to extract acquisition parameters.
     
-    Looks for exposure time and delay to calculate FPS.
+    Looks for exposure time, delay to calculate FPS, and image size.
     Format: "Exposure / Delay        : 50.000000 ms / 0.000000 ms"
+            "Picture Size horz./vert.: 200/150"
     
     Args:
         rec_path: Path to .rec file
@@ -101,16 +102,25 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
         - exposure_ms: Exposure time in milliseconds
         - delay_ms: Delay time in milliseconds
         - fps: Calculated frames per second (1000 / (exposure + delay))
+        - size_x: Image width in pixels
+        - size_y: Image height in pixels
     """
     result = {
         'exposure_ms': None,
         'delay_ms': None,
-        'fps': None
+        'fps': None,
+        'size_x': None,
+        'size_y': None
     }
     
     try:
-        with open(rec_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
+        # Try UTF-16 encoding first (PCO CamWare often uses this), then UTF-8
+        try:
+            with open(rec_path, 'r', encoding='utf-16', errors='ignore') as f:
+                content = f.read()
+        except:
+            with open(rec_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
             
         # Search for exposure/delay line
         # Pattern: "Exposure / Delay        : 50.000000 ms / 0.000000 ms"
@@ -128,14 +138,51 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
             total_time_ms = exposure + delay
             if total_time_ms > 0:
                 result['fps'] = 1000.0 / total_time_ms
-                print(f"    DEBUG REC: {rec_path.name} -> Exp={exposure:.2f}ms, Delay={delay:.2f}ms, FPS={result['fps']:.2f}")
-        else:
-            print(f"    WARNING: Could not find Exposure/Delay in {rec_path.name}")
+        
+        # Search for image size
+        # Pattern: "Picture Size horz./vert.: 200/150"
+        size_match = re.search(r'Picture\s+Size\s+horz\.?/vert\.?\s*:\s*(\d+)/(\d+)', 
+                              content, re.IGNORECASE)
+        
+        if size_match:
+            result['size_x'] = int(size_match.group(1))
+            result['size_y'] = int(size_match.group(2))
                 
     except Exception as e:
         print(f"    ERROR: Could not parse {rec_path.name}: {e}")
     
     return result
+
+
+def get_mpp_from_size(width: int, height: int) -> Optional[float]:
+    """
+    Determine micrometers per pixel based on image dimensions.
+    Based on known camera configurations.
+    
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels
+        
+    Returns:
+        MPP value or None if unknown
+    """
+    # Known dimension mappings
+    dimension_map = {
+        (200, 150): 0.3,
+        (400, 300): 0.15,
+        (696, 520): 0.149,
+    }
+    
+    if (width, height) in dimension_map:
+        return dimension_map[(width, height)]
+    
+    # Fallback: assume smaller images have higher magnification
+    if width <= 250 and height <= 200:
+        return 0.3
+    elif width <= 450 and height <= 350:
+        return 0.15
+    else:
+        return 0.149
 
 
 def get_mpp_from_fps_and_size(fps: Optional[float] = None, 
@@ -145,8 +192,8 @@ def get_mpp_from_fps_and_size(fps: Optional[float] = None,
     Determine micrometers per pixel (mpp) and FPS based on image size or FPS.
     
     Mode detection:
-    - 60 FPS mode: 200×150 px window → 0.30 µm/px, 60 FPS
-    - 20 FPS mode: larger window → 0.15 µm/px, 20 FPS
+    - 60 FPS mode: 200×150 px window -> 0.30 µm/px, 60 FPS
+    - 20 FPS mode: larger window -> 0.15 µm/px, 20 FPS
     
     Args:
         fps: Frames per second (optional)
@@ -406,8 +453,8 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
         # Extract particle size from folder name
         particle_size = extract_particle_size_from_path(subfolder)
         
-        print(f"\n📁 Folder: {subfolder.name}")
-        print(f"   Particle size: {particle_size} nm" if particle_size else "   ⚠ No particle size detected")
+        print(f"\nFolder: {subfolder.name}")
+        print(f"   Particle size: {particle_size} nm" if particle_size else "   Warning: No particle size detected")
         
         if particle_size is None:
             continue
@@ -416,54 +463,75 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
         rec_files = sorted(list(subfolder.glob("*.rec")))
         print(f"   Found {len(rec_files)} .rec files")
         
-        # Parse all REC files to get FPS information for this particle size
+        # Parse all REC files to get FPS and size information
         fps_info_list = []
+        size_from_rec = None  # Store first valid size found
+        
         for rec_file in rec_files:
             rec_info = parse_rec_file(rec_file)
             if rec_info['fps'] is not None:
                 fps_info_list.append(rec_info)
-                print(f"     • {rec_file.name}: {rec_info['fps']:.2f} fps")
+                # Capture size from first valid REC (usually consistent across folder)
+                if size_from_rec is None and rec_info['size_x'] and rec_info['size_y']:
+                    size_from_rec = (rec_info['size_x'], rec_info['size_y'])
         
         # Calculate average FPS for this particle size
-        avg_fps_info = {'exposure_ms': None, 'delay_ms': None, 'fps': None}
+        avg_fps_info = {
+            'exposure_ms': None, 
+            'delay_ms': None, 
+            'fps': None,
+            'size_x': size_from_rec[0] if size_from_rec else None,
+            'size_y': size_from_rec[1] if size_from_rec else None
+        }
         num_valid_rec = 0
         
         if fps_info_list:
-            avg_fps_info = {
-                'exposure_ms': np.mean([x['exposure_ms'] for x in fps_info_list]),
-                'delay_ms': np.mean([x['delay_ms'] for x in fps_info_list]),
-                'fps': np.mean([x['fps'] for x in fps_info_list])
-            }
+            avg_fps_info['exposure_ms'] = np.mean([x['exposure_ms'] for x in fps_info_list])
+            avg_fps_info['delay_ms'] = np.mean([x['delay_ms'] for x in fps_info_list])
+            avg_fps_info['fps'] = np.mean([x['fps'] for x in fps_info_list])
             num_valid_rec = len(fps_info_list)
-            print(f"   → Average FPS: {avg_fps_info['fps']:.2f} (from {num_valid_rec} files)")
+            
+            size_info = f", size={size_from_rec[0]}x{size_from_rec[1]} px" if size_from_rec else ""
+            print(f"   -> Average FPS: {avg_fps_info['fps']:.2f} (from {num_valid_rec} files{size_info})")
         else:
-            print(f"   ⚠ No valid FPS data from .rec files")
+            print(f"   Warning: No valid FPS data from .rec files")
         
-        # Find all XML files in Tracks subfolder
-        tracks_folder = subfolder / "Tracks"
+        # Find all XML files - search in multiple possible subfolders (not Tracks_old)
         xml_files = []
+        search_folders = ['Tracks', 'Trackmate_Analyses']
         
-        if tracks_folder.exists() and tracks_folder.is_dir():
-            xml_files = sorted(list(tracks_folder.glob("*.xml")))
-            print(f"   Found {len(xml_files)} XML track files in Tracks/")
-        else:
-            print(f"   ⚠ No Tracks/ subfolder found")
+        for folder_name in search_folders:
+            search_path = subfolder / folder_name
+            if search_path.exists() and search_path.is_dir():
+                found = sorted(list(search_path.glob("*.xml")))
+                if found:
+                    xml_files.extend(found)
+                    print(f"   Found {len(found)} XML files in {folder_name}/")
         
         if len(xml_files) == 0:
-            print(f"   ⚠ Skipping - no XML files found")
+            print(f"   Warning: No XML files found in any subfolder")
+            continue
             continue
         
         # Create one record per XML file
         for xml_file in xml_files:
-            # Extract image dimensions from XML
-            x_max, y_max = extract_image_dimensions_from_xml(xml_file)
-            
-            # Determine mpp and fps based on image size and/or .rec data
-            mpp, fps, mode = get_mpp_from_fps_and_size(
-                fps=avg_fps_info['fps'],
-                x_max=x_max,
-                y_max=y_max
-            )
+            # Prefer size from REC, fallback to XML extraction
+            if avg_fps_info['size_x'] and avg_fps_info['size_y']:
+                x_max = avg_fps_info['size_x']
+                y_max = avg_fps_info['size_y']
+                mpp = get_mpp_from_size(x_max, y_max)
+                fps = avg_fps_info['fps'] if avg_fps_info['fps'] else DEFAULT_FPS
+                mode = f"{int(fps)} FPS"
+            else:
+                # Fallback: Extract image dimensions from XML
+                x_max, y_max = extract_image_dimensions_from_xml(xml_file)
+                
+                # Determine mpp and fps based on image size and/or .rec data
+                mpp, fps, mode = get_mpp_from_fps_and_size(
+                    fps=avg_fps_info['fps'],
+                    x_max=x_max,
+                    y_max=y_max
+                )
             
             file_records.append({
                 'particle_size_nm': particle_size,
@@ -480,13 +548,13 @@ def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
                 'num_rec_files': num_valid_rec,
             })
             
-            size_info = f"{x_max}×{y_max}" if x_max and y_max else "unknown size"
-            print(f"     ✓ {xml_file.name} [{size_info} → {mode}, {mpp} µm/px]")
+            size_info = f"{x_max}x{y_max}" if x_max and y_max else "unknown size"
+            print(f"     [OK] {xml_file.name} [{size_info} -> {mode}, {mpp} um/px]")
         
-        print(f"   → Created {len(xml_files)} records")
+        print(f"   -> Created {len(xml_files)} records")
     
     print(f"\n" + "=" * 70)
-    print(f"✓ Total XML files found: {len(file_records)}")
+    print(f"[OK] Total XML files found: {len(file_records)}")
     print("=" * 70 + "\n")
     
     df = pd.DataFrame(file_records)
@@ -649,7 +717,7 @@ def analyze_all_msds(files_df: pd.DataFrame, points: int = DEFAULT_POINTS) -> pd
     print(f"DEBUG: Valid files (XML + FPS): {len(valid_files)}")
     
     if valid_files.empty:
-        print("⚠ No files with both XML tracks and FPS data found!")
+        print("Warning: No files with both XML tracks and FPS data found!")
         print("\nPossible issues:")
         print("  - XML files and REC files might have different base names")
         print("  - REC files might not be parsed correctly")
@@ -695,7 +763,7 @@ def analyze_all_msds(files_df: pd.DataFrame, points: int = DEFAULT_POINTS) -> pd
                 'msd_data': imsd
             })
             
-            print(f"  ✓ {num_particles} particles tracked over {num_lag_times} lag times")
+            print(f"  [OK] {num_particles} particles tracked over {num_lag_times} lag times")
         else:
             print(f"  ✗ Failed to calculate MSD")
     
@@ -780,7 +848,7 @@ def plot_msd_by_particle_size(msd_results_df: pd.DataFrame, save_path: Path, poi
         # Save plot
         plot_filename = save_path / f'water_MSD_{particle_size:.0f}nm_individual_files.png'
         plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
-        print(f"  ✓ Saved: {plot_filename.name}")
+        print(f"  [OK] Saved: {plot_filename.name}")
         plt.close(fig)
 
 
@@ -979,7 +1047,7 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
         print("✗ No data found in pickle file!")
         return
     
-    print(f"✓ Loaded MSD data for {len(msd_results_df)} files")
+    print(f"[OK] Loaded MSD data for {len(msd_results_df)} files")
     
     # DLS measurements (reference values)
     DLS_MEASUREMENTS = {
@@ -1130,7 +1198,7 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
                 # Save with unique filename per file
                 safe_filename = file_label.replace(' ', '_').replace('/', '_')
                 plt.savefig(save_path / f'water_MSD_fit_{particle_size:.0f}nm_{safe_filename}.png', dpi=300)
-                print(f"    ✓ Saved: water_MSD_fit_{particle_size:.0f}nm_{safe_filename}.png")
+                print(f"    [OK] Saved: water_MSD_fit_{particle_size:.0f}nm_{safe_filename}.png")
                 plt.close(fig)
                 
             except Exception as e:
@@ -1153,7 +1221,7 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
         file_D_df = pd.DataFrame(file_D_values)
         file_D_csv = save_path / 'water_diffusion_coefficients_per_file.csv'
         file_D_df.to_csv(file_D_csv, index=False)
-        print(f"\n✓ Per-file diffusion coefficients saved to: {file_D_csv}")
+        print(f"\n[OK] Per-file diffusion coefficients saved to: {file_D_csv}")
     
     # Create comparison plot
     if not D_values:
@@ -1272,7 +1340,7 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
     
     plt.tight_layout()
     plt.savefig(save_path / 'water_Diffusionskoeffizienten_Übersicht.png', dpi=300)
-    print(f"\n✓ Comparison plot saved to: {save_path / 'water_Diffusionskoeffizienten_Übersicht.png'}")
+    print(f"\n[OK] Comparison plot saved to: {save_path / 'water_Diffusionskoeffizienten_Übersicht.png'}")
     plt.show()
     plt.close(fig)
 
@@ -1330,12 +1398,12 @@ def main():
     
 
     
-    print(f"\n✓ Found {len(files_df)} XML files across {files_df['particle_size_nm'].nunique()} particle sizes")
+    print(f"\n[OK] Found {len(files_df)} XML files across {files_df['particle_size_nm'].nunique()} particle sizes")
     
     # Save XML file listing
     output_files_csv = SAVE_PATH / "xml_file_associations.csv"
     files_df.to_csv(output_files_csv, index=False)
-    print(f"✓ XML file associations saved to: {output_files_csv}")
+    print(f"[OK] XML file associations saved to: {output_files_csv}")
     
     # Display FPS statistics
     xml_with_fps = files_df[files_df['fps'].notna()]
@@ -1368,7 +1436,7 @@ def main():
                 size_str = f"{row['x_max']}×{row['y_max']}" if pd.notna(row['x_max']) else "unknown"
                 print(f"  • {row['xml_name']}: {row['mode']} ({size_str}, {row['mpp']} µm/px)")
     else:
-        print("\n⚠ Warning: No data found - will use default values")
+        print("\nWarning: Warning: No data found - will use default values")
     
     # Step 2: Count particles
     print("\n" + "=" * 70)
@@ -1396,7 +1464,7 @@ def main():
             'total_particles': total_particles
         })
         
-        print(f"  → Total: {total_particles} particles from {len(size_xmls)} files\n")
+        print(f"  -> Total: {total_particles} particles from {len(size_xmls)} files\n")
     
     # Create summary DataFrame
     summary_df = pd.DataFrame(particle_counts)
@@ -1411,7 +1479,7 @@ def main():
     # Save particle count summary
     output_summary_csv = SAVE_PATH / "particle_count_summary.csv"
     summary_df.to_csv(output_summary_csv, index=False)
-    print(f"\n✓ Particle count summary saved to: {output_summary_csv}")
+    print(f"\n[OK] Particle count summary saved to: {output_summary_csv}")
     
     # Step 3: Calculate iMSD for all files
     print("\n" + "=" * 70)
@@ -1445,12 +1513,12 @@ def main():
         msd_summary = msd_results_df.drop(columns=['msd_data'])
         output_msd_csv = SAVE_PATH / "msd_analysis_summary.csv"
         msd_summary.to_csv(output_msd_csv, index=False)
-        print(f"\n✓ MSD analysis summary saved to: {output_msd_csv}")
+        print(f"\n[OK] MSD analysis summary saved to: {output_msd_csv}")
         
         # Save individual MSD data as pickle for later analysis
         output_msd_pickle = SAVE_PATH / "msd_data_full.pkl"
         msd_results_df.to_pickle(output_msd_pickle)
-        print(f"✓ Full MSD data (with arrays) saved to: {output_msd_pickle}")
+        print(f"[OK] Full MSD data (with arrays) saved to: {output_msd_pickle}")
         
         # Step 4: Create plots
         print("\n" + "=" * 70)
@@ -1465,7 +1533,7 @@ def main():
         print("=" * 70)
         compare_diffusion_coefficients(output_msd_pickle, SAVE_PATH, points=DEFAULT_POINTS, min_exponent=MIN_EXPONENT)
     
-    print(f"\n✓ Analysis complete!\n")
+    print(f"\n[OK] Analysis complete!\n")
 
 
 if __name__ == "__main__":
