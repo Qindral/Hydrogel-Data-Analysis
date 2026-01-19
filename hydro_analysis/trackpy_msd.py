@@ -4,10 +4,10 @@ Load TIFF(s), find spots with trackpy, link trajectories, compute MSD.
 Save/display MSD vs lag (in frames). Inline descriptions/comments included.
 """
 
-# Minimal dependencies: pims, trackpy, pandas, numpy, matplotlib
+# Minimal dependencies: PIL, trackpy, pandas, numpy, matplotlib
 from pathlib import Path
 import glob
-import pims
+from PIL import Image
 import trackpy as tp
 import numpy as np
 import pandas as pd
@@ -17,28 +17,35 @@ from matplotlib.patches import Circle
 import matplotlib.pyplot as plt
 import os
 import pickle
-import cv2
-from cv2_rolling_ball import subtract_background_rolling_ball
+from scipy.ndimage import grey_opening, grey_erosion
 import tqdm as tqdm
 
 
-
+def load_tiff_stack(tif_path):
+    """Load multi-page TIFF as list of numpy arrays using PIL."""
+    img = Image.open(tif_path)
+    frames = []
+    try:
+        for i in range(img.n_frames):
+            img.seek(i)
+            frames.append(np.array(img, dtype=np.float32))
+    except EOFError:
+        pass
+    return frames
 
 
 def subtract_background(image, radius=50):
-    # img, background = subtract_background_rolling_ball(image, radius=radius, light_background=light_bg)
-    # out = image - background
-    # 1. Create a "flat" kernel (disk) instead of a 3D ball
-    # Adjust the size (50, 50) to match your rolling ball diameter (not radius!)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius, radius))
-
-    # 2. Run the background estimation (Morphological Opening)
-    # This is the "Background" that rolling ball would normally give you
-    background = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
-
-    # 3. Subtract
-    out = cv2.subtract(image, background)
-    return out
+    # Use scipy's grey_opening for morphological background estimation
+    # Create a circular structuring element
+    from scipy.ndimage import generate_binary_structure, iterate_structure
+    struct = iterate_structure(generate_binary_structure(2, 1), radius//2)
+    
+    # Morphological opening: erosion followed by dilation
+    background = grey_opening(image, footprint=struct)
+    
+    # Subtract and clip to positive values
+    out = np.clip(image.astype(np.float32) - background.astype(np.float32), 0, None)
+    return out.astype(image.dtype)
 
 if 'fit_powerlaw_with_errors' not in globals():
     def fit_powerlaw_with_errors(em_series, points=10, ax=None, plot=False):
@@ -74,9 +81,8 @@ if 'fit_powerlaw_with_errors' not in globals():
 
 def main(tif_path, diameter,distance, minmass, mpp, fps, plot=False,smooth = False, radius=50, sigma=1.0 ,filter=True  ):
 
-    # 1. Daten laden (pims öffnet den Stack 'lazy', also speicherschonend)
-    # Ersetze 'dein_stack.tif' mit deinem Pfad
-    frames = pims.open(tif_path)
+    # 1. Daten laden mit PIL
+    frames = load_tiff_stack(tif_path)
 
     # compute per-pixel background as the mean over the whole stack (float64 accumulator for precision)
     n_frames = len(frames)
@@ -463,6 +469,9 @@ r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm_60fps.tif",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm_60fps_2.tif",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.12.4\20nm_60fps_3.tif",
 r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\20nm_4.tif", r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\20nm_2.tif"]
+    
+
+
     D_20 = []
     imsd_20 = []
     parameter = {"diameter": 7,
@@ -472,6 +481,26 @@ r"E:\PhD Data Analysis\SPT 2025 II\2025.12.05\20nm_4.tif", r"E:\PhD Data Analysi
         "distance": 15}
     mpp = 0.3
     fps = 60
+    paths = [r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000 nm.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000 nm_2.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000 nm_3.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000 nm_4.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000 nm_5.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000 nm_6.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000nm_water.tif", 
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000nm_water_01.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000nm_water_02.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000nm_water_03.tif",
+r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\1000nm_water_04.tif"]
+    parameter = {"diameter": 7,
+        "minmass": 420,
+        "radius": 47,
+        "sigma": 1.0,
+        "distance": 5}
+    mpp = 0.149
+    fps = 20
+
+
     parameter_set = [ {'diameter': 9, 'minmass': 270, 'radius': 3, 'sigma': 2.0,"distance": 15},parameter,{'diameter': 7, 'minmass': 420, 'radius': 46, 'sigma': 0.7000000000000001}]
     for i,path in enumerate(paths):
         # param = parameter_set[0]
