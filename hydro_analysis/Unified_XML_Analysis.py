@@ -68,6 +68,28 @@ MAX_MEAN_SIGMA_RATIO = 0.3  # maximum |mean|/sigma ratio (no drift)
 # CALIBRATION & FILE DETECTION
 # ============================================================================
 
+def extract_particle_size_from_path(path: Path) -> Optional[float]:
+    """
+    Extract particle size (in nm) from file path or name.
+    
+    Looks for patterns like: 20nm, 50_nm, 100 nm, etc.
+    
+    Args:
+        path: Path to file or directory
+        
+    Returns:
+        Particle size in nanometers, or None if not found
+    """
+    path_str = str(path)
+    
+    # Try to find pattern like "20nm", "50_nm", "100 nm"
+    match = re.search(r'(\d+)\s*[_-]?\s*nm', path_str, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    
+    return None
+
+
 def parse_rec_file(rec_path: Path) -> Dict[str, any]:
     """
     Parse .rec file to extract acquisition parameters.
@@ -827,39 +849,432 @@ def analyze_xml_file(xml_path: Path, output_dir: Optional[Path] = None):
 
 
 # ============================================================================
+# BATCH PROCESSING & COMPARISON
+# ============================================================================
+
+def analyze_multiple_xml_files(xml_files: List[Path], output_dir: Path) -> pd.DataFrame:
+    """
+    Analyze multiple XML files and collect results.
+    
+    Args:
+        xml_files: List of XML file paths
+        output_dir: Base directory for results
+        
+    Returns:
+        DataFrame with all results
+    """
+    all_results = []
+    
+    for i, xml_path in enumerate(xml_files, 1):
+        print(f"\n[{i}/{len(xml_files)}] Processing: {xml_path.name}")
+        
+        try:
+            result = analyze_xml_file(xml_path, output_dir / xml_path.stem)
+            
+            # Extract particle size from path
+            particle_size = extract_particle_size_from_path(xml_path)
+            result['particle_size_nm'] = particle_size
+            
+            all_results.append(result)
+            
+        except Exception as e:
+            print(f"  ERROR: Failed to process {xml_path.name}: {e}")
+            continue
+    
+    if not all_results:
+        print("\nWARNING: No files were successfully processed")
+        return pd.DataFrame()
+    
+    # Create summary DataFrame
+    summary_df = pd.DataFrame(all_results)
+    
+    # Save combined summary
+    combined_path = output_dir / 'combined_summary.csv'
+    summary_df.to_csv(combined_path, index=False)
+    print(f"\nCombined summary saved: {combined_path}")
+    
+    return summary_df
+
+
+def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path):
+    """
+    Create boxplot comparing MSD and Step Size methods by particle size.
+    
+    Args:
+        summary_df: DataFrame with results from multiple files
+        save_path: Path to save comparison plot
+    """
+    if summary_df.empty or 'particle_size_nm' not in summary_df.columns:
+        print("Cannot create comparison plot: insufficient data")
+        return
+    
+    # Remove entries without particle size
+    df = summary_df.dropna(subset=['particle_size_nm']).copy()
+    
+    if df.empty:
+        print("Cannot create comparison plot: no particle size information found")
+        return
+    
+    # Get unique particle sizes
+    particle_sizes = sorted(df['particle_size_nm'].unique())
+    
+    # Prepare data for boxplot
+    msd_data = []
+    stepsize_data = []
+    labels = []
+    
+    for size in particle_sizes:
+        subset = df[df['particle_size_nm'] == size]
+        
+        # MSD data
+        if 'D_MSD_um2_per_s' in subset.columns:
+            msd_values = subset['D_MSD_um2_per_s'].dropna().values
+            if len(msd_values) > 0:
+                msd_data.append(msd_values)
+            else:
+                msd_data.append([])
+        else:
+            msd_data.append([])
+        
+        # Step size data
+        if 'D_stepsize_um2_per_s' in subset.columns:
+            step_values = subset['D_stepsize_um2_per_s'].dropna().values
+            if len(step_values) > 0:
+                stepsize_data.append(step_values)
+            else:
+                stepsize_data.append([])
+        else:
+            stepsize_data.append([])
+        
+        labels.append(f'{int(size)} nm')
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Plot 1: Boxplots side by side
+    x_pos = np.arange(len(particle_sizes))
+    width = 0.35
+    
+    # MSD boxplots
+    bp1 = ax1.boxplot(msd_data, positions=x_pos - width/2, widths=width*0.8,
+                      patch_artist=True, labels=labels,
+                      boxprops=dict(facecolor='lightblue', alpha=0.7),
+                      medianprops=dict(color='darkblue', linewidth=2),
+                      showfliers=True)
+    
+    # Step size boxplots
+    bp2 = ax1.boxplot(stepsize_data, positions=x_pos + width/2, widths=width*0.8,
+                      patch_artist=True, labels=labels,
+                      boxprops=dict(facecolor='lightcoral', alpha=0.7),
+                      medianprops=dict(color='darkred', linewidth=2),
+                      showfliers=True)
+    
+    ax1.set_xlabel('Particle Size', fontsize=12)
+    ax1.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=12)
+    ax1.set_title('Diffusion Coefficient Comparison by Particle Size', fontsize=14, fontweight='bold')
+    ax1.legend([bp1["boxes"][0], bp2["boxes"][0]], ['MSD Method', 'Step Size Method'], 
+              loc='upper right', fontsize=11)
+    ax1.grid(True, alpha=0.3, axis='y')
+    ax1.set_yscale('log')
+    
+    # Plot 2: Method agreement scatter plot
+    for size in particle_sizes:
+        subset = df[df['particle_size_nm'] == size]
+        
+        if 'D_MSD_um2_per_s' in subset.columns and 'D_stepsize_um2_per_s' in subset.columns:
+            msd_vals = subset['D_MSD_um2_per_s'].values
+            step_vals = subset['D_stepsize_um2_per_s'].values
+            
+            # Only plot where both values exist
+            mask = ~np.isnan(msd_vals) & ~np.isnan(step_vals)
+            if mask.sum() > 0:
+                ax2.scatter(msd_vals[mask], step_vals[mask], 
+                          s=100, alpha=0.6, label=f'{int(size)} nm',
+                          edgecolors='black', linewidths=1)
+    
+    # Add diagonal line (perfect agreement)
+    all_D = []
+    if 'D_MSD_um2_per_s' in df.columns:
+        all_D.extend(df['D_MSD_um2_per_s'].dropna().values)
+    if 'D_stepsize_um2_per_s' in df.columns:
+        all_D.extend(df['D_stepsize_um2_per_s'].dropna().values)
+    
+    if all_D:
+        lim_min = min(all_D) * 0.5
+        lim_max = max(all_D) * 2
+        ax2.plot([lim_min, lim_max], [lim_min, lim_max], 
+                'k--', linewidth=1.5, alpha=0.5, label='Perfect Agreement')
+        ax2.set_xlim(lim_min, lim_max)
+        ax2.set_ylim(lim_min, lim_max)
+    
+    ax2.set_xlabel('D from MSD (µm²/s)', fontsize=12)
+    ax2.set_ylabel('D from Step Size (µm²/s)', fontsize=12)
+    ax2.set_title('Method Agreement', fontsize=14, fontweight='bold')
+    ax2.legend(loc='best', fontsize=10)
+    ax2.grid(True, alpha=0.3)
+    ax2.set_xscale('log')
+    ax2.set_yscale('log')
+    ax2.set_aspect('equal')
+    
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Comparison plot saved: {save_path}")
+
+
+def calculate_theoretical_diffusion(particle_size_nm: float, 
+                                   temperature: float = TEMPERATURE,
+                                   viscosity: float = WATER_VISCOSITY) -> float:
+    """
+    Calculate theoretical diffusion coefficient using Stokes-Einstein equation.
+    
+    D = k_B * T / (6 * pi * eta * r)
+    
+    Args:
+        particle_size_nm: Particle diameter in nanometers
+        temperature: Temperature in Kelvin
+        viscosity: Dynamic viscosity in Pa·s
+        
+    Returns:
+        Diffusion coefficient in µm²/s
+    """
+    radius_m = (particle_size_nm / 2) * 1e-9  # Convert nm to m
+    D_m2_per_s = BOLTZMANN_CONSTANT * temperature / (6 * np.pi * viscosity * radius_m)
+    D_um2_per_s = D_m2_per_s * 1e12  # Convert m²/s to µm²/s
+    return D_um2_per_s
+
+
+def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
+    """
+    Plot measured vs theoretical diffusion coefficients.
+    
+    Args:
+        summary_df: DataFrame with results
+        save_path: Path to save plot
+    """
+    df = summary_df.dropna(subset=['particle_size_nm']).copy()
+    
+    if df.empty:
+        print("Cannot create theory comparison: no particle size data")
+        return
+    
+    # Calculate theoretical D for each particle size
+    df['D_theory'] = df['particle_size_nm'].apply(calculate_theoretical_diffusion)
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Plot theoretical curve
+    sizes_range = np.logspace(np.log10(df['particle_size_nm'].min()), 
+                             np.log10(df['particle_size_nm'].max()), 100)
+    D_theory_range = [calculate_theoretical_diffusion(s) for s in sizes_range]
+    ax.plot(sizes_range, D_theory_range, 'k-', linewidth=2.5, 
+           label='Stokes-Einstein Theory', zorder=10)
+    
+    # Plot MSD measurements
+    if 'D_MSD_um2_per_s' in df.columns:
+        for size in df['particle_size_nm'].unique():
+            subset = df[df['particle_size_nm'] == size]
+            msd_vals = subset['D_MSD_um2_per_s'].dropna()
+            if len(msd_vals) > 0:
+                ax.scatter([size] * len(msd_vals), msd_vals, 
+                          s=150, alpha=0.6, marker='o', 
+                          edgecolors='blue', linewidths=2,
+                          facecolors='lightblue')
+    
+    # Plot step size measurements
+    if 'D_stepsize_um2_per_s' in df.columns:
+        for size in df['particle_size_nm'].unique():
+            subset = df[df['particle_size_nm'] == size]
+            step_vals = subset['D_stepsize_um2_per_s'].dropna()
+            if len(step_vals) > 0:
+                ax.scatter([size] * len(step_vals), step_vals,
+                          s=150, alpha=0.6, marker='^',
+                          edgecolors='red', linewidths=2,
+                          facecolors='lightcoral')
+    
+    # Create legend handles manually
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='k', linewidth=2.5, label='Stokes-Einstein Theory'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='lightblue',
+               markeredgecolor='blue', markersize=12, markeredgewidth=2, 
+               label='MSD Method', linestyle='None'),
+        Line2D([0], [0], marker='^', color='w', markerfacecolor='lightcoral',
+               markeredgecolor='red', markersize=12, markeredgewidth=2,
+               label='Step Size Method', linestyle='None')
+    ]
+    
+    ax.set_xlabel('Particle Size (nm)', fontsize=14)
+    ax.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=14)
+    ax.set_title('Measured vs Theoretical Diffusion Coefficients', 
+                fontsize=16, fontweight='bold')
+    ax.legend(handles=legend_elements, loc='best', fontsize=12)
+    ax.grid(True, alpha=0.3, which='both')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Theory comparison plot saved: {save_path}")
+
+
+# ============================================================================
 # ENTRY POINT
 # ============================================================================
 
 def main():
     """Main entry point for script execution."""
     
-    # Check for command line argument
+    print("Unified TrackMate XML Analysis")
+    print("=" * 80)
+    
+    # Check for command line arguments
     if len(sys.argv) > 1:
-        xml_path = Path(sys.argv[1])
+        input_path = Path(sys.argv[1])
+        
+        # Check if it's a directory or file
+        if input_path.is_dir():
+            # Batch mode: find all XML files in directory
+            xml_files = sorted(input_path.glob('**/*Tracks*.xml'))
+            if not xml_files:
+                xml_files = sorted(input_path.glob('**/*.xml'))
+            
+            if not xml_files:
+                print(f"\nERROR: No XML files found in directory: {input_path}")
+                sys.exit(1)
+            
+            print(f"\nBatch mode: Found {len(xml_files)} XML files")
+            
+            # Create output directory
+            output_dir = input_path / 'batch_analysis_results'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Process all files
+            try:
+                summary_df = analyze_multiple_xml_files(xml_files, output_dir)
+                
+                if not summary_df.empty:
+                    # Create comparison plots
+                    print("\nCreating comparison plots...")
+                    plot_diffusion_comparison(summary_df, output_dir / 'comparison_boxplot.png')
+                    plot_theory_comparison(summary_df, output_dir / 'theory_comparison.png')
+                    
+                    print(f"\n{'='*80}")
+                    print("Batch analysis complete!")
+                    print(f"Results saved to: {output_dir}")
+                    print(f"{'='*80}\n")
+                else:
+                    print("\nNo results to plot")
+                    
+            except Exception as e:
+                print(f"\nERROR during batch analysis: {e}")
+                import traceback
+                traceback.print_exc()
+                sys.exit(1)
+        
+        else:
+            # Single file mode
+            xml_path = input_path
+            
+            if not xml_path.exists():
+                print(f"\nERROR: File not found: {xml_path}")
+                sys.exit(1)
+            
+            if not xml_path.suffix.lower() == '.xml':
+                print(f"\nERROR: File must be XML format: {xml_path}")
+                sys.exit(1)
+            
+            try:
+                analyze_xml_file(xml_path)
+            except Exception as e:
+                print(f"\nERROR during analysis: {e}")
+                import traceback
+                traceback.print_exc()
+                sys.exit(1)
+    
     else:
         # Interactive mode
-        print("Unified TrackMate XML Analysis")
-        print("=" * 80)
-        xml_input = input("\nEnter path to TrackMate XML file: ").strip('"').strip("'")
-        xml_path = Path(xml_input)
-    
-    # Validate input
-    if not xml_path.exists():
-        print(f"\nERROR: File not found: {xml_path}")
-        sys.exit(1)
-    
-    if not xml_path.suffix.lower() == '.xml':
-        print(f"\nERROR: File must be XML format: {xml_path}")
-        sys.exit(1)
-    
-    # Run analysis
-    try:
-        analyze_xml_file(xml_path)
-    except Exception as e:
-        print(f"\nERROR during analysis: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        print("\nModes:")
+        print("  1. Single XML file analysis")
+        print("  2. Batch analysis (folder with multiple XML files)")
+        
+        mode = input("\nSelect mode (1 or 2): ").strip()
+        
+        if mode == '2':
+            # Batch mode
+            folder_input = input("\nEnter folder path containing XML files: ").strip('"').strip("'")
+            folder_path = Path(folder_input)
+            
+            if not folder_path.exists() or not folder_path.is_dir():
+                print(f"\nERROR: Invalid folder path: {folder_path}")
+                sys.exit(1)
+            
+            # Find XML files
+            xml_files = sorted(folder_path.glob('**/*Tracks*.xml'))
+            if not xml_files:
+                xml_files = sorted(folder_path.glob('**/*.xml'))
+            
+            if not xml_files:
+                print(f"\nERROR: No XML files found in: {folder_path}")
+                sys.exit(1)
+            
+            print(f"\nFound {len(xml_files)} XML files:")
+            for i, f in enumerate(xml_files[:10], 1):
+                print(f"  {i}. {f.name}")
+            if len(xml_files) > 10:
+                print(f"  ... and {len(xml_files) - 10} more")
+            
+            proceed = input("\nProceed with batch analysis? (y/n): ").strip().lower()
+            if proceed != 'y':
+                print("Analysis cancelled")
+                sys.exit(0)
+            
+            # Create output directory
+            output_dir = folder_path / 'batch_analysis_results'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            try:
+                summary_df = analyze_multiple_xml_files(xml_files, output_dir)
+                
+                if not summary_df.empty:
+                    print("\nCreating comparison plots...")
+                    plot_diffusion_comparison(summary_df, output_dir / 'comparison_boxplot.png')
+                    plot_theory_comparison(summary_df, output_dir / 'theory_comparison.png')
+                    
+                    print(f"\n{'='*80}")
+                    print("Batch analysis complete!")
+                    print(f"Results saved to: {output_dir}")
+                    print(f"{'='*80}\n")
+                else:
+                    print("\nNo results to plot")
+                    
+            except Exception as e:
+                print(f"\nERROR during batch analysis: {e}")
+                import traceback
+                traceback.print_exc()
+                sys.exit(1)
+        
+        else:
+            # Single file mode
+            xml_input = input("\nEnter path to TrackMate XML file: ").strip('"').strip("'")
+            xml_path = Path(xml_input)
+            
+            if not xml_path.exists():
+                print(f"\nERROR: File not found: {xml_path}")
+                sys.exit(1)
+            
+            if not xml_path.suffix.lower() == '.xml':
+                print(f"\nERROR: File must be XML format: {xml_path}")
+                sys.exit(1)
+            
+            try:
+                analyze_xml_file(xml_path)
+            except Exception as e:
+                print(f"\nERROR during analysis: {e}")
+                import traceback
+                traceback.print_exc()
+                sys.exit(1)
 
 
 if __name__ == '__main__':
