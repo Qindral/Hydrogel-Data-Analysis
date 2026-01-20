@@ -235,5 +235,5 @@ def aggregate_by_particle_size(aggregator: ResultsAggregator):
     fig2.savefig(output_dir / "quality_summary.png", dpi=300, bbox_inches='tight')
     
     print(f"\nComplete: {sum(1 for r in results if r['status'] == 'success')}/{len(results)} successful")
-    print(f"Results saved to:
+    print(f"Results saved to: {results_csv}")
     main()

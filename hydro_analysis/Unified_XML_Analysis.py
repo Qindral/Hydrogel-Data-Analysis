@@ -37,7 +37,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import trackpy as tp
 from scipy import stats
-
+from datetime import datetime
 
 # ============================================================================
 # CONFIGURATION
@@ -229,7 +229,7 @@ def find_calibration_files(xml_path: Path) -> Dict[str, any]:
     Returns:
         Dictionary with calibration info: fps, mpp, mode, files_found
     """
-    xml_dir = xml_path.parent
+    xml_dir = xml_path.parent.parent
     
     result = {
         'fps': None,
@@ -620,6 +620,7 @@ def plot_msd_results(msd_result: Dict, save_path: Path):
     ax.grid(True, alpha=0.3, which='both')
     
     fig.tight_layout()
+    plt.show()
     fig.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     print(f"  MSD plot saved: {save_path}")
@@ -692,6 +693,7 @@ def plot_stepsize_results(stepsize_result: Dict, save_path: Path):
            bbox=dict(boxstyle='round', facecolor=quality_color, alpha=0.3))
     
     fig.tight_layout()
+    plt.show()
     fig.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     print(f"  Step size plot saved: {save_path}")
@@ -722,6 +724,7 @@ def plot_trajectories(tracks: pd.DataFrame, save_path: Path, max_tracks: int = 1
     ax.set_aspect('equal')
     
     fig.tight_layout()
+    plt.show()
     fig.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     print(f"  Trajectory plot saved: {save_path}")
@@ -778,9 +781,24 @@ def analyze_xml_file(xml_path: Path, output_dir: Optional[Path] = None):
         msd_result = perform_msd_analysis(tracks_msd, MSD_FIT_POINTS)
         print(f"  D_MSD = {msd_result['D_um2_per_s']:.4f} ± {msd_result['D_error']:.4f} µm²/s")
         print(f"  Exponent n = {msd_result['exponent']:.3f} ± {msd_result['exponent_error']:.3f}")
-        
+        error_path = Path('E:\PhD Data Analysis\SPT 2025 II\Error_Calculation')
+        # Save MSD data to error_path
+        msd_data_for_csv = pd.DataFrame({
+            'lag_time_s': msd_result['emsd'].index,
+            'msd_um2': msd_result['emsd'].values,
+            'D_um2_per_s': msd_result['D_um2_per_s'],
+            'D_error': msd_result['D_error'],
+            'exponent': msd_result['exponent'],
+            'exponent_error': msd_result['exponent_error'],
+            'n_particles': msd_result['n_particles']
+        })
+        error_path.mkdir(parents=True, exist_ok=True)
+        msd_csv_path = error_path / f"{xml_path.stem}_MSD_data_Unified.csv"
+        msd_data_for_csv.to_csv(msd_csv_path, index=False)
+        print(f"  MSD data saved: {msd_csv_path}")
         # Plot MSD
-        msd_plot_path = output_dir / f"{xml_path.stem}_MSD.png"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        msd_plot_path = output_dir / f"{xml_path.stem}_MSD_{timestamp}.png"
         plot_msd_results(msd_result, msd_plot_path)
     else:
         print("  WARNING: No tracks long enough for MSD analysis")
@@ -868,19 +886,21 @@ def analyze_multiple_xml_files(xml_files: List[Path], output_dir: Path) -> pd.Da
     for i, xml_path in enumerate(xml_files, 1):
         print(f"\n[{i}/{len(xml_files)}] Processing: {xml_path.name}")
         
+        # Extract particle size from path
+        particle_size = extract_particle_size_from_path(xml_path)
+        if particle_size:
+            print(f"  Detected particle size: {particle_size} nm")
+        else:
+            print(f"  WARNING: Could not detect particle size from filename")
+        
         try:
             result = analyze_xml_file(xml_path, output_dir / xml_path.stem)
-            
-            # Extract particle size from path
-            particle_size = extract_particle_size_from_path(xml_path)
             result['particle_size_nm'] = particle_size
-            
             all_results.append(result)
             
         except Exception as e:
             print(f"  ERROR: Failed to process {xml_path.name}: {e}")
             continue
-    
     if not all_results:
         print("\nWARNING: No files were successfully processed")
         return pd.DataFrame()
@@ -957,22 +977,40 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path):
     
     # MSD boxplots
     bp1 = ax1.boxplot(msd_data, positions=x_pos - width/2, widths=width*0.8,
-                      patch_artist=True, labels=labels,
+                      patch_artist=True,
                       boxprops=dict(facecolor='lightblue', alpha=0.7),
                       medianprops=dict(color='darkblue', linewidth=2),
                       showfliers=True)
     
     # Step size boxplots
     bp2 = ax1.boxplot(stepsize_data, positions=x_pos + width/2, widths=width*0.8,
-                      patch_artist=True, labels=labels,
+                      patch_artist=True,
                       boxprops=dict(facecolor='lightcoral', alpha=0.7),
                       medianprops=dict(color='darkred', linewidth=2),
                       showfliers=True)
     
+    # Set x-axis tick labels
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(labels)
+    
+    # Plot theoretical values as black X markers
+    theoretical_D = [calculate_theoretical_diffusion(size) for size in particle_sizes]
+    ax1.scatter(x_pos, theoretical_D, marker='x', s=200, linewidths=3,
+               color='black', zorder=10, label='Stokes-Einstein Theory')
+    
     ax1.set_xlabel('Particle Size', fontsize=12)
     ax1.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=12)
     ax1.set_title('Diffusion Coefficient Comparison by Particle Size', fontsize=14, fontweight='bold')
-    ax1.legend([bp1["boxes"][0], bp2["boxes"][0]], ['MSD Method', 'Step Size Method'], 
+    
+    # Update legend to include theory
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        bp1["boxes"][0],
+        bp2["boxes"][0],
+        Line2D([0], [0], marker='x', color='black', linestyle='None', 
+               markersize=12, markeredgewidth=3, label='Theory')
+    ]
+    ax1.legend(legend_elements, ['MSD Method', 'Step Size Method', 'Stokes-Einstein Theory'], 
               loc='upper right', fontsize=11)
     ax1.grid(True, alpha=0.3, axis='y')
     ax1.set_yscale('log')
@@ -1017,6 +1055,7 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path):
     ax2.set_aspect('equal')
     
     fig.tight_layout()
+    plt.show()
     fig.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     print(f"Comparison plot saved: {save_path}")
@@ -1114,6 +1153,7 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
     ax.set_yscale('log')
     
     fig.tight_layout()
+    plt.show()
     fig.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     print(f"Theory comparison plot saved: {save_path}")

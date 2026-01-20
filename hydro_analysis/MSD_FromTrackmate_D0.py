@@ -21,6 +21,7 @@ Date: 2026-01-04
 # Standard library imports
 import os
 import re
+from statistics import mode
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -31,6 +32,7 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import trackpy as tp
+from datetime import datetime
 import matplotlib.pyplot as plt
 
 
@@ -41,6 +43,9 @@ import matplotlib.pyplot as plt
 # Directory paths
 ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung")
 SAVE_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\trackmate_MSD_results")
+# Create date-specific subfolder
+date_str = datetime.now().strftime("%Y-%m-%d")
+SAVE_PATH = SAVE_PATH / date_str
 
 # Create output directory if it doesn't exist
 SAVE_PATH.mkdir(parents=True, exist_ok=True)
@@ -90,40 +95,31 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
     """
     Parse .rec file to extract acquisition parameters.
     
-    Looks for exposure time, delay to calculate FPS, and image size.
-    Format: "Exposure / Delay        : 50.000000 ms / 0.000000 ms"
-            "Picture Size horz./vert.: 200/150"
+    Exact copy from Unified_XML_Analysis.py.
     
     Args:
         rec_path: Path to .rec file
         
     Returns:
-        Dictionary with keys:
-        - exposure_ms: Exposure time in milliseconds
-        - delay_ms: Delay time in milliseconds
-        - fps: Calculated frames per second (1000 / (exposure + delay))
-        - size_x: Image width in pixels
-        - size_y: Image height in pixels
+        Dictionary with keys: exposure_ms, delay_ms, fps, size_x, size_y, mpp
     """
     result = {
         'exposure_ms': None,
         'delay_ms': None,
         'fps': None,
         'size_x': None,
-        'size_y': None
+        'size_y': None,
+        'mpp': None
     }
     
     try:
-        # Try UTF-16 encoding first (PCO CamWare often uses this), then UTF-8
+        # Read file with UTF-16 encoding (PCO CamWare standard)
         try:
-            with open(rec_path, 'r', encoding='utf-16', errors='ignore') as f:
-                content = f.read()
+            content = rec_path.read_text(encoding='utf-16', errors='replace')
         except:
-            with open(rec_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-        # Search for exposure/delay line
-        # Pattern: "Exposure / Delay        : 50.000000 ms / 0.000000 ms"
+            content = rec_path.read_text(encoding='utf-8', errors='replace')
+        
+        # Extract exposure/delay
         match = re.search(r'Exposure\s*/\s*Delay\s*:\s*([\d.]+)\s*ms\s*/\s*([\d.]+)\s*ms', 
                          content, re.IGNORECASE)
         
@@ -134,118 +130,33 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
             result['exposure_ms'] = exposure
             result['delay_ms'] = delay
             
-            # Calculate FPS: 1000 ms/s / (exposure + delay in ms)
             total_time_ms = exposure + delay
             if total_time_ms > 0:
                 result['fps'] = 1000.0 / total_time_ms
         
-        # Search for image size
-        # Pattern: "Picture Size horz./vert.: 200/150"
-        size_match = re.search(r'Picture\s+Size\s+horz\.?/vert\.?\s*:\s*(\d+)/(\d+)', 
+        # Extract image size
+        size_match = re.search(r'Picture\s+Size\s+horz\.?/vert\.?\s*:\s*(\d+)\s*/\s*(\d+)', 
                               content, re.IGNORECASE)
         
         if size_match:
             result['size_x'] = int(size_match.group(1))
             result['size_y'] = int(size_match.group(2))
-                
+            
+            # Calculate mpp based on image size
+            x, y = result['size_x'], result['size_y']
+            
+            if x <= 250 and y <= 200:
+                result['mpp'] = 0.30  # 60 FPS mode
+            elif x <= 450 and y <= 350:
+                result['mpp'] = 0.15  # 20 FPS mode
+            else:
+                result['mpp'] = 0.149  # Large window
+    
     except Exception as e:
-        print(f"    ERROR: Could not parse {rec_path.name}: {e}")
+        print(f"    Warning: Could not parse {rec_path.name}: {e}")
     
     return result
 
-
-def get_mpp_from_size(width: int, height: int) -> Optional[float]:
-    """
-    Determine micrometers per pixel based on image dimensions.
-    Based on known camera configurations.
-    
-    Args:
-        width: Image width in pixels
-        height: Image height in pixels
-        
-    Returns:
-        MPP value or None if unknown
-    """
-    # Known dimension mappings
-    dimension_map = {
-        (200, 150): 0.3,
-        (400, 300): 0.15,
-        (696, 520): 0.149,
-    }
-    
-    if (width, height) in dimension_map:
-        return dimension_map[(width, height)]
-    
-    # Fallback: assume smaller images have higher magnification
-    if width <= 250 and height <= 200:
-        return 0.3
-    elif width <= 450 and height <= 350:
-        return 0.15
-    else:
-        return 0.149
-
-
-def get_mpp_from_fps_and_size(fps: Optional[float] = None, 
-                              x_max: Optional[int] = None, 
-                              y_max: Optional[int] = None) -> tuple[float, float, str]:
-    """
-    Determine micrometers per pixel (mpp) and FPS based on image size or FPS.
-    
-    Mode detection:
-    - 60 FPS mode: 200×150 px window -> 0.30 µm/px, 60 FPS
-    - 20 FPS mode: larger window -> 0.15 µm/px, 20 FPS
-    
-    Args:
-        fps: Frames per second (optional)
-        x_max: Maximum x coordinate (image width in pixels, optional)
-        y_max: Maximum y coordinate (image height in pixels, optional)
-        
-    Returns:
-        Tuple of (mpp, fps, mode) where mode is '60 FPS', '20 FPS', or 'Unknown'
-    """
-    # First try to detect mode by image size (most reliable)
-    if x_max is not None and y_max is not None:
-        # 60 FPS mode has small window (200×150 px)
-        if x_max <= 250 and y_max <= 200:
-            return 0.3, 60.0, '60 FPS'
-        # 20 FPS mode has larger window
-        else:
-            return 0.15, 20.0, '20 FPS'
-    
-    # Fallback to FPS-based detection
-    if fps is not None:
-        if 50 <= fps <= 70:
-            return 0.3, fps, '60 FPS'
-        elif 15 <= fps <= 30:
-            return 0.15, fps, '20 FPS'
-    
-    # Default fallback
-    print(f"  Warning: Could not determine mode (fps={fps}, size={x_max}×{y_max}). Using defaults.")
-    return DEFAULT_MPP, DEFAULT_FPS, 'Unknown'
-
-
-def get_mpp_from_fps(fps: float) -> float:
-    """
-    Determine micrometers per pixel (mpp) based on frame rate.
-    
-    Different acquisition rates use different magnifications:
-    - ~60 FPS (50-70 FPS): lower magnification, mpp = 0.3 µm/px
-    - ~20 FPS (15-30 FPS): higher magnification, mpp = 0.15 µm/px
-    
-    Args:
-        fps: Frames per second
-        
-    Returns:
-        Micrometers per pixel calibration value
-    """
-    if fps >= 50 and fps <= 70:  # ~60 FPS - widened range
-        return 0.3
-    elif fps >= 15 and fps <= 30:  # ~20 FPS - widened range
-        return 0.15
-    else:
-        # Default to 20 FPS calibration for other rates
-        print(f"Warning: Unusual FPS {fps:.2f}, using default mpp=0.15")
-        return 0.15
 
 
 def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10, 
@@ -314,44 +225,6 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
 # XML PARSING FUNCTIONS
 # ============================================================================
 
-def extract_image_dimensions_from_xml(xml_file_path: Path) -> tuple[Optional[int], Optional[int]]:
-    """
-    Extract image dimensions (x_max, y_max) from TrackMate XML file.
-    
-    Args:
-        xml_file_path: Path to TrackMate XML file
-        
-    Returns:
-        Tuple of (x_max, y_max) in pixels, or (None, None) if extraction fails
-    """
-    try:
-        tree = ET.parse(xml_file_path)
-        root = tree.getroot()
-        
-        x_coords = []
-        y_coords = []
-        
-        # Collect all x and y coordinates
-        for particle in root.findall('particle'):
-            for detection in particle.findall('detection'):
-                x_raw = detection.get('x')
-                y_raw = detection.get('y')
-                if x_raw and y_raw:
-                    x_coords.append(float(x_raw))
-                    y_coords.append(float(y_raw))
-        
-        if x_coords and y_coords:
-            # Round up to nearest integer for image dimensions
-            x_max = int(np.ceil(max(x_coords)))
-            y_max = int(np.ceil(max(y_coords)))
-            return x_max, y_max
-        
-        return None, None
-    
-    except Exception as e:
-        print(f"  Warning: Could not extract dimensions from {xml_file_path.name}: {e}")
-        return None, None
-
 
 def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
     """
@@ -406,165 +279,151 @@ def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
     except Exception as e:
         print(f"Error parsing {xml_file_path}: {e}")
         return None
-
+    
+def find_calibration_files(xml_path: Path) -> Dict[str, any]:
+    """
+    Search for .rec files in the same directory as XML.
+    
+    Exact copy from Unified_XML_Analysis.py.
+    
+    Args:
+        xml_path: Path to TrackMate XML file (in Tracks/ subfolder)
+        
+    Returns:
+        Dictionary with calibration info: fps, mpp, mode, rec_files, x_max, y_max
+    """
+    # Go up two levels: Tracks/ -> particle_size_folder/
+    xml_dir = xml_path.parent.parent
+    
+    result = {
+        'fps': None,
+        'mpp': None,
+        'mode': 'Unknown',
+        'tiff_files': [],
+        'rec_files': [],
+        'x_max': None,
+        'y_max': None
+    }
+    
+    # Search for TIFF files
+    tiff_patterns = ['*.tif', '*.tiff', '*.TIF', '*.TIFF']
+    for pattern in tiff_patterns:
+        result['tiff_files'].extend(list(xml_dir.glob(pattern)))
+    
+    # Search for .rec files
+    result['rec_files'] = list(xml_dir.glob('*.rec'))
+    
+    # Try to parse .rec file
+    if result['rec_files']:
+        rec_info = parse_rec_file(result['rec_files'][0])
+        
+        result['fps'] = rec_info.get('fps')
+        result['x_max'] = rec_info.get('size_x')
+        result['y_max'] = rec_info.get('size_y')
+        result['mpp'] = rec_info.get('mpp')
+        
+        # Determine mode
+        fps = result['fps']
+        if fps is not None:
+            if 50 <= fps <= 70:
+                result['mode'] = '60 FPS'
+            elif 15 <= fps <= 30:
+                result['mode'] = '20 FPS'
+    
+    return result
 
 def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
     """
-    Scan directory structure and collect XML track files with associated FPS data.
+    Scan directory structure and collect XML track files with matched .rec file parameters.
     
-    This function focuses on XML files (which contain the track data) and retrieves
-    FPS information from .rec files in the same particle size folder.
+    Each XML file is matched to its corresponding .rec file based on filename.
+    No averaging - each XML gets its own specific parameters.
+    .rec calibration.
+    
+    Uses find_calibration_files() exactly like Unified_XML_Analysis.py.
     
     Expected structure:
         root_path/
             50nm/
-                *.rec (for FPS extraction)
+                file.rec (one or more)
                 Tracks/
-                    *.xml (primary data)
-            100nm/
-                *.rec
-                Tracks/
-                    *.xml
+                    file1_Tracks.xml
+                    file2_Tracks.xml
     
     Args:
         root_path: Root directory to scan
         
     Returns:
-        DataFrame with columns:
-        - particle_size_nm: Particle size in nanometers
-        - xml_path: Path to XML track file
-        - xml_name: Basename of XML file
-        - exposure_ms: Average exposure time from .rec files in this folder
-        - delay_ms: Average delay time from .rec files
-        - fps: Calculated frames per second (average from all .rec files)
-        - fps_category: Classification ('~20 FPS', '~60 FPS', 'Other', 'No Data')
-        - num_rec_files: Number of .rec files used for averaging
+        DataFrame with columns: particle_size_nm, xml_path, xml_name, fps, mpp, mode, x_max, y_max
     """
     file_records = []
     
-    print(f"\nDEBUG: Scanning folders in {root_path}")
+    print(f"\nScanning folders in {root_path}")
     print("=" * 70)
     
-    # Walk through subdirectories
     for subfolder in root_path.iterdir():
         if not subfolder.is_dir():
             continue
         
-        # Extract particle size from folder name
         particle_size = extract_particle_size_from_path(subfolder)
         
         print(f"\nFolder: {subfolder.name}")
-        print(f"   Particle size: {particle_size} nm" if particle_size else "   Warning: No particle size detected")
-        
-        if particle_size is None:
-            continue
-        
-        # Find all REC files in main folder and parse them
-        rec_files = sorted(list(subfolder.glob("*.rec")))
-        print(f"   Found {len(rec_files)} .rec files")
-        
-        # Parse all REC files to get FPS and size information
-        fps_info_list = []
-        size_from_rec = None  # Store first valid size found
-        
-        for rec_file in rec_files:
-            rec_info = parse_rec_file(rec_file)
-            if rec_info['fps'] is not None:
-                fps_info_list.append(rec_info)
-                # Capture size from first valid REC (usually consistent across folder)
-                if size_from_rec is None and rec_info['size_x'] and rec_info['size_y']:
-                    size_from_rec = (rec_info['size_x'], rec_info['size_y'])
-        
-        # Calculate average FPS for this particle size
-        avg_fps_info = {
-            'exposure_ms': None, 
-            'delay_ms': None, 
-            'fps': None,
-            'size_x': size_from_rec[0] if size_from_rec else None,
-            'size_y': size_from_rec[1] if size_from_rec else None
-        }
-        num_valid_rec = 0
-        
-        if fps_info_list:
-            avg_fps_info['exposure_ms'] = np.mean([x['exposure_ms'] for x in fps_info_list])
-            avg_fps_info['delay_ms'] = np.mean([x['delay_ms'] for x in fps_info_list])
-            avg_fps_info['fps'] = np.mean([x['fps'] for x in fps_info_list])
-            num_valid_rec = len(fps_info_list)
-            
-            size_info = f", size={size_from_rec[0]}x{size_from_rec[1]} px" if size_from_rec else ""
-            print(f"   -> Average FPS: {avg_fps_info['fps']:.2f} (from {num_valid_rec} files{size_info})")
+        if particle_size:
+            print(f"   Particle size: {particle_size} nm")
         else:
-            print(f"   Warning: No valid FPS data from .rec files")
-        
-        # Find all XML files - search in multiple possible subfolders (not Tracks_old)
-        xml_files = []
-        search_folders = ['Tracks', 'Trackmate_Analyses']
-        
-        for folder_name in search_folders:
-            search_path = subfolder / folder_name
-            if search_path.exists() and search_path.is_dir():
-                found = sorted(list(search_path.glob("*.xml")))
-                if found:
-                    xml_files.extend(found)
-                    print(f"   Found {len(found)} XML files in {folder_name}/")
-        
-        if len(xml_files) == 0:
-            print(f"   Warning: No XML files found in any subfolder")
-            continue
+            print(f"   Warning: No particle size detected - skipping")
             continue
         
-        # Create one record per XML file
+        # Look for Tracks subfolder
+        tracks_folder = subfolder / "Tracks"
+        if not tracks_folder.exists():
+            print(f"   Warning: No Tracks/ subfolder - skipping")
+            continue
+        
+        xml_files = sorted(list(tracks_folder.glob("*.xml")))
+        print(f"   Found {len(xml_files)} XML files in Tracks/")
+        
+        if not xml_files:
+            continue
+        
+        # Process each XML file using find_calibration_files
         for xml_file in xml_files:
-            # Prefer size from REC, fallback to XML extraction
-            if avg_fps_info['size_x'] and avg_fps_info['size_y']:
-                x_max = avg_fps_info['size_x']
-                y_max = avg_fps_info['size_y']
-                mpp = get_mpp_from_size(x_max, y_max)
-                fps = avg_fps_info['fps'] if avg_fps_info['fps'] else DEFAULT_FPS
-                mode = f"{int(fps)} FPS"
-            else:
-                # Fallback: Extract image dimensions from XML
-                x_max, y_max = extract_image_dimensions_from_xml(xml_file)
-                
-                # Determine mpp and fps based on image size and/or .rec data
-                mpp, fps, mode = get_mpp_from_fps_and_size(
-                    fps=avg_fps_info['fps'],
-                    x_max=x_max,
-                    y_max=y_max
-                )
+            # Use exact same logic as Unified_XML_Analysis.py
+            calib_info = find_calibration_files(xml_file)
+            
+            fps = calib_info['fps']
+            mpp = calib_info['mpp']
+            mode = calib_info['mode']
+            x_max = calib_info['x_max']
+            y_max = calib_info['y_max']
+            
+            # Validate required parameters
+            if fps is None or mpp is None:
+                rec_count = len(calib_info['rec_files'])
+                print(f"     ERROR: Missing calibration for {xml_file.name} ({rec_count} .rec files found, fps={fps}, mpp={mpp})")
+                print(f"     Skipping {xml_file.name}")
+                continue
             
             file_records.append({
                 'particle_size_nm': particle_size,
                 'xml_path': str(xml_file),
                 'xml_name': xml_file.name,
-                'x_max': x_max,
-                'y_max': y_max,
-                'exposure_ms': avg_fps_info['exposure_ms'],
-                'delay_ms': avg_fps_info['delay_ms'],
-                'fps_from_rec': avg_fps_info['fps'],
                 'fps': fps,
                 'mpp': mpp,
                 'mode': mode,
-                'num_rec_files': num_valid_rec,
+                'x_max': x_max,
+                'y_max': y_max,
             })
             
-            size_info = f"{x_max}x{y_max}" if x_max and y_max else "unknown size"
-            print(f"     [OK] {xml_file.name} [{size_info} -> {mode}, {mpp} um/px]")
-        
-        print(f"   -> Created {len(xml_files)} records")
-    
+            size_info = f"{x_max}×{y_max}" if x_max and y_max else "unknown"
+            print(f"     [OK] {xml_file.name} [{size_info}, {mode}, mpp={mpp} µm/px]")
+            
     print(f"\n" + "=" * 70)
-    print(f"[OK] Total XML files found: {len(file_records)}")
+    print(f"[OK] Total XML files collected: {len(file_records)}")
     print("=" * 70 + "\n")
     
-    df = pd.DataFrame(file_records)
-    
-    return df
-
-
-def find_tracks_in_particle_folders(root_path: Path) -> Dict[float, List[Path]]:
-    """
-    Scan directory structure for TrackMate XML files organized by particle size.
+    return pd.DataFrame(file_records)
+    """Scan directory structure for TrackMate XML files organized by particle size.
     
     Expected structure:
         root_path/
@@ -1396,7 +1255,7 @@ def main():
     
     files_df = collect_all_files_by_particle_size(ROOT_PATH)
     
-
+    files_df = files_df[files_df['particle_size_nm'] == 20]
     
     print(f"\n[OK] Found {len(files_df)} XML files across {files_df['particle_size_nm'].nunique()} particle sizes")
     
@@ -1487,7 +1346,75 @@ def main():
     print("=" * 70)
     
     msd_results_df = analyze_all_msds(files_df, points=DEFAULT_POINTS)
+    ## Error Analysis
+    # Error Analysis - Save detailed MSD data and fit parameters
+    error_path = Path('E:/PhD Data Analysis/SPT 2025 II/Error_Calculation')
+    error_path.mkdir(parents=True, exist_ok=True)
     
+    print("\n" + "=" * 70)
+    print("Saving detailed MSD data and fit parameters for error analysis...")
+    print("=" * 70)
+    
+    for idx, row in msd_results_df.iterrows():
+        particle_size = row['particle_size_nm']
+        xml_name = row['xml_name']
+        imsd = row['msd_data']
+        
+        if imsd is None or imsd.empty:
+            continue
+        
+        file_prefix = f"{particle_size:.0f}nm_{Path(xml_name).stem}"
+        
+        # Calculate ensemble MSD
+        emsd = imsd.mean(axis=1)
+        
+        # Fit power-law to ensemble MSD
+        try:
+            params = fit_powerlaw_with_errors(emsd, points=row['points'], plot=False)
+            A = float(params.A[0])
+            A_err = float(params.A_err[0])
+            n = float(params.n[0])
+            n_err = float(params.n_err[0])
+            D = A / 4.0
+            D_err = A_err / 4.0
+        except Exception as e:
+            print(f"  Warning: Could not fit {xml_name}: {e}")
+            A, A_err, n, n_err, D, D_err = np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        
+        # Save individual MSD (iMSD) - wide format
+        imsd_path = error_path / f"{file_prefix}_iMSD.csv"
+        imsd_export = imsd.copy()
+        imsd_export.index.name = 'lag_time_frames'
+        imsd_export.to_csv(imsd_path)
+        
+        # Save ensemble MSD (eMSD)
+        emsd_path = error_path / f"{file_prefix}_eMSD.csv"
+        emsd_df = pd.DataFrame({
+            'lag_time_frames': emsd.index,
+            'MSD_um2': emsd.values
+        })
+        emsd_df.to_csv(emsd_path, index=False)
+        
+        # Save fit parameters
+        fit_path = error_path / f"{file_prefix}_fit_params.csv"
+        fit_df = pd.DataFrame({
+            'parameter': ['A', 'A_err', 'n', 'n_err', 'D', 'D_err', 'fps', 'mpp', 'fit_points', 'num_particles'],
+            'value': [A, A_err, n, n_err, D, D_err, row['fps'], row['mpp'], row['points'], row['num_particles']],
+            'unit': ['um^2/s^n', 'um^2/s^n', 'dimensionless', 'dimensionless', 'um^2/s', 'um^2/s', 'fps', 'um/px', 'points', 'count']
+        })
+        fit_df.to_csv(fit_path, index=False)
+        
+        print(f"  Saved: {file_prefix} (iMSD: {len(imsd.columns)} particles, eMSD + fit params)")
+    
+    print(f"\n[OK] Detailed MSD data saved to: {error_path}")
+    print("=" * 70 + "\n")
+    error_path.mkdir(parents=True, exist_ok=True)
+    msd_csv_path = error_path / f"{xml_path.stem}_MSD_data_DM_D0.csv"
+    msd_data_for_csv.to_csv(msd_csv_path, index=False)
+    print(f"  MSD data saved: {msd_csv_path}")
+
+
+
     if not msd_results_df.empty:
         # Summary by particle size
         print("\n" + "=" * 70)
