@@ -35,6 +35,9 @@ import trackpy as tp
 from datetime import datetime
 import matplotlib.pyplot as plt
 
+#Self-made functions
+import core.io as io
+
 
 # ============================================================================
 # CONFIGURATION
@@ -90,72 +93,6 @@ def extract_particle_size_from_path(folder_path: Path) -> Optional[float]:
         return float(match.group(1))
     return None
 
-
-def parse_rec_file(rec_path: Path) -> Dict[str, any]:
-    """
-    Parse .rec file to extract acquisition parameters.
-    
-    Exact copy from Unified_XML_Analysis.py.
-    
-    Args:
-        rec_path: Path to .rec file
-        
-    Returns:
-        Dictionary with keys: exposure_ms, delay_ms, fps, size_x, size_y, mpp
-    """
-    result = {
-        'exposure_ms': None,
-        'delay_ms': None,
-        'fps': None,
-        'size_x': None,
-        'size_y': None,
-        'mpp': None
-    }
-    
-    try:
-        # Read file with UTF-16 encoding (PCO CamWare standard)
-        try:
-            content = rec_path.read_text(encoding='utf-16', errors='replace')
-        except:
-            content = rec_path.read_text(encoding='utf-8', errors='replace')
-        
-        # Extract exposure/delay
-        match = re.search(r'Exposure\s*/\s*Delay\s*:\s*([\d.]+)\s*ms\s*/\s*([\d.]+)\s*ms', 
-                         content, re.IGNORECASE)
-        
-        if match:
-            exposure = float(match.group(1))
-            delay = float(match.group(2))
-            
-            result['exposure_ms'] = exposure
-            result['delay_ms'] = delay
-            
-            total_time_ms = exposure + delay
-            if total_time_ms > 0:
-                result['fps'] = 1000.0 / total_time_ms
-        
-        # Extract image size
-        size_match = re.search(r'Picture\s+Size\s+horz\.?/vert\.?\s*:\s*(\d+)\s*/\s*(\d+)', 
-                              content, re.IGNORECASE)
-        
-        if size_match:
-            result['size_x'] = int(size_match.group(1))
-            result['size_y'] = int(size_match.group(2))
-            
-            # Calculate mpp based on image size
-            x, y = result['size_x'], result['size_y']
-            
-            if x <= 250 and y <= 200:
-                result['mpp'] = 0.30  # 60 FPS mode
-            elif x <= 450 and y <= 350:
-                result['mpp'] = 0.15  # 20 FPS mode
-            else:
-                result['mpp'] = 0.149  # Large window
-    
-    except Exception as e:
-        print(f"    Warning: Could not parse {rec_path.name}: {e}")
-    
-    return result
 
 
 
@@ -226,59 +163,7 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
 # ============================================================================
 
 
-def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
-    """
-    Parse TrackMate XML file and convert to pandas DataFrame.
-    
-    The TrackMate XML format contains 'particle' elements with nested
-    'detection' elements for each time point.
-    
-    Args:
-        xml_file_path: Path to TrackMate XML file
-        
-    Returns:
-        DataFrame with columns ['frame', 'particle', 'x', 'y'], or None on error
-    """
-    try:
-        # Parse XML file
-        tree = ET.parse(xml_file_path)
-        root = tree.getroot()
-        
-        data_rows = []
-        
-        # Iterate through all particle tracks
-        for particle_id, particle in enumerate(root.findall('particle')):
-            # Extract detections (position at each time point)
-            for detection in particle.findall('detection'):
-                # Get attributes
-                t_raw = detection.get('t')
-                x_raw = detection.get('x')
-                y_raw = detection.get('y')
-                
-                # Convert to appropriate types and store
-                row = {
-                    'frame': int(float(t_raw)),  # Handle "40.0" format
-                    'particle': particle_id + 1,  # 1-indexed particle IDs
-                    'x': float(x_raw),
-                    'y': float(y_raw)
-                }
-                data_rows.append(row)
-        
-        # Create DataFrame
-        df = pd.DataFrame(data_rows)
-        
-        if not df.empty:
-            # Ensure correct column order
-            df = df[['frame', 'particle', 'x', 'y']]
-            
-            # Sort for better readability
-            df = df.sort_values(by=['frame', 'particle']).reset_index(drop=True)
-            
-        return df
 
-    except Exception as e:
-        print(f"Error parsing {xml_file_path}: {e}")
-        return None
     
 def find_calibration_files(xml_path: Path) -> Dict[str, any]:
     """
@@ -315,7 +200,7 @@ def find_calibration_files(xml_path: Path) -> Dict[str, any]:
     
     # Try to parse .rec file
     if result['rec_files']:
-        rec_info = parse_rec_file(result['rec_files'][0])
+        rec_info = io.parse_rec_file(result['rec_files'][0])
         
         result['fps'] = rec_info.get('fps')
         result['x_max'] = rec_info.get('size_x')
@@ -486,8 +371,8 @@ def calculate_imsd_for_file(xml_path: Path, mpp: float, fps: float) -> Optional[
         or None if calculation fails
     """
     try:
-        # Load tracks from XML (already complete, no linking needed)
-        df = read_trackmate_xml(xml_path)
+        # Load tracks from XML
+        df = io.read_trackmate_xml(xml_path)
         if df is None or df.empty:
             return None
         
@@ -731,7 +616,7 @@ def count_particles_per_size(tracks_by_size: Dict[float, List[Path]]) -> pd.Data
         
         # Process each XML file
         for xml_file in xml_files:
-            df = read_trackmate_xml(xml_file)
+            df = io.read_trackmate_xml(xml_file)
             if df is not None and not df.empty:
                 # Count unique particles in this file
                 num_particles = df['particle'].nunique()
@@ -792,7 +677,7 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
             continue
             
         # Load track data
-        df = read_trackmate_xml(p)
+        df = io.read_trackmate_xml(p)
         if df is None or df.empty:
             continue
             
@@ -1311,7 +1196,7 @@ def main():
         print(f"{particle_size:.0f} nm:")
         for _, row in size_xmls.iterrows():
             xml_path = Path(row['xml_path'])
-            df = read_trackmate_xml(xml_path)
+            df = io.read_trackmate_xml(xml_path)
             if df is not None and not df.empty:
                 num_particles = df['particle'].nunique()
                 total_particles += num_particles
@@ -1347,67 +1232,21 @@ def main():
     
     msd_results_df = analyze_all_msds(files_df, points=DEFAULT_POINTS)
     ## Error Analysis
-    # Error Analysis - Save detailed MSD data and fit parameters
+
     error_path = Path('E:/PhD Data Analysis/SPT 2025 II/Error_Calculation')
-    error_path.mkdir(parents=True, exist_ok=True)
-    
-    print("\n" + "=" * 70)
-    print("Saving detailed MSD data and fit parameters for error analysis...")
-    print("=" * 70)
-    
-    for idx, row in msd_results_df.iterrows():
-        particle_size = row['particle_size_nm']
-        xml_name = row['xml_name']
-        imsd = row['msd_data']
-        
-        if imsd is None or imsd.empty:
-            continue
-        
-        file_prefix = f"{particle_size:.0f}nm_{Path(xml_name).stem}"
-        
-        # Calculate ensemble MSD
-        emsd = imsd.mean(axis=1)
-        
-        # Fit power-law to ensemble MSD
-        try:
-            params = fit_powerlaw_with_errors(emsd, points=row['points'], plot=False)
-            A = float(params.A[0])
-            A_err = float(params.A_err[0])
-            n = float(params.n[0])
-            n_err = float(params.n_err[0])
-            D = A / 4.0
-            D_err = A_err / 4.0
-        except Exception as e:
-            print(f"  Warning: Could not fit {xml_name}: {e}")
-            A, A_err, n, n_err, D, D_err = np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-        
-        # Save individual MSD (iMSD) - wide format
-        imsd_path = error_path / f"{file_prefix}_iMSD.csv"
-        imsd_export = imsd.copy()
-        imsd_export.index.name = 'lag_time_frames'
-        imsd_export.to_csv(imsd_path)
-        
-        # Save ensemble MSD (eMSD)
-        emsd_path = error_path / f"{file_prefix}_eMSD.csv"
-        emsd_df = pd.DataFrame({
-            'lag_time_frames': emsd.index,
-            'MSD_um2': emsd.values
-        })
-        emsd_df.to_csv(emsd_path, index=False)
-        
-        # Save fit parameters
-        fit_path = error_path / f"{file_prefix}_fit_params.csv"
-        fit_df = pd.DataFrame({
-            'parameter': ['A', 'A_err', 'n', 'n_err', 'D', 'D_err', 'fps', 'mpp', 'fit_points', 'num_particles'],
-            'value': [A, A_err, n, n_err, D, D_err, row['fps'], row['mpp'], row['points'], row['num_particles']],
-            'unit': ['um^2/s^n', 'um^2/s^n', 'dimensionless', 'dimensionless', 'um^2/s', 'um^2/s', 'fps', 'um/px', 'points', 'count']
-        })
-        fit_df.to_csv(fit_path, index=False)
-        
-        print(f"  Saved: {file_prefix} (iMSD: {len(imsd.columns)} particles, eMSD + fit params)")
-    
-    print(f"\n[OK] Detailed MSD data saved to: {error_path}")
-    print("=" * 70 + "\n")
+    # Save MSD data to error_path
+    msd_data_for_csv = pd.DataFrame({'particle_size_nm': msd_results_df['particle_size_nm'] ,
+                'xml_name': msd_results_df['xml_name'],
+                'mode': msd_results_df['mode'],
+                'x_max': msd_results_df['x_max'],
+                'y_max': msd_results_df['y_max'],
+                'fps': msd_results_df['fps'],
+                'mpp': msd_results_df['mpp'],
+                'num_particles': msd_results_df['num_particles'],
+                'num_lag_times': msd_results_df['num_lag_times'],
+                'points': msd_results_df['points'],
+                'msd_data': msd_results_df['msd_data']
+    })
     error_path.mkdir(parents=True, exist_ok=True)
     msd_csv_path = error_path / f"{xml_path.stem}_MSD_data_DM_D0.csv"
     msd_data_for_csv.to_csv(msd_csv_path, index=False)

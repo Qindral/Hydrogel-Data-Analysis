@@ -1,4 +1,4 @@
-# spt_dataset_index.py
+'''This Script provides experiment data extraction and parsing. It is solely for the SPT experiment conducted in the keylab microscopy.'''
 from __future__ import annotations
 
 import re
@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Iterable, Tuple, Any
+import xml.etree.ElementTree as ET
 
-
+import pandas as pd
 # -----------------------------
 # Dataclass requested by you
 # -----------------------------
@@ -63,65 +64,131 @@ class DatasetFiles:
 
 
 # -----------------------------
-# REC parsing (your format)
+# REC parsing 
 # -----------------------------
 
 def _to_float(s: str) -> float:
     return float(s.strip().replace(",", "."))
 
-def parse_pco_camware_rec_text(text: str) -> Dict[str, Any]:
+def parse_rec_file(rec_path: Path) -> Dict[str, any]:
     """
-    Parser for 'PCO - CamWare Recorder Comment File' (text .rec).
-    Extracts picture size, ROI, binning, exposure/delay, nominal fps, etc.
+    Parse PCO CamWare .rec file to extract metadata.    
+    Args:
+        rec_path: Path to .rec file
+        
+    Returns:
+        Dictionary with keys: exposure_ms, delay_ms, fps, size_x, size_y, mpp
     """
-    out: Dict[str, Any] = {}
+    result = {
+        'exposure_ms': None,
+        'delay_ms': None,
+        'fps': None,
+        'size_x': None,
+        'size_y': None,
+        'mpp': None
+    }
+    
+    try:
+        
+        content = rec_path.read_text(encoding='utf-16', errors='replace')
+        
+        # Extract exposure/delay
+        match = re.search(r'Exposure\s*/\s*Delay\s*:\s*([\d.]+)\s*ms\s*/\s*([\d.]+)\s*ms', 
+                         content, re.IGNORECASE)
+        
+        if match:
+            exposure = float(match.group(1))
+            delay = float(match.group(2))
+            
+            result['exposure_ms'] = exposure
+            result['delay_ms'] = delay
+            
+            total_time_ms = exposure + delay
+            if total_time_ms > 0:
+                result['fps'] = 1000.0 / total_time_ms
+        
+        # Extract image size
+        size_match = re.search(r'Picture\s+Size\s+horz\.?/vert\.?\s*:\s*(\d+)\s*/\s*(\d+)', 
+                              content, re.IGNORECASE)
+        
+        if size_match:
+            result['size_x'] = int(size_match.group(1))
+            result['size_y'] = int(size_match.group(2))
+            
+            
+            x, y = result['size_x'], result['size_y']
+            # mpp measured via Thorlab Grid 10µm
+            if x==200:
+                result['mpp'] = 0.30 
+            elif x == 400:
+                result['mpp'] = 0.15 
+            elif x==696:
+                result['mpp'] = 0.149 
+            elif x==696*2:
+                result['mpp'] = 0.149 / 2
+    
+    except Exception as e:
+        print(f"    Warning: Could not parse {rec_path.name}: {e}")
+    
+    return result
 
-    def grab(pattern: str, flags=0) -> Optional[re.Match]:
-        return re.search(pattern, text, flags)
+# -----------------------------
+# XML parsing 
+# -----------------------------
 
-    m = grab(r"Camera Type\s*:\s*(.+)")
-    if m:
-        out["camera_type"] = m.group(1).strip()
+def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
+    """
+    Parse TrackMate XML file and convert to pandas DataFrame.
+    
+    The TrackMate XML format contains 'particle' elements with nested
+    'detection' elements for each time point.
+    
+    Args:
+        xml_file_path: Path to TrackMate XML file
+        
+    Returns:
+        DataFrame with columns ['frame', 'particle', 'x', 'y'], or None on error
+    """
+    try:
+        # Parse XML file
+        tree = ET.parse(xml_file_path)
+        root = tree.getroot()
+        
+        data_rows = []
+        
+        # Iterate through all particle tracks
+        for particle_id, particle in enumerate(root.findall('particle')):
+            # Extract detections (position at each time point)
+            for detection in particle.findall('detection'):
+                # Get attributes
+                t_raw = detection.get('t')
+                x_raw = detection.get('x')
+                y_raw = detection.get('y')
+                
+                # Convert to appropriate types and store
+                row = {
+                    'frame': int(float(t_raw)),  # Handle "40.0" format
+                    'particle': particle_id + 1,  # 1-indexed particle IDs
+                    'x': float(x_raw),
+                    'y': float(y_raw)
+                }
+                data_rows.append(row)
+        
+        # Create DataFrame
+        df = pd.DataFrame(data_rows)
+        
+        if not df.empty:
+            # Ensure correct column order
+            df = df[['frame', 'particle', 'x', 'y']]
+            
+            # Sort for better readability
+            df = df.sort_values(by=['frame', 'particle']).reset_index(drop=True)
+            
+        return df
 
-    m = grab(r"Picture Size\s*horz\./vert\.\s*:\s*(\d+)\s*/\s*(\d+)")
-    if m:
-        out["size_px"] = {"x": int(m.group(1)), "y": int(m.group(2))}
-
-    m = grab(r"ROI\s*horz\./vert\.\s*:\s*(\d+)\s*-\s*(\d+)\s*/\s*(\d+)\s*-\s*(\d+)")
-    if m:
-        out["roi_px"] = {"x0": int(m.group(1)), "x1": int(m.group(2)),
-                         "y0": int(m.group(3)), "y1": int(m.group(4))}
-        out["roi_size_px"] = {"x": out["roi_px"]["x1"] - out["roi_px"]["x0"] + 1,
-                              "y": out["roi_px"]["y1"] - out["roi_px"]["y0"] + 1}
-
-    m = grab(r"Binning\s*horz\./vert\.\s*:\s*x(\d+)\s*/\s*x(\d+)", flags=re.IGNORECASE)
-    if m:
-        out["binning"] = {"x": int(m.group(1)), "y": int(m.group(2))}
-
-    m = grab(r"Exposure\s*/\s*Delay\s*:\s*([0-9\.,]+)\s*ms\s*/\s*([0-9\.,]+)\s*ms",
-             flags=re.IGNORECASE)
-    if m:
-        exposure_ms = _to_float(m.group(1))
-        delay_ms = _to_float(m.group(2))
-        out["exposure_ms"] = exposure_ms
-        out["delay_ms"] = delay_ms
-        frame_period_ms = exposure_ms + delay_ms
-        out["frame_period_ms_nominal"] = frame_period_ms
-        out["fps_nominal"] = (1000.0 / frame_period_ms) if frame_period_ms > 0 else None
-
-    m = grab(r"Pixelrate\s*:\s*([0-9\.,]+)\s*MHz", flags=re.IGNORECASE)
-    if m:
-        out["pixelrate_mhz"] = _to_float(m.group(1))
-
-    m = grab(r"Camera serial number\s*:\s*(\S+)")
-    if m:
-        out["camera_serial"] = m.group(1).strip()
-
-    m = grab(r"Comment:\s*(.*)\Z", flags=re.DOTALL)
-    if m:
-        out["comment_raw"] = m.group(1).strip()
-
-    return out
+    except Exception as e:
+        print(f"Error parsing {xml_file_path}: {e}")
+        return None
 
 
 # -----------------------------
@@ -345,86 +412,6 @@ def build_datasets(root: Path) -> Dict[str, DatasetFiles]:
 def _to_float(s: str) -> float:
     # akzeptiert auch Komma als Dezimaltrenner
     return float(s.strip().replace(",", "."))
-
-
-def parse_pco_camware_rec_text(text: str) -> Dict[str, Any]:
-    """
-    Parser für 'PCO - CamWare Recorder Comment File' (Textformat).
-    Extrahiert: camera type, picture size, ROI, binning, exposure/delay (ms), pixelrate, etc.
-    Berechnet nominale fps ~ 1000/(exposure_ms + delay_ms).
-    """
-    out: Dict[str, Any] = {}
-
-    # Hilfsfunktion: einzelne Zeile per Regex holen
-    def grab(pattern: str, flags=0) -> Optional[re.Match]:
-        return re.search(pattern, text, flags)
-
-    # Camera Type
-    m = grab(r"Camera Type\s*:\s*(.+)")
-    if m:
-        out["camera_type"] = m.group(1).strip()
-
-    # Picture Size horz./vert.: 696/520
-    m = grab(r"Picture Size\s*horz\./vert\.\s*:\s*(\d+)\s*/\s*(\d+)")
-    if m:
-        out["size_px"] = {"x": int(m.group(1)), "y": int(m.group(2))}
-
-    # ROI horz./vert.: 1-696/1-520
-    m = grab(r"ROI\s*horz\./vert\.\s*:\s*(\d+)\s*-\s*(\d+)\s*/\s*(\d+)\s*-\s*(\d+)")
-    if m:
-        out["roi_px"] = {
-            "x0": int(m.group(1)), "x1": int(m.group(2)),
-            "y0": int(m.group(3)), "y1": int(m.group(4)),
-        }
-        out["roi_size_px"] = {
-            "x": out["roi_px"]["x1"] - out["roi_px"]["x0"] + 1,
-            "y": out["roi_px"]["y1"] - out["roi_px"]["y0"] + 1,
-        }
-
-    # Binning horz./vert.: x2/x2
-    m = grab(r"Binning\s*horz\./vert\.\s*:\s*x(\d+)\s*/\s*x(\d+)", flags=re.IGNORECASE)
-    if m:
-        out["binning"] = {"x": int(m.group(1)), "y": int(m.group(2))}
-
-    # Exposure / Delay : 50.000000 ms / 0.000000 ms
-    m = grab(
-        r"Exposure\s*/\s*Delay\s*:\s*([0-9\.,]+)\s*ms\s*/\s*([0-9\.,]+)\s*ms",
-        flags=re.IGNORECASE
-    )
-    if m:
-        exposure_ms = _to_float(m.group(1))
-        delay_ms = _to_float(m.group(2))
-        out["exposure_ms"] = exposure_ms
-        out["delay_ms"] = delay_ms
-
-        frame_period_ms = exposure_ms + delay_ms
-        out["frame_period_ms_nominal"] = frame_period_ms
-        out["fps_nominal"] = (1000.0 / frame_period_ms) if frame_period_ms > 0 else None
-
-    # Pixelrate: 24 MHz
-    m = grab(r"Pixelrate\s*:\s*([0-9\.,]+)\s*MHz", flags=re.IGNORECASE)
-    if m:
-        out["pixelrate_mhz"] = _to_float(m.group(1))
-
-    # Camera serial number
-    m = grab(r"Camera serial number\s*:\s*(\S+)")
-    if m:
-        out["camera_serial"] = m.group(1).strip()
-
-    # Optional: Comment Block (alles nach "Comment:")
-    m = grab(r"Comment:\s*(.*)\Z", flags=re.DOTALL)
-    if m:
-        out["comment_raw"] = m.group(1).strip()
-
-    return out
-
-
-def parse_pco_camware_rec_file(rec_path: Path) -> Dict[str, Any]:
-    text = rec_path.read_text(encoding="utf-8", errors="replace")
-    meta = parse_pco_camware_rec_text(text)
-    meta["rec_file"] = str(rec_path)
-    return meta
-
 
 
 # -----------------------------

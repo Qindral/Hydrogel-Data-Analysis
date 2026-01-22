@@ -3,9 +3,9 @@
 from .io import (
     DatasetIndex,
     DatasetFiles,
-    parse_pco_camware_rec_text,
-    parse_pco_camware_rec_file,
     canonical_base,
+    parse_rec_file,
+    read_trackmate_xml,
     processed_level,
     xml_variant_from_path,
     build_datasets,
@@ -32,9 +32,7 @@ __all__ = [
     'build_datasets',
     
     # Metadata parsing
-    'parse_pco_camware_rec_text',
-    'parse_pco_camware_rec_file',
-    
+    parse_rec_file,
     # Utilities
     'canonical_base',
     'processed_level',
