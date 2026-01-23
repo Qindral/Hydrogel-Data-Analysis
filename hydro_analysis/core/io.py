@@ -10,62 +10,69 @@ from typing import Dict, List, Optional, Iterable, Tuple, Any
 import xml.etree.ElementTree as ET
 
 import pandas as pd
-# -----------------------------
-# Dataclass requested by you
-# -----------------------------
-
-@dataclass
-class DatasetFiles:
-    """Container for a dataset with base TIF, REC, processed TIFs, and XMLs.
-
-    XMLs are grouped by suffix/variant:
-    - 'base': XMLs for the original TIF
-    - 'processed': XMLs for processed versions
-    - other suffixes as found
-    """
-    base_tif: Path
-    rec_path: Optional[Path]
-    processed_tifs: List[Path]
-    xml_paths: List[Path]  # All XMLs (backward compatibility)
-    xml_groups: Dict[str, List[Path]]  # {'base': [...], 'processed': [...], ...}
-    base_name: str
-
-    # Optional: store parsed rec metadata cache here (lazy)
-    _rec_meta_cache: Optional[Dict[str, Any]] = field(default=None, repr=False)
-
-    @property
-    def all_tifs(self) -> List[Path]:
-        """All TIF files (base + processed)."""
-        return [self.base_tif] + list(self.processed_tifs)
-
-    @property
-    def base_xmls(self) -> List[Path]:
-        """XMLs for the base (non-processed) TIF."""
-        return self.xml_groups.get("base", [])
-
-    @property
-    def processed_xmls(self) -> List[Path]:
-        """XMLs for processed versions."""
-        return self.xml_groups.get("processed", [])
-
-    @property
-    def rec_metadata(self) -> Optional[Dict[str, Any]]:
-        """Parsed metadata from .rec (PCO CamWare comment file), if available."""
-        if self.rec_path is None:
-            return None
-        if self._rec_meta_cache is None:
-            try:
-                text = self.rec_path.read_text(encoding="utf-8", errors="replace")
-                self._rec_meta_cache = parse_pco_camware_rec_text(text)
-                self._rec_meta_cache["rec_file"] = str(self.rec_path)
-            except Exception as e:
-                self._rec_meta_cache = {"rec_file": str(self.rec_path), "error": str(e)}
-        return self._rec_meta_cache
-
 
 # -----------------------------
 # REC parsing 
 # -----------------------------
+
+
+def find_rec_tif_files(xml_path: Path) -> Dict[str, any]:
+    """
+    Search for TIFF or .rec files in the same directory as XML.
+    .rec files will be always in the parent-parent folder of the XML.
+    
+    Args:
+        xml_path: Path to TrackMate XML file
+        
+    Returns:
+        Dictionary with calibration info: fps, mpp, mode, files_found
+    """
+    xml_dir = xml_path.parent.parent
+    print('dir', xml_dir)
+    # Clean up XML path to find corresponding .rec file
+    # Remove common suffixes and patterns
+    xml_stem = xml_path.stem
+    xml_stem = xml_stem.replace('_Tracks', '') 
+    xml_stem = xml_stem.replace('_processed', '')
+    xml_stem = xml_stem.replace('Resultsof', '')
+    xml_stem = xml_stem.replace('_var', '')
+    
+
+    rec_path = xml_dir / f"{xml_stem}.tif.rec"
+    if not rec_path.exists():
+        rec_path = xml_dir / f"{xml_stem}.rec"
+
+
+    tif_path = xml_dir / f"{xml_stem}.tif"
+    print("rec: ", rec_path)
+    result = {
+        'fps': None,
+        'mpp': None,
+        'tiff_file':    None,
+        'rec_file': None,
+    }
+    
+
+    
+
+    # Try to parse .rec file for FPS
+    
+    rec_info = parse_rec_file(rec_path)
+    fps = rec_info.get('fps')
+    mpp = rec_info.get('mpp')
+    
+
+    
+    # Determine calibration
+    
+    result['mpp'] = mpp
+    result['fps'] = fps
+    result['tiff_file'] = tif_path if tif_path.exists() else None
+    result['rec_file'] = rec_path if rec_path.exists() else None
+    
+    return result
+
+
 
 def _to_float(s: str) -> float:
     return float(s.strip().replace(",", "."))
@@ -87,10 +94,11 @@ def parse_rec_file(rec_path: Path) -> Dict[str, any]:
         'size_y': None,
         'mpp': None
     }
-    
+    encoding = check_text_encoding(rec_path)
     try:
         
-        content = rec_path.read_text(encoding='utf-16', errors='replace')
+        content = rec_path.read_text(encoding=encoding, errors='replace')
+        
         
         # Extract exposure/delay
         match = re.search(r'Exposure\s*/\s*Delay\s*:\s*([\d.]+)\s*ms\s*/\s*([\d.]+)\s*ms', 
@@ -165,10 +173,9 @@ def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
                 x_raw = detection.get('x')
                 y_raw = detection.get('y')
                 
-                # Convert to appropriate types and store
                 row = {
-                    'frame': int(float(t_raw)),  # Handle "40.0" format
-                    'particle': particle_id + 1,  # 1-indexed particle IDs
+                    'frame': int(float(t_raw)),  
+                    'particle': particle_id + 1,  
                     'x': float(x_raw),
                     'y': float(y_raw)
                 }
@@ -182,7 +189,7 @@ def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
             df = df[['frame', 'particle', 'x', 'y']]
             
             # Sort for better readability
-            df = df.sort_values(by=['frame', 'particle']).reset_index(drop=True)
+            df = df.sort_values(by=[ 'particle','frame']).reset_index(drop=True)
             
         return df
 
@@ -190,60 +197,65 @@ def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
         print(f"Error parsing {xml_file_path}: {e}")
         return None
 
-
+def check_text_encoding(path: Path) -> None:
+    """Utility to check text encoding of a file."""
+    import chardet
+    with open(path, 'rb') as f:
+        result = chardet.detect(f.read())
+    
+        print(result['encoding'])
+    return result['encoding']
+    #print(path.read_text(encoding=result['encoding'], errors='replace'))
+    
 # -----------------------------
 # Canonicalization / grouping
 # -----------------------------
 
-TIFF_EXT = {".tif", ".tiff"}
-REC_EXT = {".rec"}
-XML_EXT = {".xml"}
 
-# repeated suffixes at end: processed, Tracks, track
-END_TOKEN_RE = re.compile(r"([ _\-.]+)(processed|tracks|track)\Z", re.IGNORECASE)
 
-def _norm_spaces(s: str) -> str:
-    return re.sub(r"\s+", " ", s.strip())
 
-def canonical_base(stem: str) -> str:
-    """
-    Make a stable base name from any derived filename:
-      A4_xxx_processed_processed -> A4_xxx
-      A4_xxx_Tracks -> A4_xxx
-    """
-    s = _norm_spaces(stem)
-    while True:
-        m = END_TOKEN_RE.search(s)
-        if not m:
-            break
-        s = s[:m.start()].rstrip(" _-.\t")
-        s = _norm_spaces(s)
-    return s
+# def _norm_spaces(s: str) -> str:
+#     return re.sub(r"\s+", " ", s.strip())
 
-def processed_level(stem: str) -> int:
-    """Count how often 'processed' appears at the end (processed_processed => 2)."""
-    s = _norm_spaces(stem)
-    level = 0
-    while True:
-        m = re.search(r"([ _\-.]+)processed\Z", s, flags=re.IGNORECASE)
-        if not m:
-            break
-        level += 1
-        s = s[:m.start()].rstrip(" _-.\t")
-        s = _norm_spaces(s)
-    return level
+# def canonical_base(stem: str) -> str:
+#     """
+#     Make a stable base name from any derived filename:
+#       A4_xxx_processed_processed -> A4_xxx
+#       A4_xxx_Tracks -> A4_xxx
+#     """
+#     s = _norm_spaces(stem)
+#     while True:
+#         m = END_TOKEN_RE.search(s)
+#         if not m:
+#             break
+#         s = s[:m.start()].rstrip(" _-.\t")
+#         s = _norm_spaces(s)
+#     return s
 
-def xml_variant_from_path(xml_path: Path) -> str:
-    """
-    Classify XML variant mainly by name:
-      - contains processed -> 'processed'
-      - else -> 'base'
-    You can extend this later with more variants.
-    """
-    name = xml_path.stem.lower()
-    if "processed" in name:
-        return "processed"
-    return "base"
+# def processed_level(stem: str) -> int:
+#     """Count how often 'processed' appears at the end (processed_processed => 2)."""
+#     s = _norm_spaces(stem)
+#     level = 0
+#     while True:
+#         m = re.search(r"([ _\-.]+)processed\Z", s, flags=re.IGNORECASE)
+#         if not m:
+#             break
+#         level += 1
+#         s = s[:m.start()].rstrip(" _-.\t")
+#         s = _norm_spaces(s)
+#     return level
+
+# def xml_variant_from_path(xml_path: Path) -> str:
+#     """
+#     Classify XML variant mainly by name:
+#       - contains processed -> 'processed'
+#       - else -> 'base'
+#     You can extend this later with more variants.
+#     """
+#     name = xml_path.stem.lower()
+#     if "processed" in name:
+#         return "processed"
+#     return "base"
 
 
 # -----------------------------
@@ -325,307 +337,100 @@ class DatasetIndex:
 # Builder: scan folder and bundle
 # -----------------------------
 
-def _iter_files(root: Path) -> Iterable[Path]:
-    for p in Path(root).rglob("*"):
-        if p.is_file():
-            yield p.resolve()
+def scan_xml_folder(root: Path) -> List[Path]:
+    """Recursively find all TrackMate XML files in the folder."""
+    xml_files = list(root.rglob("*.xml"))
+    return xml_files
+
 
 def build_datasets(root: Path) -> Dict[str, DatasetFiles]:
     """
-    Scan root and build DatasetFiles bundles keyed by canonical base_name.
-    Requires at least one base tif per dataset (will pick a best candidate).
-    """
-    root = Path(root).resolve()
-
-    # temp collections keyed by base
-    tifs_raw: Dict[str, List[Path]] = {}
-    tifs_processed: Dict[str, List[Tuple[int, Path]]] = {}
-    recs: Dict[str, List[Path]] = {}
-    xmls: Dict[str, List[Path]] = {}
-
-    for p in _iter_files(root):
-        ext = p.suffix.lower()
-
-        if ext in TIFF_EXT:
-            base = canonical_base(p.stem)
-            lvl = processed_level(p.stem)
-            # also treat anything inside preprocess/ as processed candidate
-            is_proc_folder = p.parent.name.lower() in {"preprocess", "processed", "proc"}
-            if lvl > 0 or is_proc_folder:
-                tifs_processed.setdefault(base, []).append((lvl, p))
-            else:
-                tifs_raw.setdefault(base, []).append(p)
-
-        elif ext in REC_EXT:
-            base = canonical_base(p.stem)
-            recs.setdefault(base, []).append(p)
-
-        elif ext in XML_EXT:
-            # accept XML from Analysis/ or Tracks/ or containing "tracks"
-            name_low = p.name.lower()
-            if ("tracks" in name_low) or (p.parent.name.lower() in {"analysis", "tracks"}):
-                stem = re.sub(r"([ _\-.]+)tracks\Z", "", p.stem, flags=re.IGNORECASE)
-                base = canonical_base(stem)
-                xmls.setdefault(base, []).append(p)
-
-    # union of all seen bases
-    all_bases = set(tifs_raw) | set(tifs_processed) | set(recs) | set(xmls)
-
-    datasets: Dict[str, DatasetFiles] = {}
-    for base in sorted(all_bases):
-        raw_list = sorted(set(tifs_raw.get(base, [])))
-        proc_list = sorted(set(tifs_processed.get(base, [])), key=lambda x: (x[0], str(x[1])))
-        rec_list = sorted(set(recs.get(base, [])))
-        xml_list = sorted(set(xmls.get(base, [])))
-
-        # choose base tif:
-        # prefer a true raw tif; else fall back to first processed (still better than nothing)
-        if raw_list:
-            base_tif = raw_list[0]
-        elif proc_list:
-            base_tif = proc_list[0][1]
-        else:
-            # No tif at all: skip dataset (or raise). Here we skip to avoid broken bundles.
-            continue
-
-        rec_path = rec_list[0] if rec_list else None
-        processed_tifs = [p for _, p in proc_list]
-
-        # group xmls
-        xml_groups: Dict[str, List[Path]] = {}
-        for x in xml_list:
-            v = xml_variant_from_path(x)
-            xml_groups.setdefault(v, []).append(x)
-
-        datasets[base] = DatasetFiles(
-            base_tif=base_tif,
-            rec_path=rec_path,
-            processed_tifs=processed_tifs,
-            xml_paths=xml_list,
-            xml_groups={k: sorted(v) for k, v in xml_groups.items()},
-            base_name=base,
-        )
-
-    return datasets
-
-
-def _to_float(s: str) -> float:
-    # akzeptiert auch Komma als Dezimaltrenner
-    return float(s.strip().replace(",", "."))
-
-
-# -----------------------------
-# Datenmodell
-# -----------------------------
-
-@dataclass
-class TrackFile:
-    path: Path
-    source: str               # "TracksFolder" | "AnalysisFolder" | "Unknown"
-    variant: str              # "raw" | "processed" | "unknown"
-
-@dataclass
-class ImageFile:
-    path: Path
-    kind: str                 # "raw" | "processed"
-    processing_level: int = 0
-
-@dataclass
-class Dataset:
-    base: str
-    tiffs: List[ImageFile] = field(default_factory=list)
-    recs: List[Path] = field(default_factory=list)
-    tracks: List[TrackFile] = field(default_factory=list)
-    logs: List[Path] = field(default_factory=list)
-    notes: List[str] = field(default_factory=list)
-
-    def best_raw_tiff(self) -> Optional[Path]:
-        raws = [x.path for x in self.tiffs if x.kind == "raw"]
-        return sorted(raws)[0] if raws else None
-
-    def best_rec(self) -> Optional[Path]:
-        return sorted(self.recs)[0] if self.recs else None
-
-    def processed_candidates(self) -> List[Path]:
-        procs = [x for x in self.tiffs if x.kind == "processed"]
-        # sortiert: level 1 vor level 2, usw.
-        procs_sorted = sorted(procs, key=lambda x: (x.processing_level, str(x.path)))
-        return [x.path for x in procs_sorted]
-
-
-# -----------------------------
-# Normalisierung / Canonical Base
-# -----------------------------
-
-# Tokens, die wir am ENDE wiederholt abstrippen
-STRIP_END_TOKENS = {
-    "processed", "tracks", "track", "xml", "tif", "tiff"
-}
-
-# matcht _processed, " processed", -processed, .processed am Ende (wiederholt)
-END_TOKEN_RE = re.compile(r"([ _\-.]+)(processed|tracks|track)\Z", re.IGNORECASE)
-
-def normalize_spaces(s: str) -> str:
-    # mehrere Spaces/Tabs -> ein Space
-    s = re.sub(r"\s+", " ", s.strip())
-    return s
-
-def canonical_base_from_stem(stem: str) -> str:
-    """
-    Macht aus z.B.:
-      "B3_inside_1d_1mmfrom injection_50_20mg_processed_processed"
-    -> "B3_inside_1d_1mmfrom injection_50_20mg"
-    """
-    s = normalize_spaces(stem)
-    while True:
-        m = END_TOKEN_RE.search(s)
-        if not m:
-            break
-        # entferne den token-Teil am Ende
-        s = s[:m.start()].rstrip(" _-.\t")
-        s = normalize_spaces(s)
-    return s
-
-def processed_level_from_stem(stem: str) -> int:
-    """
-    Zählt wie oft 'processed' am Ende (in Kaskade) vorkommt.
-    """
-    s = normalize_spaces(stem)
-    level = 0
-    while True:
-        m = re.search(r"([ _\-.]+)processed\Z", s, flags=re.IGNORECASE)
-        if not m:
-            break
-        level += 1
-        s = s[:m.start()].rstrip(" _-.\t")
-        s = normalize_spaces(s)
-    return level
-
-
-# -----------------------------
-# Erkennung nach Datei/Ordner
-# -----------------------------
-
-TIFF_EXT = {".tif", ".tiff"}
-
-def iter_files(root: Path) -> Iterable[Path]:
-    for p in root.rglob("*"):
-        if p.is_file():
-            yield p
-
-def classify_track_source(path: Path) -> str:
-    parent = path.parent.name.lower()
-    if parent == "tracks":
-        return "TracksFolder"
-    if parent == "analysis":
-        return "AnalysisFolder"
-    return "Unknown"
-
-def infer_track_variant_from_name(path: Path) -> str:
-    name = path.stem.lower()
-    # erkennt ..._processed_Tracks.xml oder ..._processed.xml
-    if re.search(r"processed(\Z|[_ \-.])", name):
-        return "processed"
-    # erkennt ..._Tracks.xml oder ... .xml
-    return "raw"
-
-
-# -----------------------------
-# Index builder
-# -----------------------------
-
-def build_index(root: Path) -> Dict[str, Dataset]:
-    root = root.resolve()
-    datasets: Dict[str, Dataset] = {}
-
-    def ds(base: str) -> Dataset:
-        if base not in datasets:
-            datasets[base] = Dataset(base=base)
-        return datasets[base]
-
-    for p in iter_files(root):
-        ext = p.suffix.lower()
-
-        # TIFF
-        if ext in TIFF_EXT:
-            stem = p.stem
-            base = canonical_base_from_stem(stem)
-            level = processed_level_from_stem(stem)
-            kind = "processed" if level > 0 or p.parent.name.lower() in {"preprocess", "processed", "proc"} else "raw"
-            ds(base).tiffs.append(ImageFile(path=p, kind=kind, processing_level=level))
-
-        # REC
-        elif ext == ".rec":
-            stem = p.stem
-            base = canonical_base_from_stem(stem)
-            ds(base).recs.append(p)
-
-        # Logs aus preprocess
-        elif ext == ".txt" and p.name.lower().endswith("_log.txt"):
-            stem = p.stem
-            base = canonical_base_from_stem(stem.replace("_log", ""))
-            ds(base).logs.append(p)
-
-        # XML (Tracks oder Analysis)
-        elif ext == ".xml":
-            # nur als Track-XML zählen, wenn:
-            # - in Analysis/ liegt ODER in Tracks/ liegt ODER Name enthält "tracks"
-            name_low = p.name.lower()
-            if ("tracks" in name_low) or (p.parent.name.lower() in {"analysis", "tracks"}):
-                stem = p.stem
-                # falls Dateiname "..._Tracks" -> entfernen
-                stem = re.sub(r"([ _\-.]+)tracks\Z", "", stem, flags=re.IGNORECASE)
-                base = canonical_base_from_stem(stem)
-                ds(base).tracks.append(
-                    TrackFile(
-                        path=p,
-                        source=classify_track_source(p),
-                        variant=infer_track_variant_from_name(p),
-                    )
-                )
-
-    # Post-checks
-    for base, d in datasets.items():
-        if d.tiffs and not d.recs:
-            d.notes.append("TIFF vorhanden, aber keine .rec Datei gefunden.")
-        if d.recs and not d.tiffs:
-            d.notes.append("REC vorhanden, aber keine TIFF Datei gefunden.")
-        if d.tiffs and not d.tracks:
-            d.notes.append("TIFF vorhanden, aber keine Track-XML gefunden.")
-        # “processed_processed” Hinweis
-        if any(x.processing_level >= 2 for x in d.tiffs):
-            d.notes.append("Mehrfach preprocess erkannt (processed_processed).")
-
-        # sortieren für stabile Ausgabe
-        d.tiffs.sort(key=lambda x: (x.kind != "raw", x.processing_level, str(x.path)))
-        d.recs.sort()
-        d.logs.sort()
-        d.tracks.sort(key=lambda x: (x.source, x.variant, str(x.path)))
-
-    return datasets
-
-
-def export_index_json(datasets: Dict[str, Dataset], out_path: Path) -> None:
-    payload: Dict[str, Any] = {}
-    for base, d in datasets.items():
-        payload[base] = {
-            "base": base,
-            "tiffs": [
-                {"path": str(x.path), "kind": x.kind, "processing_level": x.processing_level}
-                for x in d.tiffs
-            ],
-            "recs": [str(p) for p in d.recs],
-            "logs": [str(p) for p in d.logs],
-            "tracks": [
-                {"path": str(t.path), "source": t.source, "variant": t.variant}
-                for t in d.tracks
-            ],
-            "best_raw_tiff": str(d.best_raw_tiff()) if d.best_raw_tiff() else None,
-            "processed_candidates": [str(p) for p in d.processed_candidates()],
-            "best_rec": str(d.best_rec()) if d.best_rec() else None,
-            "notes": d.notes,
+    Scan the root folder for datasets and build DatasetFiles instances.
+    
+    Args:
+        root: Root folder to scan
+        """
+    xml_files = scan_xml_folder(root)
+    
+    datasets = {}
+    print(root)
+    for xml_file in xml_files:
+        print("_find",xml_file)
+        rec_tif_info = find_rec_tif_files(xml_file)
+        print("names")
+        base_tif = rec_tif_info['tiff_file']
+        rec_path = rec_tif_info['rec_file']
+        tracks = read_trackmate_xml(xml_file)
+        
+        datasets[xml_file.stem] = {
+            "base_tif": base_tif if base_tif else Path(),
+            "rec_tif": rec_tif_info,
+            "xml_paths": [xml_file],
+            "tracks": tracks
         }
-    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    
+    return datasets
+
+
+
+# -----------------------------
+# Compare
+# ---
+def compare_xml(path1: Path, xml_path2: Path) -> float:
+    """
+    Compare two TrackMate XML files and return similarity score.
+    
+    Args:
+        path1: Path to first XML file
+        xml_path2: Path to second XML file
+    """
+    tracks_1 = read_trackmate_xml(path1)
+    tracks_2 = read_trackmate_xml(xml_path2)
+    for row1, row2 in zip(tracks_1.itertuples(), tracks_2.itertuples()):
+        if row1.frame != row2.frame:
+            similarity = 0
+            continue
+        else: 
+            similarity = 100
+    if similarity == 100:
+        print("Die XML Dateien sind identisch")
+        return similarity
+    frame_max = max(tracks_1['frame'].max(), tracks_2['frame'].max())
+    matched_particles = {}
+    matched = 0
+    for frame in range(frame_max + 1):
+        particles_in_frame_1 = tracks_1[tracks_1['frame'] == frame]
+        particles_in_frame_2 = tracks_2[tracks_2['frame'] == frame]
+        for _, particle1 in particles_in_frame_1.iterrows():
+            for _, particle2 in particles_in_frame_2.iterrows():
+                dist = ((particle1['x'] - particle2['x'])**2 + (particle1['y'] - particle2['y'])**2)**0.5
+                if dist < 1e-5:
+                    matched_particles[particle1['particle']] = particle2['particle']
+                    break
+        
+        unmatched_1 = set(particles_in_frame_1['particle']) - set(matched_particles.keys())
+        unmatched_2 = set(particles_in_frame_2['particle']) - set(matched_particles.values())
+        
+        if len(matched_particles) == len(particles_in_frame_1) == len(particles_in_frame_2):
+            print(f"Frame {frame}: Gleiche Partikel")
+        elif len(matched_particles) == 0:
+            matched += 0
+        else:
+            print(f"Frame {frame}: Partielle Übereinstimmung")
+            print(f"  Zugeordnete Partikel: {matched_particles}")
+            print(f"  Ungepaarte in Datei 1: {unmatched_1}")
+            print(f"  Ungepaarte in Datei 2: {unmatched_2}")
+            matched += len(matched_particles)
+    print(len(matched_particles)/max(len(tracks_1), len(tracks_2))*100)
+    
+    
+
+
+    for match1, match2 in matched_particles.items():
+        particle1 = tracks_1[tracks_1['particle'] == match1]
+        particle2 = tracks_2[tracks_2['particle'] == match2]
+        
 
 
 # -----------------------------
@@ -633,47 +438,44 @@ def export_index_json(datasets: Dict[str, Dataset], out_path: Path) -> None:
 # -----------------------------
 
 def main():
-    import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument("root", type=str)
-    ap.add_argument("--export", type=str, default="")
-    ap.add_argument("--show", type=str, default="")
-    args = ap.parse_args()
+    path = r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks_old\20 nm_2_Tracks.xml" # add a path to a file Tracks_xml
 
-    root = Path(args.root)
-    datasets = build_index(root)
-    print(f"Datasets gefunden: {len(datasets)}")
+    rec_tif = find_rec_tif_files(Path(path))
+    print(rec_tif)
+    meta_data = parse_rec_file(rec_tif['rec_file'])
+    print(json.dumps(meta_data, indent=4))
+    from matplotlib import pyplot as plt
+    import tifffile as tiff
+    with tiff.TiffFile(rec_tif['tiff_file']) as tif:
+        img = tif.pages[0].asarray()
+    # plt.imshow(img, cmap='gray')
+    # plt.show()
+    tracks = read_trackmate_xml(Path(path))
+    print(tracks.head())
 
-    if args.export:
-        out = Path(args.export)
-        export_index_json(datasets, out)
-        print(f"Index geschrieben: {out}")
+    print('Folder Analysis:')
+    folder = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\500 nm\Tracks") # add a path to a folder
+    datasets = build_datasets(folder)
 
-    if args.show:
-        base = args.show
-        if base not in datasets:
-            # hilfreiches Fallback: show arbeitet auch mit "ungefährem" base-string
-            candidates = [b for b in datasets.keys() if base.lower() in b.lower()]
-            raise KeyError(f"Base '{base}' nicht gefunden. Kandidaten: {candidates[:20]}")
-        d = datasets[base]
-        print(json.dumps({
-            "base": d.base,
-            "best_raw_tiff": str(d.best_raw_tiff()) if d.best_raw_tiff() else None,
-            "processed_candidates": [str(p) for p in d.processed_candidates()],
-            "best_rec": str(d.best_rec()) if d.best_rec() else None,
-            "tracks": [{"path": str(t.path), "source": t.source, "variant": t.variant} for t in d.tracks],
-            "notes": d.notes,
-        }, indent=2, ensure_ascii=False))
+    for base_name, ds in datasets.items():
+        print(f"Dataset: {base_name}")
+        print(f"  Base TIFF: {ds['base_tif']}")
+        print(f"  REC file: {ds['rec_tif']}")
+        print(f"  tracks: {ds['tracks'].head() if ds['tracks'] is not None else 'None'}")
+
+    print("XML Comparison:")
+    xml1 = r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\Tracks\1000 nm_2_60_Tracks.xml"
+    # xml2 = r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\Tracks\1000 nm_2_Tracks.xml"
+    # xml1 = r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\Tracks\1000 nm_2_Tracks.xml"
+    xml2 = r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\Tracks\1000 nm_60_Tracks.xml"
+    # similarity = compare_xml(Path(xml1), Path(xml2))
+    xml_test = read_trackmate_xml(xml2)
+    number = xml_test[(xml_test['particle']==1) & (xml_test['frame']==3)]['x'].values[0]
+
 
 
 if __name__ == "__main__":
     main()
 
 
-# -----------------------------
-# Convenience helper functions
-# -----------------------------
 
-def load_index(root: Path) -> DatasetIndex:
-    """Small convenience wrapper."""
-    return DatasetIndex.from_root(root)

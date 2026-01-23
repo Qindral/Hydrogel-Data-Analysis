@@ -209,54 +209,64 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
     )
 
 
-def read_trackmate_xml(xml_file_path) -> Optional[pd.DataFrame]:
-    """Parse TrackMate XML file and convert to pandas DataFrame.
-    
-    From MSD_FromTrackmate_D0.py
-    
-    The TrackMate XML format contains 'particle' elements with nested
-    'detection' elements for each time point.
+def perform_msd_analysis(tracks: pd.DataFrame, fit_points: int = 6) -> Dict[str, any]:
+    """
+    Perform MSD analysis on tracks.
     
     Args:
-        xml_file_path: Path to TrackMate XML file
+        tracks: Track DataFrame with mpp and fps in attrs
+        fit_points: Number of points for power-law fitting
         
     Returns:
-        DataFrame with columns ['frame', 'particle', 'x', 'y'], or None on error
+        Dictionary with MSD results
     """
-    import xml.etree.ElementTree as ET
-    from pathlib import Path
+  
+    # Compute MSD
+    imsd = tp.imsd(tracks, mpp=mpp, fps=fps)
+    emsd = tp.emsd(tracks, mpp=mpp, fps=fps)
     
-    xml_file_path = Path(xml_file_path)
+    # Fit power-law
+    fit_result = fit_powerlaw_with_errors(emsd, points=fit_points)
     
-    try:
-        tree = ET.parse(xml_file_path)
-        root = tree.getroot()
-        
-        data_rows = []
-        
-        for particle_id, particle in enumerate(root.findall('particle')):
-            for detection in particle.findall('detection'):
-                t_raw = detection.get('t')
-                x_raw = detection.get('x')
-                y_raw = detection.get('y')
-                
-                row = {
-                    'frame': int(float(t_raw)),
-                    'particle': particle_id + 1,
-                    'x': float(x_raw),
-                    'y': float(y_raw)
-                }
-                data_rows.append(row)
-        
-        df = pd.DataFrame(data_rows)
-        
-        if not df.empty:
-            df = df[['frame', 'particle', 'x', 'y']]
-            df = df.sort_values(by=['frame', 'particle']).reset_index(drop=True)
-            
-        return df
+    # Extract diffusion coefficient (D = A/4 for 2D)
+    D = fit_result.A[0] / 4.0
+    D_err = fit_result.A_err[0] / 4.0
+    n = fit_result.n[0]
+    n_err = fit_result.n_err[0]
+    
+    return {
+        'method': 'MSD',
+        'D_um2_per_s': D,
+        'D_error': D_err,
+        'exponent': n,
+        'exponent_error': n_err,
+        'n_particles': tracks['particle'].nunique(),
+        'n_detections': len(tracks),
+        'imsd': imsd,
+        'emsd': emsd,
+        'fit_result': fit_result
+    }
 
-    except Exception as e:
-        print(f"Error parsing {xml_file_path}: {e}")
-        return None
+
+
+def calculate_theoretical_diffusion(particle_size_nm: float, 
+                                   temperature: float = TEMPERATURE,
+                                   viscosity: float = WATER_VISCOSITY) -> float:
+    """
+    Calculate theoretical diffusion coefficient using Stokes-Einstein equation.
+    
+    D = k_B * T / (6 * pi * eta * r)
+    
+    Args:
+        particle_size_nm: Particle diameter in nanometers
+        temperature: Temperature in Kelvin
+        viscosity: Dynamic viscosity in Pa·s
+        
+    Returns:
+        Diffusion coefficient in µm²/s
+    """
+    radius_m = (particle_size_nm / 2) * 1e-9  # Convert nm to m
+    D_m2_per_s = BOLTZMANN_CONSTANT * temperature / (6 * np.pi * viscosity * radius_m)
+    D_um2_per_s = D_m2_per_s * 1e12  # Convert m²/s to µm²/s
+    return D_um2_per_s
 
