@@ -725,6 +725,7 @@ def combine_and_analyze(paths_list: List[Path], save_path: Path = SAVE_PATH,
         # Calculate diffusion coefficient: MSD = 4*D*t for 2D diffusion
         D = A / 4.0
         D_err = A_err / 4.0
+        # Save MSD data for this particle size
 
         combined_D[size_nm] = D
         combined_D_err[size_nm] = D_err
@@ -890,7 +891,7 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
                 
                 print(f"    Power-law fit: A = {A:.4e} ± {A_err:.4e}, n = {n:.3f} ± {n_err:.3f}")
                 print(f"    Diffusion coefficient: D = {D:.4e} ± {D_err:.4e} µm²/s")
-                
+
                 # Calculate theoretical diameter from measured D
                 R_measured = (BOLTZMANN_CONSTANT * TEMPERATURE) / (6 * np.pi * WATER_VISCOSITY * D * 1e-12)
                 d_measured = 2 * R_measured * 1e9
@@ -947,7 +948,15 @@ def compare_diffusion_coefficients(pickle_path: Path, save_path: Path,
                 
             except Exception as e:
                 print(f"    ✗ Error fitting power-law: {e}")
-        
+        msd_export = pd.DataFrame({
+            'lag_time': ensemble_msd.index,
+            'msd': ensemble_msd.values,
+            'D': D,
+            'D_err': D_err,
+        })
+        csv_filename = save_path / f'water_MSD_fromTM__data_nm.csv'
+        msd_export.to_csv(csv_filename, index=False)
+        print(f"  [OK] MSD data saved: {csv_filename}")
         # Calculate mean D for this particle size (across files)
         if size_D_values:
             D_mean = np.mean(size_D_values)

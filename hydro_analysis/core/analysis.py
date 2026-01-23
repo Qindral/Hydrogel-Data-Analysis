@@ -11,6 +11,8 @@ import trackpy as tp
 def compute_step_size_diffusion(
     tracks: pd.DataFrame,
     step_interval: int = 1,
+    mpp: float,
+    fps: float,
     max_sigma_ratio: float = 1.5,
     max_mean_sigma_ratio: float = 0.3
 ) -> dict:
@@ -41,8 +43,6 @@ def compute_step_size_diffusion(
         - quality_ok: Boolean indicating if quality criteria met
         - quality_issues: List of quality warnings
     """
-    mpp = tracks.attrs.get('mpp', 0.15)
-    fps = tracks.attrs.get('fps', 20.0)
     dt = step_interval / fps  # Time between analyzed steps
     
     # Collect displacements from all tracks
@@ -54,19 +54,32 @@ def compute_step_size_diffusion(
         # Use every nth step
         track_subset = track.iloc[::step_interval].copy()
         
-        if len(track_subset) < 2:
+        if len(track_subset) < step_interval + 1:
             continue
         
-        # Calculate displacements in pixels
-        dx_px = np.diff(track_subset['x'].values)
-        dy_px = np.diff(track_subset['y'].values)
+        # Calculate displacements 
+        frames = track_subset['frame'].values
+        x_vals = track_subset['x'].values
+        y_vals = track_subset['y'].values
+        
+        dx_px = []
+        dy_px = []
+        
+        for i in range(len(frames) - 1):
+            # Only use displacement if frames are consecutive (accounting for step_interval)
+            if frames[i+1] - frames[i] == step_interval:
+            dx_px.append(x_vals[i+1] - x_vals[i])
+            dy_px.append(y_vals[i+1] - y_vals[i])
+        
+        dx_px = np.array(dx_px)
+        dy_px = np.array(dy_px)
         
         # Convert to micrometers
         dx_all.extend(dx_px * mpp)
         dy_all.extend(dy_px * mpp)
     
-    if len(dx_all) < 10:
-        return {
+    
+     return {
             'D_um2_per_s': np.nan,
             'D_error': np.nan,
             'sigma_x': np.nan,
@@ -77,36 +90,26 @@ def compute_step_size_diffusion(
             'quality_ok': False,
             'quality_issues': ['Insufficient steps (<10)']
         }
-    
-    dx_arr = np.array(dx_all)
-    dy_arr = np.array(dy_all)
+
+def fit_gaussian_diffusion_stepsize(step_array) -> dict:
+    dx_arr = np.array(step_array)
     
     # Fit Gaussians to get mean and sigma
     mean_x, sigma_x = dx_arr.mean(), dx_arr.std(ddof=1)
-    mean_y, sigma_y = dy_arr.mean(), dy_arr.std(ddof=1)
     
-    # Combined variance (average of x and y)
-    sigma_sq = (sigma_x**2 + sigma_y**2) / 2.0
     
     # Diffusion coefficient: D = σ² / (2 * dt)
-    D = sigma_sq / (2.0 * dt)
+    D = sigma_x**2 / (2.0 * dt)
     
     # Error estimate (propagating std error)
     se_x = sigma_x / np.sqrt(len(dx_arr))
-    se_y = sigma_y / np.sqrt(len(dy_arr))
-    D_error = np.sqrt(se_x**2 + se_y**2) / (2.0 * dt)
+    D_error = np.sqrt(se_x**2) / (2.0 * dt)
     
     # Quality checks
     quality_issues = []
     
-    # Check isotropy (sigma_x ≈ sigma_y)
-    sigma_ratio = max(sigma_x, sigma_y) / (min(sigma_x, sigma_y) + 1e-10)
-    if sigma_ratio > max_sigma_ratio:
-        quality_issues.append(f'Anisotropic (σ_x/σ_y = {sigma_ratio:.2f})')
-    
     # Check for drift (mean should be close to 0)
     mean_sigma_x = abs(mean_x) / (sigma_x + 1e-10)
-    mean_sigma_y = abs(mean_y) / (sigma_y + 1e-10)
     
     if mean_sigma_x > max_mean_sigma_ratio:
         quality_issues.append(f'Drift in X (|µ|/σ = {mean_sigma_x:.2f})')
@@ -117,9 +120,7 @@ def compute_step_size_diffusion(
         'D_um2_per_s': D,
         'D_error': D_error,
         'sigma_x': sigma_x,
-        'sigma_y': sigma_y,
         'mean_x': mean_x,
-        'mean_y': mean_y,
         'sigma_ratio': sigma_ratio,
         'n_steps': len(dx_all),
         'quality_ok': len(quality_issues) == 0,
@@ -160,19 +161,19 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
                             ax=None, plot: bool = False) -> SimpleNamespace:
     """Fit power-law model y = A * x^n to ensemble MSD data.
     
+    The data must be already calibrated with fps and mpp -> units of time [s] and µm²
+
     Performs linear regression in log-space to estimate parameters and
     their standard errors.
     
-    From MSD_FromTrackmate_D0.py
     
     Args:
         em_series: Ensemble MSD pandas Series (index=lag time, values=MSD)
         points: Number of initial points to use for fitting
         ax: Optional matplotlib axis for plotting
-        plot: Whether to create a plot
         
     Returns:
-        SimpleNamespace with fitted parameters:
+       Powerlaw Fit Data with fitted parameters:
         - A: Prefactor (array)
         - n: Exponent (array)
         - A_err, n_err: Standard errors
@@ -182,10 +183,6 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
     xs = em_series.iloc[0:points].index.values.astype(float)
     ys = em_series.iloc[0:points].values.astype(float)
     
-    mask = np.isfinite(xs) & np.isfinite(ys) & (xs > 0) & (ys > 0)
-    
-    if mask.sum() < 2:
-        return tp.utils.fit_powerlaw(em_series.iloc[0:points], plot=plot, ax=ax)
     
     lx = np.log(xs[mask])
     ly = np.log(ys[mask])
@@ -201,7 +198,7 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
     A_fit = float(np.exp(logA_fit))
     se_A = A_fit * se_logA
     
-    return SimpleNamespace(
+    return Fit_data(
         A=np.array([A_fit]),
         n=np.array([n_fit]),
         A_err=np.array([se_A]),
@@ -262,144 +259,4 @@ def read_trackmate_xml(xml_file_path) -> Optional[pd.DataFrame]:
     except Exception as e:
         print(f"Error parsing {xml_file_path}: {e}")
         return None
-
-
-def calculate_step_sizes(df: pd.DataFrame, step_interval: int = 1) -> pd.DataFrame:
-    """Calculate frame-to-frame displacements (dx, dy) for each particle.
-    
-    From Schrittweiten_methode_D0.py
-    
-    For each particle trajectory, computes displacement components between
-    consecutive positions:
-        dx_i = x_{i+step_interval} - x_i
-        dy_i = y_{i+step_interval} - y_i
-    
-    Args:
-        df: DataFrame with columns ['frame', 'particle', 'x', 'y']
-        step_interval: Use every n-th frame (1=consecutive, 6=every 6th)
-        
-    Returns:
-        DataFrame with columns ['particle', 'frame', 'dx', 'dy', 'frame_interval']
-    """
-    step_data = []
-    skipped_particles = []
-    
-    for particle_id in df['particle'].unique():
-        particle_df = df[df['particle'] == particle_id].sort_values('frame')
-        
-        if len(particle_df) < step_interval + 1:
-            skipped_particles.append((particle_id, len(particle_df)))
-            continue
-        
-        x_vals = particle_df['x'].values
-        y_vals = particle_df['y'].values
-        frames = particle_df['frame'].values
-        
-        for i in range(0, len(x_vals) - step_interval, step_interval):
-            dx = x_vals[i + step_interval] - x_vals[i]
-            dy = y_vals[i + step_interval] - y_vals[i]
-            
-            step_data.append({
-                'particle': particle_id,
-                'frame': frames[i],
-                'dx': dx,
-                'dy': dy,
-                'frame_interval': step_interval
-            })
-    
-    if skipped_particles:
-        print(f"Note: {len(skipped_particles)} particles with <{step_interval+1} points skipped")
-    
-    return pd.DataFrame(step_data)
-
-
-def calculate_diffusion_from_steps(step_df: pd.DataFrame, mpp: float, fps: float,
-                                   max_sigma_ratio: float = 1.5,
-                                   max_mean_sigma_ratio: float = 0.3) -> Dict:
-    """Calculate diffusion coefficient from displacement distributions using Gaussian fits.
-    
-    From Schrittweiten_methode_D0.py
-    
-    For 2D Brownian motion, dx and dy are independently Gaussian distributed with
-    variance σ² = 2*D*dt. Fit Gaussian distributions to both dx and dy,
-    extract variances, and average:
-        D = <σ²> / (2*dt)
-    
-    Quality checks:
-    - Isotropy: σ_x and σ_y should be similar (ratio < max_sigma_ratio)
-    - No drift: μ_x and μ_y should be near zero (|μ|/σ < max_mean_sigma_ratio)
-    
-    Args:
-        step_df: DataFrame with 'dx' and 'dy' columns (in pixels)
-        mpp: Micrometers per pixel calibration
-        fps: Frames per second
-        max_sigma_ratio: Max ratio between sigma_x and sigma_y for isotropy
-        max_mean_sigma_ratio: Max |mean|/sigma for centered distribution
-        
-    Returns:
-        Dictionary with keys:
-        - D: Diffusion coefficient in µm²/s (averaged from dx and dy)
-        - D_std: Standard error estimate in µm²/s
-        - sigma_x, sigma_y: Std dev from Gaussian fit (µm)
-        - mu_x, mu_y: Mean of Gaussian fits (µm)
-        - D_x, D_y: Diffusion coefficients from each direction (µm²/s)
-        - sigma_ratio: Ratio of sigmas
-        - mean_x_ratio, mean_y_ratio: |mean|/sigma ratios
-        - is_isotropic: Boolean
-        - is_centered: Boolean (no drift)
-        - quality_flag: 'good', 'anisotropic', 'drift', or 'both'
-        - num_steps: Number of steps analyzed
-        - num_particles: Number of unique particles
-    """
-    dx_um = step_df['dx'].values * mpp
-    dy_um = step_df['dy'].values * mpp
-    
-    frame_interval = step_df['frame_interval'].iloc[0] if 'frame_interval' in step_df.columns else 1
-    
-    mu_x, sigma_x = stats.norm.fit(dx_um)
-    mu_y, sigma_y = stats.norm.fit(dy_um)
-    
-    dt = frame_interval / fps  # seconds
-    
-    D_x = (sigma_x**2) / (2.0 * dt)  # µm²/s
-    D_y = (sigma_y**2) / (2.0 * dt)  # µm²/s
-    
-    D = (D_x + D_y) / 2.0
-    D_std = np.abs(D_x - D_y) / 2.0
-    
-    sigma_ratio = max(sigma_x, sigma_y) / (min(sigma_x, sigma_y) + 1e-10)
-    is_isotropic = sigma_ratio <= max_sigma_ratio
-    
-    mean_x_ratio = abs(mu_x) / (sigma_x + 1e-10)
-    mean_y_ratio = abs(mu_y) / (sigma_y + 1e-10)
-    is_centered = (mean_x_ratio <= max_mean_sigma_ratio and 
-                   mean_y_ratio <= max_mean_sigma_ratio)
-    
-    if is_isotropic and is_centered:
-        quality_flag = 'good'
-    elif not is_isotropic and not is_centered:
-        quality_flag = 'both'
-    elif not is_isotropic:
-        quality_flag = 'anisotropic'
-    else:
-        quality_flag = 'drift'
-    
-    return {
-        'D': D,
-        'D_std': D_std,
-        'sigma_x': sigma_x,
-        'sigma_y': sigma_y,
-        'mu_x': mu_x,
-        'mu_y': mu_y,
-        'D_x': D_x,
-        'D_y': D_y,
-        'sigma_ratio': sigma_ratio,
-        'mean_x_ratio': mean_x_ratio,
-        'mean_y_ratio': mean_y_ratio,
-        'is_isotropic': is_isotropic,
-        'is_centered': is_centered,
-        'quality_flag': quality_flag,
-        'num_steps': len(dx_um),
-        'num_particles': step_df['particle'].nunique()
-    }
 
