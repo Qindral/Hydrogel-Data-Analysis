@@ -6,12 +6,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from core.analysis import calculate_theoretical_diffusion
+
 
 # ============================================================================
 # VISUALIZATION
 # ============================================================================
 
-def plot_msd_results(msd_result: Dict, save_path: Path):
+def plot_msd_results(msd_result: Dict,particle_size: float, save_path: Path):
     """
     Create MSD plot with individual and ensemble curves.
     
@@ -22,9 +24,11 @@ def plot_msd_results(msd_result: Dict, save_path: Path):
     fig, ax = plt.subplots(figsize=(10, 6))
     
     imsd = msd_result['imsd']
-    emsd = msd_result['emsd']
+    emsd = msd_result['emsd']    
     fit_result = msd_result['fit_result']
-    
+    A = fit_result["A"][0]
+    n = fit_result["n"][0]
+
     # Plot individual MSDs (lighter)
     for col in imsd.columns[:50]:  # Limit to 50 for clarity
         ax.loglog(imsd.index, imsd[col], alpha=0.1, color='gray')
@@ -40,43 +44,49 @@ def plot_msd_results(msd_result: Dict, save_path: Path):
     
     # Plot fit with uncertainty band
     x_fit = np.logspace(np.log10(emsd.index[0]), np.log10(emsd.index[5]), 100)
-    y_fit = fit_result.A[0] * x_fit**fit_result.n[0]
+    y_fit = A * x_fit**n
     
     # Calculate uncertainty band from parameter errors
-    A_upper = (fit_result.A[0] + fit_result.A_err[0])
-    A_lower = (fit_result.A[0] - fit_result.A_err[0])
-    n_upper = (fit_result.n[0] + fit_result.n_err[0])
-    n_lower = (fit_result.n[0] - fit_result.n_err[0])
+    A_upper = (A + fit_result["A_err"][0])
+    A_lower = (A - fit_result["A_err"][0])
+    n_upper = (n + fit_result["n_err"][0])
+    n_lower = (n - fit_result["n_err"][0])
     
     y_upper = A_upper * x_fit**n_upper
     y_lower = A_lower * x_fit**n_lower
     
     # Plot fit line
     ax.loglog(x_fit, y_fit, '--', 
-             label=f'Fit: A={fit_result.A[0]:.3f}±{fit_result.A_err[0]:.3f}, n={fit_result.n[0]:.3f}±{fit_result.n_err[0]:.3f}',
+             label=f'Fit: A={A:.3f}±{fit_result["A_err"][0]:.3f}, n={n:.3f}±{fit_result["n_err"][0]:.3f}',
              linewidth=2, color='red')
     
     # Add uncertainty band
-    ax.fill_between(x_fit, y_lower, y_upper, 
-                    color='red', alpha=0.2, label='Fit Uncertainty')
+    if fit_result["A_err"][0] > 1:
+        ax.fill_between(x_fit, y_lower, y_upper, 
+                        color='red', alpha=0.2, label='Fit Uncertainty')
     
     D = msd_result['D_um2_per_s']
     D_err = msd_result['D_error']
     n = msd_result['exponent']
     n_err = msd_result['exponent_error']
     
+    if particle_size is not None:
+        D_thr = calculate_theoretical_diffusion(particle_size_nm=particle_size)
+        ax.loglog(x_fit, (2 * D_thr) * x_fit, 'g:', 
+                 label=f'Theoretical MSD (Particle Size: {particle_size} nm)', linewidth=2)
+
+
     ax.set_xlabel('Lag Time (s)', fontsize=12)
     ax.set_ylabel('MSD (µm²)', fontsize=12)
     ax.set_title(f'MSD Analysis\nD = {D:.4f} ± {D_err:.4f} µm²/s\n'
                 f'Exponent n = {n:.3f} ± {n_err:.3f}', fontsize=14)
-    ax.legend(fontsize=10, loc='best')
-    ax.grid(True, alpha=0.3, which='both')
-    
+    ax.legend(fontsize=10, loc='best')    
     fig.tight_layout()
     plt.show()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"  MSD plot saved: {save_path}")
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  MSD plot saved: {save_path}")
 
 
 def plot_stepsize_results(stepsize_result: Dict, save_path: Path):

@@ -28,7 +28,7 @@ def find_rec_tif_files(xml_path: Path) -> Dict[str, any]:
         Dictionary with calibration info: fps, mpp, mode, files_found
     """
     xml_dir = xml_path.parent.parent
-    print('dir', xml_dir)
+    # print('dir', xml_dir)
     # Clean up XML path to find corresponding .rec file
     # Remove common suffixes and patterns
     xml_stem = xml_path.stem
@@ -44,7 +44,7 @@ def find_rec_tif_files(xml_path: Path) -> Dict[str, any]:
 
 
     tif_path = xml_dir / f"{xml_stem}.tif"
-    print("rec: ", rec_path)
+    # print("rec: ", rec_path)
     result = {
         'fps': None,
         'mpp': None,
@@ -203,7 +203,7 @@ def check_text_encoding(path: Path) -> None:
     with open(path, 'rb') as f:
         result = chardet.detect(f.read())
     
-        print(result['encoding'])
+        # print(result['encoding'])
     return result['encoding']
     #print(path.read_text(encoding=result['encoding'], errors='replace'))
     

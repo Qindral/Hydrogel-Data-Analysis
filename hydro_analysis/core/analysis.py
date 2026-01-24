@@ -8,56 +8,47 @@ from scipy import stats
 import trackpy as tp
 
 
+# Physical constants
+TEMPERATURE_K = 293.15
+VISCOSITY_PA_S = 0.001002
+BOLTZMANN_CONSTANT = 1.380649e-23  # J/K
+
 def compute_step_size_diffusion(
     tracks: pd.DataFrame,
-    step_interval: int = 1,
     mpp: float,
     fps: float,
+    step_interval: int = 1,
     max_sigma_ratio: float = 1.5,
     max_mean_sigma_ratio: float = 0.3
 ) -> dict:
     """Compute diffusion coefficient from step size distributions.
     
-    Method: For each track, calculate frame-to-frame displacements:
-        dx_i = x_{i+1} - x_i
-        dy_i = y_{i+1} - y_i
-    
+    Method: For each track, calculate frame-to-frame displacements.
     Fit Gaussian distributions to dx and dy to extract variance σ².
-    For 2D Brownian motion: σ² = 2*D*dt, therefore:
-        D = σ² / (2 * dt)
+    For 2D Brownian motion: σ² = 2*D*dt, therefore: D = σ² / (2 * dt)
     
     Args:
         tracks: DataFrame with columns ['particle', 'frame', 'x', 'y']
-                and attrs {'mpp', 'fps'}
+        mpp: Micrometers per pixel
+        fps: Frames per second
         step_interval: Use every nth step (1=all, 6=every 6th)
         max_sigma_ratio: Max ratio between sigma_x and sigma_y for isotropy
         max_mean_sigma_ratio: Max |mean|/sigma for centered distribution
     
     Returns:
-        Dictionary with keys:
-        - D_um2_per_s: Diffusion coefficient in µm²/s
-        - D_error: Error estimate
-        - sigma_x, sigma_y: Standard deviations in µm
-        - mean_x, mean_y: Mean displacements in µm (should be ~0)
-        - n_steps: Number of steps used
-        - quality_ok: Boolean indicating if quality criteria met
-        - quality_issues: List of quality warnings
+        Dictionary with diffusion results and quality metrics
     """
-    dt = step_interval / fps  # Time between analyzed steps
+    dt = step_interval / fps
     
-    # Collect displacements from all tracks
     dx_all, dy_all = [], []
     
     for pid in tracks['particle'].unique():
         track = tracks[tracks['particle'] == pid].sort_values('frame')
-        
-        # Use every nth step
         track_subset = track.iloc[::step_interval].copy()
         
         if len(track_subset) < step_interval + 1:
             continue
         
-        # Calculate displacements 
         frames = track_subset['frame'].values
         x_vals = track_subset['x'].values
         y_vals = track_subset['y'].values
@@ -66,20 +57,17 @@ def compute_step_size_diffusion(
         dy_px = []
         
         for i in range(len(frames) - 1):
-            # Only use displacement if frames are consecutive (accounting for step_interval)
             if frames[i+1] - frames[i] == step_interval:
-            dx_px.append(x_vals[i+1] - x_vals[i])
-            dy_px.append(y_vals[i+1] - y_vals[i])
+                dx_px.append(x_vals[i+1] - x_vals[i])
+                dy_px.append(y_vals[i+1] - y_vals[i])
         
-        dx_px = np.array(dx_px)
-        dy_px = np.array(dy_px)
-        
-        # Convert to micrometers
-        dx_all.extend(dx_px * mpp)
-        dy_all.extend(dy_px * mpp)
+        dx_all.extend(np.array(dx_px) * mpp)
+        dy_all.extend(np.array(dy_px) * mpp)
     
+    dx_all = np.array(dx_all)
+    dy_all = np.array(dy_all)
     
-     return {
+    return {
             'D_um2_per_s': np.nan,
             'D_error': np.nan,
             'sigma_x': np.nan,
@@ -128,33 +116,6 @@ def fit_gaussian_diffusion_stepsize(step_array) -> dict:
     }
 
 
-def compute_theoretical_diffusion(particle_size_nm: float, 
-                                  temperature_K: float = 293.15,
-                                  viscosity_pa_s: float = 0.001002) -> float:
-    """Calculate theoretical diffusion coefficient using Stokes-Einstein.
-    
-    D = k_B * T / (6 * π * η * r)
-    
-    Args:
-        particle_size_nm: Particle diameter in nanometers
-        temperature_K: Temperature in Kelvin (default: 20°C = 293.15 K)
-        viscosity_pa_s: Dynamic viscosity in Pa·s (default: water at 20°C)
-    
-    Returns:
-        Diffusion coefficient in µm²/s
-    """
-    k_B = 1.380649e-23  # J/K
-    
-    # Convert diameter to radius in meters
-    R = (particle_size_nm / 2.0) * 1e-9
-    
-    # Stokes-Einstein
-    D_m2_s = k_B * temperature_K / (6 * np.pi * viscosity_pa_s * R)
-    
-    # Convert m²/s to µm²/s
-    D_um2_s = D_m2_s * 1e12
-    
-    return D_um2_s
 
 
 def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10, 
@@ -184,8 +145,8 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
     ys = em_series.iloc[0:points].values.astype(float)
     
     
-    lx = np.log(xs[mask])
-    ly = np.log(ys[mask])
+    lx = np.log(xs)
+    ly = np.log(ys)
     coeffs, cov = np.polyfit(lx, ly, 1, cov=True)
     
     n_fit = float(coeffs[0])
@@ -198,18 +159,18 @@ def fit_powerlaw_with_errors(em_series: pd.Series, points: int = 10,
     A_fit = float(np.exp(logA_fit))
     se_A = A_fit * se_logA
     
-    return Fit_data(
-        A=np.array([A_fit]),
-        n=np.array([n_fit]),
-        A_err=np.array([se_A]),
-        n_err=np.array([se_n]),
-        logA=np.array([logA_fit]),
-        logA_err=np.array([se_logA]),
-        cov=cov
-    )
+    return {
+        "A" : np.array([A_fit]),
+        "n": np.array([n_fit]),
+        "A_err": np.array([se_A]),
+        "n_err": np.array([se_n]),
+        "logA": np.array([logA_fit]),
+        "logA_err": np.array([se_logA]),
+        "cov": cov
+    }
 
 
-def perform_msd_analysis(tracks: pd.DataFrame, fit_points: int = 6) -> Dict[str, any]:
+def perform_msd_analysis(tracks: pd.DataFrame,mpp: float, fps: float, fit_points: int = 6) -> Dict[str, any]:
     """
     Perform MSD analysis on tracks.
     
@@ -229,10 +190,10 @@ def perform_msd_analysis(tracks: pd.DataFrame, fit_points: int = 6) -> Dict[str,
     fit_result = fit_powerlaw_with_errors(emsd, points=fit_points)
     
     # Extract diffusion coefficient (D = A/4 for 2D)
-    D = fit_result.A[0] / 4.0
-    D_err = fit_result.A_err[0] / 4.0
-    n = fit_result.n[0]
-    n_err = fit_result.n_err[0]
+    D = fit_result["A"][0] / 4.0
+    D_err = fit_result["A_err"][0] / 4.0
+    n = fit_result["n"][0]
+    n_err = fit_result["n_err"][0]
     
     return {
         'method': 'MSD',
@@ -250,8 +211,8 @@ def perform_msd_analysis(tracks: pd.DataFrame, fit_points: int = 6) -> Dict[str,
 
 
 def calculate_theoretical_diffusion(particle_size_nm: float, 
-                                   temperature: float = TEMPERATURE,
-                                   viscosity: float = WATER_VISCOSITY) -> float:
+                                   temperature: float = TEMPERATURE_K,
+                                   viscosity: float = VISCOSITY_PA_S) -> float:
     """
     Calculate theoretical diffusion coefficient using Stokes-Einstein equation.
     
