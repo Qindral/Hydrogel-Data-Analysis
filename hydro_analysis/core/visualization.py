@@ -5,15 +5,16 @@ from typing import List, Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy import stats
 
-from core.analysis import calculate_theoretical_diffusion
+from core.analysis import calculate_theoretical_diffusion 
 
 
 # ============================================================================
 # VISUALIZATION
 # ============================================================================
 
-def plot_msd_results(msd_result: Dict,particle_size: float, save_path: Path):
+def plot_msd_results(msd_result: Dict,particle_size: float, save_path: Path = None):
     """
     Create MSD plot with individual and ensemble curves.
     
@@ -89,77 +90,183 @@ def plot_msd_results(msd_result: Dict,particle_size: float, save_path: Path):
         print(f"  MSD plot saved: {save_path}")
 
 
-def plot_stepsize_results(stepsize_result: Dict, save_path: Path):
+def plot_stepsize_results(stepsize_result_x: Dict,stepsize_result_y: Dict,bins: int = 50, save_path: Path = None):
     """
     Create step size histogram with Gaussian fit.
     
+    {'dx_all': dx_all,
+        'D_um2_per_s': D,
+        'D_error': D_error,
+        'sigma_x': sigma_fit,
+        'mean_x': x0_fit,
+        'sigma_err_x': perr[2],
+        'mean_err_x': perr[1],
+        'n_steps': len(dx_all),
+        'quality_ok': len(quality_issues) == 0,
+        'quality_issues': quality_issues if quality_issues else ['OK']
+    }
+
     Args:
-        stepsize_result: Results from perform_stepsize_analysis()
+        stepsize_result_x: Results from perform_stepsize_analysis() for x displacements
+        stepsize_result_y: Results from perform_stepsize_analysis() for y displacements
         save_path: Path to save PNG
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    displacements = stepsize_result['displacements']
+    displacements_x = stepsize_result_x['dx_all']
+    displacements_y = stepsize_result_y['dx_all']
     
     # Histogram
-    n, bins, patches = ax.hist(displacements, bins=50, density=True, 
+    n, bins, patches_x = ax.hist(displacements_x, bins=50, density=True, 
                                 alpha=0.6, color='blue', edgecolor='black',
+                                label='Observed Displacements')
+    n, bins, patches_y = ax.hist(displacements_y, bins=50, density=True, 
+                                alpha=0.6, color='green', edgecolor='black',
                                 label='Observed Displacements')
     
     # Gaussian fit parameters with errors
-    mu = stepsize_result['mu']
-    sigma = stepsize_result['sigma']
+    mu_x = stepsize_result_x['mean_x']
+    sigma_x = stepsize_result_x['sigma_x']
+    mu_y = stepsize_result_y['mean_x']
+    sigma_y = stepsize_result_y['sigma_x']
     
-    # Get errors from fit_gaussian_to_displacements
-    fit_stats = fit_gaussian_to_displacements(displacements)
-    mu_err = fit_stats['mu_err']
-    sigma_err = fit_stats['sigma_err']
+    mu_err_x = stepsize_result_x['mean_err_x']
+    sigma_err_x = stepsize_result_x['sigma_err_x']
+    mu_err_y = stepsize_result_y['mean_err_x']
+    sigma_err_y = stepsize_result_y['sigma_err_x']
     
-    x = np.linspace(displacements.min(), displacements.max(), 200)
+    x = np.linspace(min(displacements_x.min(),displacements_y.min()), max(displacements_x.max(), displacements_y.max()), 200)
     
     # Plot main Gaussian fit
-    gaussian = stats.norm.pdf(x, mu, sigma)
-    ax.plot(x, gaussian, 'r-', linewidth=2.5, 
-           label=f'Gaussian Fit\nμ = {mu:.4f} ± {mu_err:.4f} µm\nσ = {sigma:.4f} ± {sigma_err:.4f} µm')
-    
+    gaussian_x = stats.norm.pdf(x, mu_x, sigma_x)
+    gaussian_y = stats.norm.pdf(x, mu_y, sigma_y)
+    ax.plot(x, gaussian_x, 'b-', linewidth=2.5, 
+           label=f'Gaussian Fit X\nμ = {mu_x:.4f} ± {mu_err_x:.4f} µm\nσ = {sigma_x:.4f} ± {sigma_err_x:.4f} µm')
+    ax.plot(x, gaussian_y, 'g-', linewidth=2.5, 
+           label=f'Gaussian Fit Y\nμ = {mu_y:.4f} ± {mu_err_y:.4f} µm\nσ = {sigma_y:.4f} ± {sigma_err_y:.4f} µm')
     # Add uncertainty bands (±1 standard error)
-    gaussian_upper_mu = stats.norm.pdf(x, mu + mu_err, sigma)
-    gaussian_lower_mu = stats.norm.pdf(x, mu - mu_err, sigma)
-    gaussian_upper_sigma = stats.norm.pdf(x, mu, sigma + sigma_err)
-    gaussian_lower_sigma = stats.norm.pdf(x, mu, sigma - sigma_err)
+    gaussian_upper_mu_x = stats.norm.pdf(x, mu_x + mu_err_x, sigma_x)
+    gaussian_lower_mu_x = stats.norm.pdf(x, mu_x - mu_err_x, sigma_x)
+    gaussian_upper_sigma_x = stats.norm.pdf(x, mu_x, sigma_x + sigma_err_x)
+    gaussian_lower_sigma_x = stats.norm.pdf(x, mu_x, sigma_x - sigma_err_x)
     
     # Combined uncertainty (approximate)
-    gaussian_upper = np.maximum(gaussian_upper_mu, gaussian_upper_sigma)
-    gaussian_lower = np.minimum(gaussian_lower_mu, gaussian_lower_sigma)
+    gaussian_upper_x = np.maximum(gaussian_upper_mu_x, gaussian_upper_sigma_x)
+    gaussian_lower_x = np.minimum(gaussian_lower_mu_x, gaussian_lower_sigma_x)
     
-    ax.fill_between(x, gaussian_lower, gaussian_upper, 
+    ax.fill_between(x, gaussian_lower_x, gaussian_upper_x, 
                     color='red', alpha=0.2, label='Fit Uncertainty (±1σ)')
     
-    D = stepsize_result['D_um2_per_s']
-    D_err = stepsize_result['D_error']
-    dt = stepsize_result['dt']
+     # Add uncertainty bands (±1 standard error)
+    gaussian_upper_mu_y = stats.norm.pdf(x, mu_y + mu_err_y, sigma_y)
+    gaussian_lower_mu_y = stats.norm.pdf(x, mu_y - mu_err_y, sigma_y)
+    gaussian_upper_sigma_y = stats.norm.pdf(x, mu_y, sigma_y + sigma_err_y)
+    gaussian_lower_sigma_y = stats.norm.pdf(x, mu_y, sigma_y - sigma_err_y)
+    
+    # Combined uncertainty (approximate)
+    gaussian_upper_y = np.maximum(gaussian_upper_mu_y, gaussian_upper_sigma_y)
+    gaussian_lower_y = np.minimum(gaussian_lower_mu_y, gaussian_lower_sigma_y)
+    
+    ax.fill_between(x, gaussian_lower_y, gaussian_upper_y, 
+                    color='red', alpha=0.2, label='Fit Uncertainty (±1σ)')
+    
+    D_x = stepsize_result_x['D_um2_per_s']
+    D_err_x = stepsize_result_x['D_error']
+    dt_x = stepsize_result_x['dt']
+
+    D_y = stepsize_result_y['D_um2_per_s']
+    D_err_y = stepsize_result_y['D_error']
+    dt_y = stepsize_result_y['dt']
     
     ax.set_xlabel('Displacement (µm)', fontsize=12)
     ax.set_ylabel('Probability Density', fontsize=12)
-    ax.set_title(f'Step Size Analysis (Δt = {dt:.3f} s)\n'
-                f'D = {D:.4f} ± {D_err:.4f} µm²/s\n'
-                f'N = {stepsize_result["n_steps"]} steps', fontsize=14)
+    ax.set_title(f'Step Size Analysis (Δt = {dt_x:.3f} s)\n'
+                f'D = {D_x:.4f} ± {D_err_x:.4f} µm²/s\n'
+                f'N = {stepsize_result_x["n_steps"]} steps', fontsize=14)
     ax.legend(fontsize=10, loc='best')
     ax.grid(True, alpha=0.3)
     
     # Add quality indicator as text
-    quality = stepsize_result['quality']
-    quality_color = 'green' if quality == 'PASS' else 'orange'
-    ax.text(0.02, 0.98, f'Quality: {quality}', 
-           transform=ax.transAxes, fontsize=10,
-           verticalalignment='top', 
-           bbox=dict(boxstyle='round', facecolor=quality_color, alpha=0.3))
+    # quality = stepsize_result_x['quality']
+    # quality_color = 'green' if quality == 'PASS' else 'orange'
+    # ax.text(0.02, 0.98, f'Quality: {quality}', 
+    #        transform=ax.transAxes, fontsize=10,
+    #        verticalalignment='top', 
+    #        bbox=dict(boxstyle='round', facecolor=quality_color, alpha=0.3))
     
     fig.tight_layout()
     plt.show()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  Step size plot saved: {save_path}")
+
+
+def plot_step_size_overlay(results_df: pd.DataFrame, save_path: Path) -> None:
+    """
+    Create overlay histogram showing step size distributions for each individual file.
+    
+    Args:
+        results_df: DataFrame from analyze_all_files()
+        file_records.append({
+                'particle_size_nm': particle_size,
+                'xml_path': str(xml_file),
+                'xml_name': xml_file.name,
+                'x_max': x_max,
+                'y_max': y_max,
+                'exposure_ms': exposure_ms,
+                'delay_ms': delay_ms,
+                'fps': fps,
+                'mpp': mpp,
+                'mode': mode,
+            })
+
+        save_path: Directory to save plot
+    """
+    print("\nCreating step size overlay plot (individual files)...")
+    
+    fig, ax = plt.subplots(figsize=(14, 10))
+    
+    # Color map for different files
+    n_files = len(results_df)
+    colors = plt.cm.tab20(np.linspace(0, 1, min(n_files, 20)))
+    
+    for idx, (_, row) in enumerate(results_df.iterrows()):
+        xml_path = Path(row['xml_path'])
+        particle_size = row['particle_size_nm']
+        
+        # Load and calculate step sizes for this file
+        df = read_trackmate_xml(xml_path)
+        if df is None:
+            continue
+            
+        step_df = calculate_step_sizes(df, step_interval=STEP_INTERVAL)
+        if step_df.empty:
+            continue
+            
+        # Calculate Euclidean step sizes from dx and dy for visualization
+        dx_nm = step_df['dx'].values * row['mpp'] * 1000.0  # Convert to nm
+        dy_nm = step_df['dy'].values * row['mpp'] * 1000.0  # Convert to nm
+        steps_nm = np.sqrt(dx_nm**2 + dy_nm**2)
+        
+        # Plot histogram with transparency
+        color = colors[idx % len(colors)]
+        label = f"{particle_size:.0f} nm - {row['xml_name'][:30]} (N={len(steps_nm)}, mean={np.mean(steps_nm):.1f} nm)"
+        ax.hist(steps_nm, bins=60, alpha=0.4, color=color, edgecolor='black', linewidth=0.3,
+               label=label)
+    
+    ax.set_xlabel('Step size [nm]', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Frequency', fontsize=14, fontweight='bold')
+    ax.set_title('Step Size Distribution - Individual Files', fontsize=16, fontweight='bold')
+    ax.legend(fontsize=8, loc='upper right', ncol=2)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(save_path / 'water_step_size_overlay_individual_files.png', dpi=300)
     plt.close(fig)
-    print(f"  Step size plot saved: {save_path}")
+    
+    print(f"[OK] Step size overlay plot saved to {save_path}")
+
 
 
 def plot_trajectories(tracks: pd.DataFrame, save_path: Path, max_tracks: int = 100, fading: bool = True):
@@ -420,3 +527,243 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path):
     plt.close(fig)
     print(f"Comparison plot saved: {save_path}")
 
+
+def plot_dx_dy_distributions(results_df: pd.DataFrame, save_path: Path = None) -> None:
+    """
+    Create histograms of dx and dy step component distributions for each individual file.
+    
+    This shows the directional components of particle motion, which should be
+    centered around zero for isotropic Brownian motion.
+    
+    Args:
+        results_df: DataFrame from analyze_all_files()
+        save_path: Directory to save plots
+    """
+    print("\nCreating individual file dx/dy distribution plots...")
+    
+    for idx, (_, row) in enumerate(results_df.iterrows()):
+        xml_path = Path(row['xml_path'])
+        particle_size = row['particle_size_nm']
+        xml_name = row['xml_name']
+        
+        # Load and calculate step components for this file
+        df = read_trackmate_xml(xml_path)
+        if df is None:
+            continue
+            
+        step_df = calculate_step_sizes(df, step_interval=STEP_INTERVAL)
+        if step_df.empty:
+            continue
+            
+        all_dx = step_df['dx'].values * row['mpp'] * 1000.0  # Convert to nm
+        all_dy = step_df['dy'].values * row['mpp'] * 1000.0  # Convert to nm
+        
+        # Create figure with 3 subplots: dx, dy, and 2D histogram
+        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+        
+        # Plot dx distribution
+        ax1 = axes[0, 0]
+        ax1.hist(all_dx, bins=50, alpha=0.7, color='cornflowerblue', edgecolor='black')
+        ax1.axvline(0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+        ax1.axvline(np.mean(all_dx), color='red', linestyle='--', linewidth=2,
+                   label=f'Mean = {np.mean(all_dx):.1f} nm')
+        ax1.set_xlabel('dx [nm]', fontsize=12)
+        ax1.set_ylabel('Frequency', fontsize=12)
+        ax1.set_title('X-Direction Displacement Distribution', fontsize=12, fontweight='bold')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot dy distribution
+        ax2 = axes[0, 1]
+        ax2.hist(all_dy, bins=50, alpha=0.7, color='lightcoral', edgecolor='black')
+        ax2.axvline(0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+        ax2.axvline(np.mean(all_dy), color='red', linestyle='--', linewidth=2,
+                   label=f'Mean = {np.mean(all_dy):.1f} nm')
+        ax2.set_xlabel('dy [nm]', fontsize=12)
+        ax2.set_ylabel('Frequency', fontsize=12)
+        ax2.set_title('Y-Direction Displacement Distribution', fontsize=12, fontweight='bold')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 2D histogram (dx vs dy)
+        ax3 = axes[1, 0]
+        h = ax3.hist2d(all_dx, all_dy, bins=50, cmap='Blues', cmin=1)
+        plt.colorbar(h[3], ax=ax3, label='Counts')
+        ax3.axhline(0, color='red', linestyle='-', linewidth=1, alpha=0.5)
+        ax3.axvline(0, color='red', linestyle='-', linewidth=1, alpha=0.5)
+        ax3.set_xlabel('dx [nm]', fontsize=12)
+        ax3.set_ylabel('dy [nm]', fontsize=12)
+        ax3.set_title('2D Displacement Distribution', fontsize=12, fontweight='bold')
+        ax3.set_aspect('equal')
+        ax3.grid(True, alpha=0.3)
+        
+        # Plot scatter with transparency to show density
+        ax4 = axes[1, 1]
+        # Subsample if too many points
+        n_points = len(all_dx)
+        if n_points > 5000:
+            indices = np.random.choice(n_points, 5000, replace=False)
+            dx_plot = np.array(all_dx)[indices]
+            dy_plot = np.array(all_dy)[indices]
+            alpha_val = 0.1
+        else:
+            dx_plot = all_dx
+            dy_plot = all_dy
+            alpha_val = 0.3
+        
+        ax4.scatter(dx_plot, dy_plot, s=10, alpha=alpha_val, c='navy')
+        ax4.axhline(0, color='red', linestyle='-', linewidth=1, alpha=0.5)
+        ax4.axvline(0, color='red', linestyle='-', linewidth=1, alpha=0.5)
+        
+        # Add circle showing mean step size
+        mean_r = np.mean(np.sqrt(np.array(all_dx)**2 + np.array(all_dy)**2))
+        circle = plt.Circle((0, 0), mean_r, color='red', fill=False, 
+                           linestyle='--', linewidth=2, label=f'Mean r = {mean_r:.1f} nm')
+        ax4.add_patch(circle)
+        
+        ax4.set_xlabel('dx [nm]', fontsize=12)
+        ax4.set_ylabel('dy [nm]', fontsize=12)
+        ax4.set_title('Displacement Scatter Plot', fontsize=12, fontweight='bold')
+        ax4.set_aspect('equal')
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+        
+        # Overall title
+        fig.suptitle(f'Displacement Component Analysis - {particle_size:.0f} nm\n{xml_name}\n'
+                    f'N = {len(all_dx)} steps, σ(dx) = {np.std(all_dx):.1f} nm, '
+                    f'σ(dy) = {np.std(all_dy):.1f} nm',
+                    fontsize=14, fontweight='bold')
+        
+        plt.tight_layout()
+        # Create safe filename from xml_name
+        safe_filename = xml_name.replace('.xml', '').replace(' ', '_').replace('/', '_')
+        if save_path is not None:
+            plt.savefig(save_path / f'water_dx_dy_dist_{particle_size:.0f}nm_{safe_filename}.png', dpi=300)
+            plt.close(fig)
+    
+    print(f"[OK] Individual file dx/dy distribution plots saved to {save_path}")
+
+def plot_diffusion_comparison(combined_df: pd.DataFrame, results_df: pd.DataFrame, save_path: Path = None) -> None:
+    """
+    Create comparison plot of measured vs theoretical diffusion coefficients.
+    Shows individual files discretely with their uncertainties.
+    
+    Args:
+        combined_df: DataFrame from combine_by_particle_size()
+        results_df: DataFrame from analyze_all_files() with individual file results
+        save_path: Directory to save plot
+    """
+    # DLS measurements in µm²/s (converted from original nm²/ms values)
+    DLS_MEASUREMENTS = {
+        20: 12.38750325 * 1e3 / 1000.0,   # nm²/ms -> µm²/s
+        50: 8.201969711 * 1e3 / 1000.0,
+        100: 4.139082033 * 1e3 / 1000.0,
+        200: 1.745323167 * 1e3 / 1000.0,
+        500: 0.621773811 * 1e3 / 1000.0,
+        1000: 0.356862091 * 1e3 / 1000.0
+    }
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    particle_sizes = combined_df['particle_size_nm'].values
+    measured_D = combined_df['D_measured'].values
+    measured_D_err = combined_df['D_measured_std'].values
+    theoretical_D = combined_df['D_theoretical'].values
+    
+    # Color palette for different particle sizes
+    colors_by_size = plt.cm.tab10(np.linspace(0, 1, len(particle_sizes)))
+    size_to_color = dict(zip(particle_sizes, colors_by_size))
+    
+    # Plot individual files with small horizontal offset for visibility
+    # Use different markers for different FPS modes and gray out bad quality fits
+    offset_scale = 0.15  # Adjust this to control horizontal spread
+    for idx, file_data in results_df.iterrows():
+        size = file_data['particle_size_nm']
+        D = file_data['D']
+        D_err = file_data['D_std']
+        mode = file_data.get('mode', 'Unknown')
+        quality = file_data.get('quality_flag', 'unknown')
+        
+        # Different markers for different FPS modes
+        if mode == '60 FPS':
+            marker = '^'  # Triangle up for 60 FPS
+            base_alpha = 0.8
+        elif mode == '20 FPS':
+            marker = 's'  # Square for 20 FPS
+            base_alpha = 0.7
+        else:
+            marker = 'o'  # Circle for unknown
+            base_alpha = 0.6
+        
+        # Gray out bad quality fits
+        if quality != 'good':
+            color = 'gray'
+            alpha = 0.3
+            linewidth = 1.0
+        else:
+            color = size_to_color[size]
+            alpha = base_alpha
+            linewidth = 1.5
+        
+        # Calculate how many files we have for this size and create offset
+        size_files = results_df[results_df['particle_size_nm'] == size]
+        file_index = list(size_files.index).index(idx)
+        num_files = len(size_files)
+        
+        # Center the offsets around the nominal size
+        if num_files > 1:
+            offset = (file_index - (num_files - 1) / 2) * (size * offset_scale / num_files)
+        else:
+            offset = 0
+        
+        x_pos = size + offset
+        
+        # Plot individual file with error bar
+        ax.errorbar(x_pos, D, yerr=D_err, fmt=marker, 
+                   markersize=7, color=color, 
+                   ecolor=color, elinewidth=linewidth, 
+                   capsize=3, capthick=linewidth, alpha=alpha)
+    
+    # Add custom legend entries for different FPS modes and quality
+    ax.errorbar([], [], [], fmt='^', markersize=7, color='gray', 
+               ecolor='gray', elinewidth=1.5, capsize=3, capthick=1.5,
+               label='60 FPS (good quality)', alpha=0.8)
+    ax.errorbar([], [], [], fmt='s', markersize=7, color='gray', 
+               ecolor='gray', elinewidth=1.5, capsize=3, capthick=1.5,
+               label='20 FPS (good quality)', alpha=0.7)
+    ax.errorbar([], [], [], fmt='o', markersize=7, color='gray', 
+               ecolor='gray', elinewidth=1.0, capsize=3, capthick=1.0,
+               label='Bad quality (grayed out)', alpha=0.3)
+    
+    # Plot mean values for each size (larger markers)
+    ax.errorbar(particle_sizes, measured_D, yerr=measured_D_err, fmt='D', 
+               markersize=10, color='blue', ecolor='black', elinewidth=2, 
+               capsize=5, capthick=2, label='Mean D per Size ± Std', zorder=5)
+    
+    # Plot theoretical values
+    ax.scatter(particle_sizes, theoretical_D, s=150, color='black', 
+              marker='x', linewidths=3, label='Theoretical D (Stokes-Einstein)', zorder=6)
+    
+    # Plot DLS values if available
+    dls_sizes = [s for s in particle_sizes if s in DLS_MEASUREMENTS]
+    dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
+    if dls_sizes:
+        ax.scatter(dls_sizes, dls_D, s=150, color='red', marker='*', 
+                  linewidths=2, edgecolors='darkred', label='D from DLS', zorder=6)
+    
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel('Particle size [nm]', fontsize=12)
+    ax.set_ylabel('Diffusion coefficient D [µm²/s]', fontsize=12)
+    ax.set_title('Diffusion Coefficients in water: Comparing two analysis methods\nStep Size Method vs Theory', 
+                fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10, loc='best')
+    ax.grid(True, alpha=0.3, which='both')
+    
+    plt.tight_layout()
+    plt.show()
+    if save_path is not None:
+        plt.savefig(save_path / 'diffusion_comparison_stepsize_individual.png', dpi=300)
+        print(f"\n✓ Comparison plot saved to: {save_path / 'diffusion_comparison_stepsize_individual.png'}")
+        
+        plt.close(fig)

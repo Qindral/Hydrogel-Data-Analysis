@@ -2,10 +2,13 @@
 
 from typing import Tuple, Optional, Dict
 from types import SimpleNamespace
+from networkx import sigma
+from networkx import sigma
 import numpy as np
 import pandas as pd
 from scipy import stats
 import trackpy as tp
+from scipy.optimize import curve_fit
 
 
 # Physical constants
@@ -18,8 +21,6 @@ def compute_step_size_diffusion(
     mpp: float,
     fps: float,
     step_interval: int = 1,
-    max_sigma_ratio: float = 1.5,
-    max_mean_sigma_ratio: float = 0.3
 ) -> dict:
     """Compute diffusion coefficient from step size distributions.
     
@@ -67,49 +68,49 @@ def compute_step_size_diffusion(
     dx_all = np.array(dx_all)
     dy_all = np.array(dy_all)
     
-    return {
-            'D_um2_per_s': np.nan,
-            'D_error': np.nan,
-            'sigma_x': np.nan,
-            'sigma_y': np.nan,
-            'mean_x': np.nan,
-            'mean_y': np.nan,
-            'n_steps': len(dx_all),
-            'quality_ok': False,
-            'quality_issues': ['Insufficient steps (<10)']
+    return {"dx_all" : dx_all,
+            "dy_all" : dy_all,
         }
 
-def fit_gaussian_diffusion_stepsize(step_array) -> dict:
-    dx_arr = np.array(step_array)
+def fit_gaussian_diffusion_stepsize(step_mpp: dict, dt:  int = 1, max_sigma_ratio: float = 1.5,
+    max_mean_sigma_ratio: float = 0.3) -> dict:
+    ''' Fit Gaussion to 1D Step Size Distribution to extract Diffusion Coefficient with Errors.'''
+    
+    dx_arr = np.array(step_mpp)
     
     # Fit Gaussians to get mean and sigma
     mean_x, sigma_x = dx_arr.mean(), dx_arr.std(ddof=1)
-    
-    
+    dx_all = dx_arr.tolist()
+
+    def Gauss(x, a, x0, sigma):
+        return a * np.exp(-(x - x0)**2 / (2 * sigma**2))
+
+    popt,pcov = curve_fit(Gauss, x, dx_all, p0=[max(dx_all), mean_x, sigma_x])
+    x,a,x0_fit,sigma_fit = popt
+    perr = np.sqrt(np.diag(pcov))
     # Diffusion coefficient: D = σ² / (2 * dt)
-    D = sigma_x**2 / (2.0 * dt)
+    D = sigma_fit**2 / (2.0 * dt)
     
     # Error estimate (propagating std error)
-    se_x = sigma_x / np.sqrt(len(dx_arr))
+    se_x = perr[2]
     D_error = np.sqrt(se_x**2) / (2.0 * dt)
     
-    # Quality checks
+    # Quality checksz
     quality_issues = []
     
     # Check for drift (mean should be close to 0)
-    mean_sigma_x = abs(mean_x) / (sigma_x + 1e-10)
+    mean_sigma_x = abs(x0_fit) / (sigma_fit + 1e-10)
     
     if mean_sigma_x > max_mean_sigma_ratio:
         quality_issues.append(f'Drift in X (|µ|/σ = {mean_sigma_x:.2f})')
-    if mean_sigma_y > max_mean_sigma_ratio:
-        quality_issues.append(f'Drift in Y (|µ|/σ = {mean_sigma_y:.2f})')
     
-    return {
+    return {'dx_all': dx_all,
         'D_um2_per_s': D,
         'D_error': D_error,
-        'sigma_x': sigma_x,
-        'mean_x': mean_x,
-        'sigma_ratio': sigma_ratio,
+        'sigma_x': sigma_fit,
+        'mean_x': x0_fit,
+        'sigma_err_x': perr[2],
+        'mean_err_x': perr[1],
         'n_steps': len(dx_all),
         'quality_ok': len(quality_issues) == 0,
         'quality_issues': quality_issues if quality_issues else ['OK']

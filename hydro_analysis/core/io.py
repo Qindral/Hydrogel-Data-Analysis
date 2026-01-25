@@ -212,126 +212,173 @@ def check_text_encoding(path: Path) -> None:
 # -----------------------------
 
 
+def extract_particle_size_from_path(folder_path: Path) -> Optional[float]:
+    """
+    Extract particle size (in nm) from folder name.
+    
+    Supports various naming formats:
+    - "50nm"
+    - "100_nm" 
+    - "200 nm"
+    
+    Args:
+        folder_path: Path object of the folder
+        
+    Returns:
+        Particle size in nanometers, or None if not found
+    """
+    folder_name = folder_path.name
+    match = re.search(r'(\d+)\s*nm', folder_name, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    return None
 
 
-# def _norm_spaces(s: str) -> str:
-#     return re.sub(r"\s+", " ", s.strip())
-
-# def canonical_base(stem: str) -> str:
-#     """
-#     Make a stable base name from any derived filename:
-#       A4_xxx_processed_processed -> A4_xxx
-#       A4_xxx_Tracks -> A4_xxx
-#     """
-#     s = _norm_spaces(stem)
-#     while True:
-#         m = END_TOKEN_RE.search(s)
-#         if not m:
-#             break
-#         s = s[:m.start()].rstrip(" _-.\t")
-#         s = _norm_spaces(s)
-#     return s
-
-# def processed_level(stem: str) -> int:
-#     """Count how often 'processed' appears at the end (processed_processed => 2)."""
-#     s = _norm_spaces(stem)
-#     level = 0
-#     while True:
-#         m = re.search(r"([ _\-.]+)processed\Z", s, flags=re.IGNORECASE)
-#         if not m:
-#             break
-#         level += 1
-#         s = s[:m.start()].rstrip(" _-.\t")
-#         s = _norm_spaces(s)
-#     return level
-
-# def xml_variant_from_path(xml_path: Path) -> str:
-#     """
-#     Classify XML variant mainly by name:
-#       - contains processed -> 'processed'
-#       - else -> 'base'
-#     You can extend this later with more variants.
-#     """
-#     name = xml_path.stem.lower()
-#     if "processed" in name:
-#         return "processed"
-#     return "base"
-
+    """
+    Scan directory structure and collect XML track files with associated FPS data.
+    
+    This function focuses on XML files (which contain the track data) and retrieves
+    FPS information from .rec files in the same particle size folder.
+    
+    Expected structure:
+        root_path/
+            50nm/
+                *.rec (for FPS extraction)
+                Tracks/
+                    *.xml (primary data)
+            100nm/
+                *.rec
+                Tracks/
+                    *.xml
+    
+    Args:
+        root_path: Root directory to scan
+        
+    Returns:
+        DataFrame with columns:
+        - particle_size_nm: Particle size in nanometers
+        - xml_path: Path to XML track file
+        - xml_name: Basename of XML file
+        - exposure_ms: Exposure time from matched .rec file
+        - delay_ms: Delay time from matched .rec file
+        - fps: Calculated frames per second from matched .rec file
+        - mpp: Micrometers per pixel calibration
+        - mode: Detection mode description
+    """
+    file_records = []
+    
+    print(f"\nDEBUG: Scanning folders in {root_path}")
+    print("=" * 70)
+    
+    # Walk through subdirectories
+    for subfolder in root_path.iterdir():
+        if not subfolder.is_dir():
+            continue
+        
+        # Extract particle size from folder name
+        particle_size = extract_particle_size_from_path(subfolder)
+        
+        print(f"\nFolder: {subfolder.name}")
+        print(f"   Particle size: {particle_size} nm" if particle_size else "   Warning: No particle size detected")
+        
+        if particle_size is None:
+            continue
+        
+        # Find all REC files in main folder and parse them
+        rec_files = sorted(list(subfolder.glob("*.rec")))
+        print(f"   Found {len(rec_files)} .rec files")
+        
+        # Parse all REC files and store by basename for individual matching
+        rec_info_by_basename = {}
+        
+        for rec_file in rec_files:
+            rec_info = parse_rec_file(rec_file)
+            if rec_info['fps'] is not None:
+                basename = rec_file.stem
+                rec_info_by_basename[basename] = rec_info
+                print(f"     • {rec_file.name}: {rec_info['fps']:.2f} fps, size={rec_info['size_x']}x{rec_info['size_y']} px" 
+                      if rec_info['size_x'] else f"     • {rec_file.name}: {rec_info['fps']:.2f} fps")
+        
+        if not rec_info_by_basename:
+            print(f"   Warning: No valid FPS data from .rec files")
+        
+        # Find all XML files in Tracks subfolder
+        tracks_folder = subfolder / "Tracks"
+        xml_files = []
+        
+        if tracks_folder.exists() and tracks_folder.is_dir():
+            xml_files = sorted(list(tracks_folder.glob("*.xml")))
+            print(f"   Found {len(xml_files)} XML track files in Tracks/")
+        else:
+            print(f"   Warning: No Tracks/ subfolder found")
+        
+        if len(xml_files) == 0:
+            print(f"   Skipping - no XML files found")
+            continue
+        
+        # Create one record per XML file with individual .rec matching
+        for xml_file in xml_files:
+            # Extract image dimensions from XML
+            x_max, y_max = extract_image_dimensions_from_xml(xml_file)
+            
+            # Match XML to .rec file based on filename
+            xml_basename = xml_file.stem.replace('_Tracks', '').replace(' Tracks', '')
+            matched_rec_info = None
+            
+            for rec_basename, rec_info in rec_info_by_basename.items():
+                if rec_basename in xml_basename or xml_basename in rec_basename:
+                    matched_rec_info = rec_info
+                    break
+            
+            # Use matched .rec parameters if available
+            if matched_rec_info:
+                rec_fps = matched_rec_info['fps']
+                exposure_ms = matched_rec_info['exposure_ms']
+                delay_ms = matched_rec_info['delay_ms']
+                if matched_rec_info['size_x'] is not None:
+                    x_max = matched_rec_info['size_x']
+                    y_max = matched_rec_info['size_y']
+            else:
+                rec_fps = None
+                exposure_ms = None
+                delay_ms = None
+            
+            # Determine mpp based on image size (prioritize), then fps
+            if x_max is not None and y_max is not None:
+                mpp = get_mpp_from_size(x_max, y_max)
+                fps = rec_fps if rec_fps else DEFAULT_FPS
+                mode = f'{x_max}x{y_max}px'
+            else:
+                mpp, fps, mode = get_mpp_from_fps_and_size(
+                    fps=rec_fps,
+                    x_max=x_max,
+                    y_max=y_max
+                )
+            
+            file_records.append({
+                'particle_size_nm': particle_size,
+                'xml_path': str(xml_file),
+                'xml_name': xml_file.name,
+                'x_max': x_max,
+                'y_max': y_max,
+                'exposure_ms': exposure_ms,
+                'delay_ms': delay_ms,
+                'fps': fps,
+                'mpp': mpp,
+                'mode': mode,
+            })
+            
+            size_info = f"{x_max}x{y_max}" if x_max and y_max else "unknown size"
+        
+    
+    
+    df = pd.DataFrame(file_records)
+    
+    return df
 
 # -----------------------------
-# Index class: universal usage
+# Single Files
 # -----------------------------
-
-class DatasetIndex:
-    """
-    Build once per experiment folder and use everywhere:
-      idx = DatasetIndex.from_root(root)
-      ds  = idx.from_any_path(tif_or_rec_or_xml)
-    """
-
-    def __init__(self, datasets: Dict[str, DatasetFiles]):
-        self._datasets = datasets
-
-        # Lookup tables for fast resolution from arbitrary path
-        self._by_tif: Dict[Path, str] = {}
-        self._by_rec: Dict[Path, str] = {}
-        self._by_xml: Dict[Path, str] = {}
-
-        for base, ds in datasets.items():
-            self._by_tif[ds.base_tif] = base
-            for p in ds.processed_tifs:
-                self._by_tif[p] = base
-            if ds.rec_path:
-                self._by_rec[ds.rec_path] = base
-            for x in ds.xml_paths:
-                self._by_xml[x] = base
-
-    @property
-    def datasets(self) -> Dict[str, DatasetFiles]:
-        return self._datasets
-
-    def list_bases(self) -> List[str]:
-        return sorted(self._datasets.keys())
-
-    def get(self, base_name: str) -> DatasetFiles:
-        return self._datasets[base_name]
-
-    def from_any_path(self, path: Path) -> DatasetFiles:
-        """
-        Given a .tif/.rec/.xml path (raw or processed), return the connected DatasetFiles.
-        If it's a derived file we haven't stored by exact Path (e.g., relative vs absolute),
-        we try canonical resolution.
-        """
-        p = Path(path).resolve()
-
-        # Direct hit
-        if p in self._by_tif:
-            return self._datasets[self._by_tif[p]]
-        if p in self._by_rec:
-            return self._datasets[self._by_rec[p]]
-        if p in self._by_xml:
-            return self._datasets[self._by_xml[p]]
-
-        # Fallback: infer base from name
-        ext = p.suffix.lower()
-        if ext in TIFF_EXT or ext in REC_EXT:
-            base = canonical_base(p.stem)
-            if base in self._datasets:
-                return self._datasets[base]
-        if ext in XML_EXT:
-            # remove trailing _Tracks if present and canonicalize
-            stem = re.sub(r"([ _\-.]+)tracks\Z", "", p.stem, flags=re.IGNORECASE)
-            base = canonical_base(stem)
-            if base in self._datasets:
-                return self._datasets[base]
-
-        raise KeyError(f"Could not resolve dataset for path: {p}")
-
-    @classmethod
-    def from_root(cls, root: Path) -> "DatasetIndex":
-        datasets = build_datasets(root)
-        return cls(datasets)
-
 
 # -----------------------------
 # Builder: scan folder and bundle
@@ -372,7 +419,42 @@ def build_datasets(root: Path) -> Dict[str, DatasetFiles]:
     
     return datasets
 
+def Collect_from_list (folder_list: Dict[str, List[Path]]) -> pd.DataFrame:
+    """
+    Collect all XML files from a list of folders and build a DataFrame.
+    {'20':[Path1, Path2], '50':[Path3, Path4], '200':[Path32,Path23,Path14,Path3, Path4]}
+    Args:
+        folder_list: List of folder paths to scan
+    """
+    all_records = []
+    for particle_size_nm, folders in folder_list.items():
+        for folder in folders:
+            datasets = build_datasets(folder)
+            for base_name, ds in datasets.items():
+                rec_tif_info = ds['rec_tif']
+                tracks = ds['tracks']
+                rec_path = rec_tif_info['rec_file']
+                meta_data = parse_rec_file(rec_path) if rec_path else {}
+                mpp = meta_data.get('mpp')
+                fps = meta_data.get('fps')
+                particle_size = extract_particle_size_from_path(folder)
+                all_records.append({
+                    'particle_size_nm': particle_size_nm,
+                    'xml_name': base_name,
+                    'xml_path': ds['xml_paths'][0],
+                    'exposure_ms': meta_data.get('exposure_ms'),
+                    'delay_ms': meta_data.get('delay_ms'),
+                    'fps': fps,
+                    'mpp': mpp,
+                    'mode': f"{meta_data.get('size_x')}x{meta_data.get('size_y')}" if meta_data.get('size_x') else None,
+                    'tracks': tracks
+                })
+    
+    combined_df = pd.DataFrame(all_records)
+    return combined_df
 
+
+def collect_all_files_by_particle_size(root_path: Path) -> pd.DataFrame:
 
 # -----------------------------
 # Compare
