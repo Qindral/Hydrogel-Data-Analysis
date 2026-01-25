@@ -33,6 +33,19 @@ XML_FOLDERS = {
     1000.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_1000")],
 }
 
+# Folder for 20mg C16 analysis --- IGNORE ---
+
+ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
+XML_FOLDERS = {
+    20.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\20 nm\20 nm 20 mg\Tracks")],
+    50.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks")],
+    100.0: [],
+    200.0: [],
+    500.0: [],
+    1000.0: [],
+}
+
+
 SAVE_PATH = None                 # show plots only
 STEP_INTERVAL = DEFAULT_STEP_INTERVAL
 VERBOSE = False
