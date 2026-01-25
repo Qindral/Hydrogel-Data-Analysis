@@ -1,34 +1,50 @@
-"""Visualization functions that return figures instead of saving."""
+"""Visualization functions that return figures.
+Includes MSD plots and step size histograms.
+Here wont be stored any data loading or analysis methods.
+"""
 
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Any, Iterable
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
 
-from core.analysis import calculate_theoretical_diffusion 
+from .physics import calculate_theoretical_diffusion
+
+
+def _normalize_results(results: Dict[str, Dict[str, Any]] | Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if isinstance(results, pd.DataFrame):
+        raise ValueError("Expected standardized result_dict entries (with tracks_df). Pass a dict or list of result_dicts.")
+    if isinstance(results, dict):
+        return [r for r in results.values() if r is not None]
+    return [r for r in results if r is not None]
 
 
 # ============================================================================
-# VISUALIZATION
+# VISUALIZATION MSD
 # ============================================================================
 
-def plot_msd_results(msd_result: Dict,particle_size: float, save_path: Path = None):
+def plot_msd_results(result_dict: Dict[str, Any], save_path: Path = None):
     """
-    Create MSD plot with individual and ensemble curves.
+    Create MSD plot with individual and ensemble curves from result_dict.
     
     Args:
-        msd_result: Results from perform_msd_analysis()
+        result_dict: Standardized result dictionary with fit_results_MSD
         save_path: Path to save PNG
     """
+    if result_dict['fit_results_MSD'] is None:
+        print("No MSD results to plot")
+        return
+    
     fig, ax = plt.subplots(figsize=(10, 6))
     
+    msd_result = result_dict['fit_results_MSD']
     imsd = msd_result['imsd']
-    emsd = msd_result['emsd']    
-    fit_result = msd_result['fit_result']
-    A = fit_result["A"][0]
-    n = fit_result["n"][0]
+    emsd = msd_result['emsd']
+    A = msd_result['A']
+    n = msd_result['exponent']
+    particle_size = result_dict['particle_size_nm']
 
     # Plot individual MSDs (lighter)
     for col in imsd.columns[:50]:  # Limit to 50 for clarity
@@ -39,7 +55,7 @@ def plot_msd_results(msd_result: Dict,particle_size: float, save_path: Path = No
     
     # Plot ensemble MSD with error bars
     ax.errorbar(emsd.index, emsd.values, yerr=sem.values,
-                fmt='o-', label=f'Ensemble MSD (N={msd_result["n_particles"]})', 
+                fmt='o-', label=f'Ensemble MSD (N={result_dict["num_tracks"]})', 
                 linewidth=2, markersize=4, color='blue',
                 capsize=3, capthick=1, elinewidth=1, alpha=0.8)
     
@@ -48,21 +64,21 @@ def plot_msd_results(msd_result: Dict,particle_size: float, save_path: Path = No
     y_fit = A * x_fit**n
     
     # Calculate uncertainty band from parameter errors
-    A_upper = (A + fit_result["A_err"][0])
-    A_lower = (A - fit_result["A_err"][0])
-    n_upper = (n + fit_result["n_err"][0])
-    n_lower = (n - fit_result["n_err"][0])
+    A_upper = (A + msd_result['A_err'])
+    A_lower = (A - msd_result['A_err'])
+    n_upper = (n + msd_result['exponent_error'])
+    n_lower = (n - msd_result['exponent_error'])
     
     y_upper = A_upper * x_fit**n_upper
     y_lower = A_lower * x_fit**n_lower
     
     # Plot fit line
     ax.loglog(x_fit, y_fit, '--', 
-             label=f'Fit: A={A:.3f}±{fit_result["A_err"][0]:.3f}, n={n:.3f}±{fit_result["n_err"][0]:.3f}',
+             label=f'Fit: A={A:.3f}±{msd_result["A_err"]:.3f}, n={n:.3f}±{msd_result["exponent_error"]:.3f}',
              linewidth=2, color='red')
     
     # Add uncertainty band
-    if fit_result["A_err"][0] > 1:
+    if msd_result['A_err'] > 1:
         ax.fill_between(x_fit, y_lower, y_upper, 
                         color='red', alpha=0.2, label='Fit Uncertainty')
     
@@ -89,51 +105,97 @@ def plot_msd_results(msd_result: Dict,particle_size: float, save_path: Path = No
         plt.close(fig)
         print(f"  MSD plot saved: {save_path}")
 
-
-def plot_stepsize_results(stepsize_result_x: Dict,stepsize_result_y: Dict,bins: int = 50, save_path: Path = None):
+def plot_trajectories(result_dict: Dict[str, Any], save_path: Path, max_tracks: int = 100, fading: bool = True):
     """
-    Create step size histogram with Gaussian fit.
+    Plot particle trajectories from result_dict.
     
-    {'dx_all': dx_all,
-        'D_um2_per_s': D,
-        'D_error': D_error,
-        'sigma_x': sigma_fit,
-        'mean_x': x0_fit,
-        'sigma_err_x': perr[2],
-        'mean_err_x': perr[1],
-        'n_steps': len(dx_all),
-        'quality_ok': len(quality_issues) == 0,
-        'quality_issues': quality_issues if quality_issues else ['OK']
-    }
-
     Args:
-        stepsize_result_x: Results from perform_stepsize_analysis() for x displacements
-        stepsize_result_y: Results from perform_stepsize_analysis() for y displacements
+        result_dict: Standardized result dictionary with tracks_df
+        save_path: Path to save PNG
+        max_tracks: Maximum number of tracks to plot
+        fading: Whether to apply fading effect to trajectories
+    """
+    tracks = result_dict['tracks_df']
+    if tracks is None or tracks.empty:
+        print("No tracks to plot")
+        return
+    
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    unique_particles = tracks['particle'].unique()
+    n_plot = min(len(unique_particles), max_tracks)
+    if not fading:
+        for pid in unique_particles[:n_plot]:
+            track = tracks[tracks['particle'] == pid].sort_values('frame')
+            ax.plot(track['x'], track['y'], alpha=0.5, linewidth=1)
+    else:
+        for pid in unique_particles[:n_plot]:
+            track = tracks[tracks['particle'] == pid].sort_values('frame')
+            n_points = len(track)
+            for i in range(n_points - 1):
+                alpha = (i + 1) / n_points  # Fading effect
+                ax.plot(track['x'].values[i:i+2], track['y'].values[i:i+2], 
+                        color='blue', alpha=alpha, linewidth=3)
+    
+    ax.set_xlabel('X (pixels)', fontsize=12)
+    ax.set_ylabel('Y (pixels)', fontsize=12)
+    ax.set_title(f'Particle Trajectories (N={result_dict["num_tracks"]})', fontsize=14)
+    ax.grid(True, alpha=0.3)
+    ax.set_aspect('equal')
+    
+    fig.tight_layout()
+    plt.show()
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  Trajectory plot saved: {save_path}")
+
+
+# ============================================================================
+# VISUALIZATION StepSize
+# ============================================================================
+
+def plot_stepsize_results(result_dict: Dict[str, Any], bins: int = 50, save_path: Path = None):
+    """
+    Create step size histogram with Gaussian fit from result_dict.
+    
+    Args:
+        result_dict: Standardized result dictionary with fit_results_step
+        bins: Number of histogram bins
         save_path: Path to save PNG
     """
+    if result_dict['fit_results_step'] is None:
+        print("No step size results to plot")
+        return
+    
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    displacements_x = stepsize_result_x['dx_all']
-    displacements_y = stepsize_result_y['dx_all']
+    step_result = result_dict['fit_results_step']
+    fit_x = step_result['fit_x']
+    fit_y = step_result['fit_y']
+    step_df = step_result['step_df']
+    mpp = result_dict['mpp']
+    
+    displacements_x = step_df['dx'].values * mpp
+    displacements_y = step_df['dy'].values * mpp
     
     # Histogram
-    n, bins, patches_x = ax.hist(displacements_x, bins=50, density=True, 
+    n, bins, patches_x = ax.hist(displacements_x, bins=bins, density=True, 
                                 alpha=0.6, color='blue', edgecolor='black',
-                                label='Observed Displacements')
-    n, bins, patches_y = ax.hist(displacements_y, bins=50, density=True, 
+                                label='X Displacements')
+    n, bins, patches_y = ax.hist(displacements_y, bins=bins, density=True, 
                                 alpha=0.6, color='green', edgecolor='black',
-                                label='Observed Displacements')
+                                label='Y Displacements')
     
     # Gaussian fit parameters with errors
-    mu_x = stepsize_result_x['mean_x']
-    sigma_x = stepsize_result_x['sigma_x']
-    mu_y = stepsize_result_y['mean_x']
-    sigma_y = stepsize_result_y['sigma_x']
+    mu_x = fit_x['mu_nm'] / 1000.0
+    sigma_x = fit_x['sigma_nm'] / 1000.0
+    mu_y = fit_y['mu_nm'] / 1000.0
+    sigma_y = fit_y['sigma_nm'] / 1000.0
     
-    mu_err_x = stepsize_result_x['mean_err_x']
-    sigma_err_x = stepsize_result_x['sigma_err_x']
-    mu_err_y = stepsize_result_y['mean_err_x']
-    sigma_err_y = stepsize_result_y['sigma_err_x']
+    mu_err_x = 0.0
+    sigma_err_x = 0.0
+    mu_err_y = 0.0
+    sigma_err_y = 0.0
     
     x = np.linspace(min(displacements_x.min(),displacements_y.min()), max(displacements_x.max(), displacements_y.max()), 200)
     
@@ -170,19 +232,16 @@ def plot_stepsize_results(stepsize_result_x: Dict,stepsize_result_y: Dict,bins: 
     ax.fill_between(x, gaussian_lower_y, gaussian_upper_y, 
                     color='red', alpha=0.2, label='Fit Uncertainty (±1σ)')
     
-    D_x = stepsize_result_x['D_um2_per_s']
-    D_err_x = stepsize_result_x['D_error']
-    dt_x = stepsize_result_x['dt']
+    D_x = step_result['D_x_um2_per_s']
+    dt_x = step_result['dt_ms'] / 1000.0
 
-    D_y = stepsize_result_y['D_um2_per_s']
-    D_err_y = stepsize_result_y['D_error']
-    dt_y = stepsize_result_y['dt']
+    D_y = step_result['D_y_um2_per_s']
     
     ax.set_xlabel('Displacement (µm)', fontsize=12)
     ax.set_ylabel('Probability Density', fontsize=12)
-    ax.set_title(f'Step Size Analysis (Δt = {dt_x:.3f} s)\n'
-                f'D = {D_x:.4f} ± {D_err_x:.4f} µm²/s\n'
-                f'N = {stepsize_result_x["n_steps"]} steps', fontsize=14)
+    ax.set_title(f'Step Size Analysis (Δt = {dt_x:.3f} s)\\n'
+                f'D_x = {D_x:.4f} µm²/s, D_y = {D_y:.4f} µm²/s\\n'
+                f'N = {step_result["n_steps_x"]} steps', fontsize=14)
     ax.legend(fontsize=10, loc='best')
     ax.grid(True, alpha=0.3)
     
@@ -202,56 +261,47 @@ def plot_stepsize_results(stepsize_result_x: Dict,stepsize_result_y: Dict,bins: 
         print(f"  Step size plot saved: {save_path}")
 
 
-def plot_step_size_overlay(results_df: pd.DataFrame, save_path: Path) -> None:
+def plot_step_size_overlay(
+    results: Dict[str, Dict[str, Any]] | Iterable[Dict[str, Any]],
+    save_path: Path,
+    step_interval: int = 1,
+) -> None:
     """
     Create overlay histogram showing step size distributions for each individual file.
     
     Args:
-        results_df: DataFrame from analyze_all_files()
-        file_records.append({
-                'particle_size_nm': particle_size,
-                'xml_path': str(xml_file),
-                'xml_name': xml_file.name,
-                'x_max': x_max,
-                'y_max': y_max,
-                'exposure_ms': exposure_ms,
-                'delay_ms': delay_ms,
-                'fps': fps,
-                'mpp': mpp,
-                'mode': mode,
-            })
-
+        results: Iterable or dict of standardized result_dict entries
         save_path: Directory to save plot
+        step_interval: Unused when step_df already exists in fit_results_step
     """
     print("\nCreating step size overlay plot (individual files)...")
     
     fig, ax = plt.subplots(figsize=(14, 10))
     
     # Color map for different files
-    n_files = len(results_df)
+    results_list = _normalize_results(results)
+    n_files = len(results_list)
     colors = plt.cm.tab20(np.linspace(0, 1, min(n_files, 20)))
     
-    for idx, (_, row) in enumerate(results_df.iterrows()):
-        xml_path = Path(row['xml_path'])
-        particle_size = row['particle_size_nm']
-        
-        # Load and calculate step sizes for this file
-        df = read_trackmate_xml(xml_path)
-        if df is None:
-            continue
-            
-        step_df = calculate_step_sizes(df, step_interval=STEP_INTERVAL)
-        if step_df.empty:
+    for idx, result in enumerate(results_list):
+        mpp = result.get('mpp')
+        particle_size = result.get('particle_size_nm')
+        base_name = result.get('base_name', 'unknown')
+
+        step_result = result.get('fit_results_step')
+        step_df = step_result.get('step_df') if step_result else None
+        if step_df is None or step_df.empty or mpp is None:
             continue
             
         # Calculate Euclidean step sizes from dx and dy for visualization
-        dx_nm = step_df['dx'].values * row['mpp'] * 1000.0  # Convert to nm
-        dy_nm = step_df['dy'].values * row['mpp'] * 1000.0  # Convert to nm
+        dx_nm = step_df['dx'].values * mpp * 1000.0  # Convert to nm
+        dy_nm = step_df['dy'].values * mpp * 1000.0  # Convert to nm
         steps_nm = np.sqrt(dx_nm**2 + dy_nm**2)
         
         # Plot histogram with transparency
         color = colors[idx % len(colors)]
-        label = f"{particle_size:.0f} nm - {row['xml_name'][:30]} (N={len(steps_nm)}, mean={np.mean(steps_nm):.1f} nm)"
+        size_label = f"{particle_size:.0f} nm" if particle_size is not None else "unknown size"
+        label = f"{size_label} - {base_name[:30]} (N={len(steps_nm)}, mean={np.mean(steps_nm):.1f} nm)"
         ax.hist(steps_nm, bins=60, alpha=0.4, color=color, edgecolor='black', linewidth=0.3,
                label=label)
     
@@ -267,268 +317,11 @@ def plot_step_size_overlay(results_df: pd.DataFrame, save_path: Path) -> None:
     
     print(f"[OK] Step size overlay plot saved to {save_path}")
 
-
-
-def plot_trajectories(tracks: pd.DataFrame, save_path: Path, max_tracks: int = 100, fading: bool = True):
-    """
-    Plot particle trajectories.
-    
-    Args:
-        tracks: Track DataFrame
-        save_path: Path to save PNG
-        max_tracks: Maximum number of tracks to plot
-        fading: Whether to apply fading effect to trajectories
-    """
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    unique_particles = tracks['particle'].unique()
-    n_plot = min(len(unique_particles), max_tracks)
-    if not fading:
-        for pid in unique_particles[:n_plot]:
-            track = tracks[tracks['particle'] == pid].sort_values('frame')
-            ax.plot(track['x'], track['y'], alpha=0.5, linewidth=1)
-    else:
-        for pid in unique_particles[:n_plot]:
-            track = tracks[tracks['particle'] == pid].sort_values('frame')
-            n_points = len(track)
-            for i in range(n_points - 1):
-                alpha = (i + 1) / n_points  # Fading effect
-                ax.plot(track['x'].values[i:i+2], track['y'].values[i:i+2], 
-                        color='blue', alpha=alpha, linewidth=3)
-    
-    ax.set_xlabel('X (pixels)', fontsize=12)
-    ax.set_ylabel('Y (pixels)', fontsize=12)
-    ax.set_title(f'Particle Trajectories (N={tracks["particle"].nunique()})', fontsize=14)
-    ax.grid(True, alpha=0.3)
-    ax.set_aspect('equal')
-    
-    fig.tight_layout()
-    plt.show()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"  Trajectory plot saved: {save_path}")
-
-def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
-    """
-    Plot measured vs theoretical diffusion coefficients.
-    
-    Args:
-        summary_df: DataFrame with results
-        save_path: Path to save plot
-    """
-    df = summary_df.dropna(subset=['particle_size_nm']).copy()
-    
-    if df.empty:
-        print("Cannot create theory comparison: no particle size data")
-        return
-    
-    # Calculate theoretical D for each particle size
-    df['D_theory'] = df['particle_size_nm'].apply(calculate_theoretical_diffusion)
-    
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    # Plot theoretical curve
-    sizes_range = np.logspace(np.log10(df['particle_size_nm'].min()), 
-                             np.log10(df['particle_size_nm'].max()), 100)
-    D_theory_range = [calculate_theoretical_diffusion(s) for s in sizes_range]
-    ax.plot(sizes_range, D_theory_range, 'k-', linewidth=2.5, 
-           label='Stokes-Einstein Theory', zorder=10)
-    
-    # Plot MSD measurements
-    if 'D_MSD_um2_per_s' in df.columns:
-        for size in df['particle_size_nm'].unique():
-            subset = df[df['particle_size_nm'] == size]
-            msd_vals = subset['D_MSD_um2_per_s'].dropna()
-            if len(msd_vals) > 0:
-                ax.scatter([size] * len(msd_vals), msd_vals, 
-                          s=150, alpha=0.6, marker='o', 
-                          edgecolors='blue', linewidths=2,
-                          facecolors='lightblue')
-    
-    # Plot step size measurements
-    if 'D_stepsize_um2_per_s' in df.columns:
-        for size in df['particle_size_nm'].unique():
-            subset = df[df['particle_size_nm'] == size]
-            step_vals = subset['D_stepsize_um2_per_s'].dropna()
-            if len(step_vals) > 0:
-                ax.scatter([size] * len(step_vals), step_vals,
-                          s=150, alpha=0.6, marker='^',
-                          edgecolors='red', linewidths=2,
-                          facecolors='lightcoral')
-    
-    # Create legend handles manually
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        Line2D([0], [0], color='k', linewidth=2.5, label='Stokes-Einstein Theory'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='lightblue',
-               markeredgecolor='blue', markersize=12, markeredgewidth=2, 
-               label='MSD Method', linestyle='None'),
-        Line2D([0], [0], marker='^', color='w', markerfacecolor='lightcoral',
-               markeredgecolor='red', markersize=12, markeredgewidth=2,
-               label='Step Size Method', linestyle='None')
-    ]
-    
-    ax.set_xlabel('Particle Size (nm)', fontsize=14)
-    ax.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=14)
-    ax.set_title('Measured vs Theoretical Diffusion Coefficients', 
-                fontsize=16, fontweight='bold')
-    ax.legend(handles=legend_elements, loc='best', fontsize=12)
-    ax.grid(True, alpha=0.3, which='both')
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-    
-    fig.tight_layout()
-    plt.show()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"Theory comparison plot saved: {save_path}")
-
-def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path):
-    """
-    Create boxplot comparing MSD and Step Size methods by particle size.
-    
-    Args:
-        summary_df: DataFrame with results from multiple files
-        save_path: Path to save comparison plot
-    """
-    if summary_df.empty or 'particle_size_nm' not in summary_df.columns:
-        print("Cannot create comparison plot: insufficient data")
-        return
-    
-    # Remove entries without particle size
-    df = summary_df.dropna(subset=['particle_size_nm']).copy()
-    
-    if df.empty:
-        print("Cannot create comparison plot: no particle size information found")
-        return
-    
-    # Get unique particle sizes
-    particle_sizes = sorted(df['particle_size_nm'].unique())
-    
-    # Prepare data for boxplot
-    msd_data = []
-    stepsize_data = []
-    labels = []
-    
-    for size in particle_sizes:
-        subset = df[df['particle_size_nm'] == size]
-        
-        # MSD data
-        if 'D_MSD_um2_per_s' in subset.columns:
-            msd_values = subset['D_MSD_um2_per_s'].dropna().values
-            if len(msd_values) > 0:
-                msd_data.append(msd_values)
-            else:
-                msd_data.append([])
-        else:
-            msd_data.append([])
-        
-        # Step size data
-        if 'D_stepsize_um2_per_s' in subset.columns:
-            step_values = subset['D_stepsize_um2_per_s'].dropna().values
-            if len(step_values) > 0:
-                stepsize_data.append(step_values)
-            else:
-                stepsize_data.append([])
-        else:
-            stepsize_data.append([])
-        
-        labels.append(f'{int(size)} nm')
-    
-    # Create figure with two subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    
-    # Plot 1: Boxplots side by side
-    x_pos = np.arange(len(particle_sizes))
-    width = 0.35
-    
-    # MSD boxplots
-    bp1 = ax1.boxplot(msd_data, positions=x_pos - width/2, widths=width*0.8,
-                      patch_artist=True,
-                      boxprops=dict(facecolor='lightblue', alpha=0.7),
-                      medianprops=dict(color='darkblue', linewidth=2),
-                      showfliers=True)
-    
-    # Step size boxplots
-    bp2 = ax1.boxplot(stepsize_data, positions=x_pos + width/2, widths=width*0.8,
-                      patch_artist=True,
-                      boxprops=dict(facecolor='lightcoral', alpha=0.7),
-                      medianprops=dict(color='darkred', linewidth=2),
-                      showfliers=True)
-    
-    # Set x-axis tick labels
-    ax1.set_xticks(x_pos)
-    ax1.set_xticklabels(labels)
-    
-    # Plot theoretical values as black X markers
-    theoretical_D = [calculate_theoretical_diffusion(size) for size in particle_sizes]
-    ax1.scatter(x_pos, theoretical_D, marker='x', s=200, linewidths=3,
-               color='black', zorder=10, label='Stokes-Einstein Theory')
-    
-    ax1.set_xlabel('Particle Size', fontsize=12)
-    ax1.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=12)
-    ax1.set_title('Diffusion Coefficient Comparison by Particle Size', fontsize=14, fontweight='bold')
-    
-    # Update legend to include theory
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        bp1["boxes"][0],
-        bp2["boxes"][0],
-        Line2D([0], [0], marker='x', color='black', linestyle='None', 
-               markersize=12, markeredgewidth=3, label='Theory')
-    ]
-    ax1.legend(legend_elements, ['MSD Method', 'Step Size Method', 'Stokes-Einstein Theory'], 
-              loc='upper right', fontsize=11)
-    ax1.grid(True, alpha=0.3, axis='y')
-    ax1.set_yscale('log')
-    
-    # Plot 2: Method agreement scatter plot
-    for size in particle_sizes:
-        subset = df[df['particle_size_nm'] == size]
-        
-        if 'D_MSD_um2_per_s' in subset.columns and 'D_stepsize_um2_per_s' in subset.columns:
-            msd_vals = subset['D_MSD_um2_per_s'].values
-            step_vals = subset['D_stepsize_um2_per_s'].values
-            
-            # Only plot where both values exist
-            mask = ~np.isnan(msd_vals) & ~np.isnan(step_vals)
-            if mask.sum() > 0:
-                ax2.scatter(msd_vals[mask], step_vals[mask], 
-                          s=100, alpha=0.6, label=f'{int(size)} nm',
-                          edgecolors='black', linewidths=1)
-    
-    # Add diagonal line (perfect agreement)
-    all_D = []
-    if 'D_MSD_um2_per_s' in df.columns:
-        all_D.extend(df['D_MSD_um2_per_s'].dropna().values)
-    if 'D_stepsize_um2_per_s' in df.columns:
-        all_D.extend(df['D_stepsize_um2_per_s'].dropna().values)
-    
-    if all_D:
-        lim_min = min(all_D) * 0.5
-        lim_max = max(all_D) * 2
-        ax2.plot([lim_min, lim_max], [lim_min, lim_max], 
-                'k--', linewidth=1.5, alpha=0.5, label='Perfect Agreement')
-        ax2.set_xlim(lim_min, lim_max)
-        ax2.set_ylim(lim_min, lim_max)
-    
-    ax2.set_xlabel('D from MSD (µm²/s)', fontsize=12)
-    ax2.set_ylabel('D from Step Size (µm²/s)', fontsize=12)
-    ax2.set_title('Method Agreement', fontsize=14, fontweight='bold')
-    ax2.legend(loc='best', fontsize=10)
-    ax2.grid(True, alpha=0.3)
-    ax2.set_xscale('log')
-    ax2.set_yscale('log')
-    ax2.set_aspect('equal')
-    
-    fig.tight_layout()
-    plt.show()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"Comparison plot saved: {save_path}")
-
-
-def plot_dx_dy_distributions(results_df: pd.DataFrame, save_path: Path = None) -> None:
+def plot_dx_dy_distributions(
+    results: Dict[str, Dict[str, Any]] | Iterable[Dict[str, Any]],
+    save_path: Path = None,
+    step_interval: int = 1,
+) -> None:
     """
     Create histograms of dx and dy step component distributions for each individual file.
     
@@ -536,27 +329,25 @@ def plot_dx_dy_distributions(results_df: pd.DataFrame, save_path: Path = None) -
     centered around zero for isotropic Brownian motion.
     
     Args:
-        results_df: DataFrame from analyze_all_files()
+        results: Iterable or dict of standardized result_dict entries
         save_path: Directory to save plots
+        step_interval: Unused when step_df already exists in fit_results_step
     """
     print("\nCreating individual file dx/dy distribution plots...")
     
-    for idx, (_, row) in enumerate(results_df.iterrows()):
-        xml_path = Path(row['xml_path'])
-        particle_size = row['particle_size_nm']
-        xml_name = row['xml_name']
-        
-        # Load and calculate step components for this file
-        df = read_trackmate_xml(xml_path)
-        if df is None:
+    results_list = _normalize_results(results)
+    for result in results_list:
+        mpp = result.get('mpp')
+        particle_size = result.get('particle_size_nm')
+        xml_name = result.get('base_name', 'unknown')
+
+        step_result = result.get('fit_results_step')
+        step_df = step_result.get('step_df') if step_result else None
+        if step_df is None or step_df.empty or mpp is None:
             continue
             
-        step_df = calculate_step_sizes(df, step_interval=STEP_INTERVAL)
-        if step_df.empty:
-            continue
-            
-        all_dx = step_df['dx'].values * row['mpp'] * 1000.0  # Convert to nm
-        all_dy = step_df['dy'].values * row['mpp'] * 1000.0  # Convert to nm
+        all_dx = step_df['dx'].values * mpp * 1000.0  # Convert to nm
+        all_dy = step_df['dy'].values * mpp * 1000.0  # Convert to nm
         
         # Create figure with 3 subplots: dx, dy, and 2D histogram
         fig, axes = plt.subplots(2, 2, figsize=(14, 12))
@@ -629,7 +420,8 @@ def plot_dx_dy_distributions(results_df: pd.DataFrame, save_path: Path = None) -
         ax4.grid(True, alpha=0.3)
         
         # Overall title
-        fig.suptitle(f'Displacement Component Analysis - {particle_size:.0f} nm\n{xml_name}\n'
+        size_label = f"{particle_size:.0f} nm" if particle_size is not None else "unknown size"
+        fig.suptitle(f'Displacement Component Analysis - {size_label}\n{xml_name}\n'
                     f'N = {len(all_dx)} steps, σ(dx) = {np.std(all_dx):.1f} nm, '
                     f'σ(dy) = {np.std(all_dy):.1f} nm',
                     fontsize=14, fontweight='bold')
@@ -638,10 +430,97 @@ def plot_dx_dy_distributions(results_df: pd.DataFrame, save_path: Path = None) -
         # Create safe filename from xml_name
         safe_filename = xml_name.replace('.xml', '').replace(' ', '_').replace('/', '_')
         if save_path is not None:
-            plt.savefig(save_path / f'water_dx_dy_dist_{particle_size:.0f}nm_{safe_filename}.png', dpi=300)
+            size_slug = f"{particle_size:.0f}nm" if particle_size is not None else "unknown"
+            plt.savefig(save_path / f'water_dx_dy_dist_{size_slug}_{safe_filename}.png', dpi=300)
             plt.close(fig)
     
     print(f"[OK] Individual file dx/dy distribution plots saved to {save_path}")
+
+
+def plot_1d_steps_and_gaussian_fit(
+    steps_px,
+    fit_1d: dict,
+    mpp_um_per_px: float,
+    bins: int = 60,
+    ax=None,
+):
+    steps_px = np.asarray(steps_px, dtype=float)
+    steps_nm = steps_px * mpp_um_per_px * 1000.0
+
+    mu = float(fit_1d.get("mu_nm", np.nan))
+    sigma = float(fit_1d.get("sigma_nm", np.nan))
+    D = float(fit_1d.get("D_um2_per_s", np.nan))
+    axis = str(fit_1d.get("axis", ""))
+
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    ax.hist(steps_nm, bins=bins, density=True, alpha=0.6)
+
+    if np.isfinite(mu) and np.isfinite(sigma) and sigma > 0:
+        x = np.linspace(np.nanmin(steps_nm), np.nanmax(steps_nm), 400)
+        ax.plot(x, stats.norm.pdf(x, loc=mu, scale=sigma))
+
+    ax.set_xlabel(f"step size {axis} (nm)")
+    ax.set_ylabel("density")
+    ax.set_title(f"{axis}: D = {D:.4g} µm²/s")
+
+    return ax
+
+
+def plot_overlaid_xy_hist_and_fits(
+    steps_x_px,
+    fit_x: dict,
+    steps_y_px,
+    fit_y: dict,
+    mpp_um_per_px: float,
+    bins: int = 60,
+    ax=None,
+):
+    steps_x_px = np.asarray(steps_x_px, dtype=float)
+    steps_y_px = np.asarray(steps_y_px, dtype=float)
+    steps_x_nm = steps_x_px * mpp_um_per_px * 1000.0
+    steps_y_nm = steps_y_px * mpp_um_per_px * 1000.0
+
+    mux, sx = float(fit_x.get("mu_nm", np.nan)), float(fit_x.get("sigma_nm", np.nan))
+    muy, sy = float(fit_y.get("mu_nm", np.nan)), float(fit_y.get("sigma_nm", np.nan))
+    Dx, Dy = float(fit_x.get("D_um2_per_s", np.nan)), float(fit_y.get("D_um2_per_s", np.nan))
+
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    lo = np.nanmin([np.nanmin(steps_x_nm), np.nanmin(steps_y_nm)])
+    hi = np.nanmax([np.nanmax(steps_x_nm), np.nanmax(steps_y_nm)])
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
+        lo, hi = -1.0, 1.0
+
+    ax.hist(steps_x_nm, bins=bins, range=(lo, hi), density=True, alpha=0.45, label=f"x (D={Dx:.4g})")
+    ax.hist(steps_y_nm, bins=bins, range=(lo, hi), density=True, alpha=0.45, label=f"y (D={Dy:.4g})")
+
+    x = np.linspace(lo, hi, 500)
+    if np.isfinite(mux) and np.isfinite(sx) and sx > 0:
+        ax.plot(x, stats.norm.pdf(x, loc=mux, scale=sx))
+    if np.isfinite(muy) and np.isfinite(sy) and sy > 0:
+        ax.plot(x, stats.norm.pdf(x, loc=muy, scale=sy))
+
+    ax.set_xlabel("step size (nm)")
+    ax.set_ylabel("density")
+    ax.legend()
+    return ax
+
+
+
+
+# ============================================================================
+# VISUALIZATION Final Plots
+# ============================================================================
+
+
+
+# ============================================================================
+# VISUALIZATION Comparision MSD Vs StepSize 
+# ============================================================================
+
 
 def plot_diffusion_comparison(combined_df: pd.DataFrame, results_df: pd.DataFrame, save_path: Path = None) -> None:
     """
@@ -767,3 +646,84 @@ def plot_diffusion_comparison(combined_df: pd.DataFrame, results_df: pd.DataFram
         print(f"\n✓ Comparison plot saved to: {save_path / 'diffusion_comparison_stepsize_individual.png'}")
         
         plt.close(fig)
+
+
+def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
+    """
+    Plot measured vs theoretical diffusion coefficients.
+    
+    Args:
+        summary_df: DataFrame with results
+        save_path: Path to save plot
+    """
+    df = summary_df.dropna(subset=['particle_size_nm']).copy()
+    
+    if df.empty:
+        print("Cannot create theory comparison: no particle size data")
+        return
+    
+    # Calculate theoretical D for each particle size
+    df['D_theory'] = df['particle_size_nm'].apply(calculate_theoretical_diffusion)
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Plot theoretical curve
+    sizes_range = np.logspace(np.log10(df['particle_size_nm'].min()), 
+                             np.log10(df['particle_size_nm'].max()), 100)
+    D_theory_range = [calculate_theoretical_diffusion(s) for s in sizes_range]
+    ax.plot(sizes_range, D_theory_range, 'k-', linewidth=2.5, 
+           label='Stokes-Einstein Theory', zorder=10)
+    
+    # Plot MSD measurements
+    if 'D_MSD_um2_per_s' in df.columns:
+        for size in df['particle_size_nm'].unique():
+            subset = df[df['particle_size_nm'] == size]
+            msd_vals = subset['D_MSD_um2_per_s'].dropna()
+            if len(msd_vals) > 0:
+                ax.scatter([size] * len(msd_vals), msd_vals, 
+                          s=150, alpha=0.6, marker='o', 
+                          edgecolors='blue', linewidths=2,
+                          facecolors='lightblue')
+    
+    # Plot step size measurements
+    if 'D_stepsize_um2_per_s' in df.columns:
+        for size in df['particle_size_nm'].unique():
+            subset = df[df['particle_size_nm'] == size]
+            step_vals = subset['D_stepsize_um2_per_s'].dropna()
+            if len(step_vals) > 0:
+                ax.scatter([size] * len(step_vals), step_vals,
+                          s=150, alpha=0.6, marker='^',
+                          edgecolors='red', linewidths=2,
+                          facecolors='lightcoral')
+    
+    # Create legend handles manually
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='k', linewidth=2.5, label='Stokes-Einstein Theory'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='lightblue',
+               markeredgecolor='blue', markersize=12, markeredgewidth=2, 
+               label='MSD Method', linestyle='None'),
+        Line2D([0], [0], marker='^', color='w', markerfacecolor='lightcoral',
+               markeredgecolor='red', markersize=12, markeredgewidth=2,
+               label='Step Size Method', linestyle='None')
+    ]
+    
+    ax.set_xlabel('Particle Size (nm)', fontsize=14)
+    ax.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=14)
+    ax.set_title('Measured vs Theoretical Diffusion Coefficients', 
+                fontsize=16, fontweight='bold')
+    ax.legend(handles=legend_elements, loc='best', fontsize=12)
+    ax.grid(True, alpha=0.3, which='both')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    
+    fig.tight_layout()
+    plt.show()
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Theory comparison plot saved: {save_path}")
+
+
+# ============================================================================
+# VISUALIZATION All Particles Sizes
+# ============================================================================

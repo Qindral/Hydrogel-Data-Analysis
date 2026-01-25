@@ -8,16 +8,24 @@ from .io import (
     check_text_encoding,
     scan_xml_folder,
     build_datasets,
+    collect_files_from_list,
+    collect_all_files_by_particle_size,
+    single_file_data,
     compare_xml,
 )
 
 # Analysis functions
 from .analysis import (
-    compute_step_size_diffusion,
-    fit_gaussian_diffusion_stepsize,
+    calculate_step_sizes,
+    fit_gaussian_diffusion_1d,
+    diffusion_2d_from_1d_fits,
     fit_powerlaw_with_errors,
     perform_msd_analysis,
+    perform_stepsize_analysis,
     calculate_theoretical_diffusion,
+    analyze_multiple_files,
+    DEFAULT_MSD_FIT_POINTS,
+    DEFAULT_STEP_INTERVAL,
 )
 
 # Visualization functions
@@ -27,6 +35,8 @@ from .visualization import (
     plot_trajectories,
     plot_theory_comparison,
     plot_diffusion_comparison,
+    plot_step_size_overlay,
+    plot_dx_dy_distributions,
 )
 
 __all__ = [
@@ -37,15 +47,22 @@ __all__ = [
     'check_text_encoding',
     'scan_xml_folder',
     'build_datasets',
+    'collect_files_from_list',
+    'collect_all_files_by_particle_size',
+    'single_file_data',
     'compare_xml',
     
     # Analysis functions
-    'compute_step_size_diffusion',
-    'fit_gaussian_diffusion_stepsize',
-    'compute_theoretical_diffusion',
+    'calculate_step_sizes',
+    'fit_gaussian_diffusion_1d',
+    'diffusion_2d_from_1d_fits',
     'fit_powerlaw_with_errors',
     'perform_msd_analysis',
+    'perform_stepsize_analysis',
     'calculate_theoretical_diffusion',
+    'analyze_multiple_files',
+    'DEFAULT_MSD_FIT_POINTS',
+    'DEFAULT_STEP_INTERVAL',
     
     # Visualization functions
     'plot_msd_results',
@@ -53,7 +70,7 @@ __all__ = [
     'plot_trajectories',
     'plot_theory_comparison',
     'plot_diffusion_comparison',
-    'compute_step_size_diffusion',
-    'compute_theoretical_diffusion',
+    'plot_step_size_overlay',
+    'plot_dx_dy_distributions',
 ]
 
