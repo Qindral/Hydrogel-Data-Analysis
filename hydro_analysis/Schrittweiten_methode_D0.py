@@ -48,7 +48,7 @@ XML_FOLDERS = {
 
 SAVE_PATH = None                 # show plots only
 STEP_INTERVAL = DEFAULT_STEP_INTERVAL
-VERBOSE = False
+VERBOSE = True
 
 
 def main() -> None:
@@ -146,7 +146,16 @@ def main() -> None:
 
     # Final diffusion comparison plot
     plot_diffusion_comparison(combined_df, results_df, save_path=SAVE_PATH)
-
+    for particle_size, group in combined_df.groupby("particle_size_nm"):
+        row = group.iloc[0]
+        if VERBOSE:
+            print(f"Particle size: {particle_size} nm")
+            print(f"  • Measured D: {row['D_measured']:.4f} ± {row['D_measured_std']:.4f} µm²/s")
+            print(f"  • Theoretical D: {row['D_theoretical']:.4f} µm²/s")
+            print(f"  • Number of files: {row['num_files']}")
+            print(f"  • Total steps: {row['total_steps']}")
+            print(f"  • Total particles: {row['total_particles']}")
+            print("")
 
 if __name__ == "__main__":
     main()
