@@ -11,6 +11,7 @@ from skimage.feature import peak_local_max
 from skimage.measure import label, regionprops
 from scipy import ndimage as ndi
 import pandas as pd
+from core.io import extract_particle_size_from_path
 
 # falls du die Pixelgröße aus den FEI-Metadaten holen willst:
 # from read_fei_sem_metadata import summarize_sem_metadata
@@ -18,8 +19,7 @@ import pandas as pd
 # ============================================================================
 # PARTIKEL-GRÖSSENPARAMETER (in Nanometern - werden automatisch in Pixel umgerechnet)
 # ============================================================================
-EXPECTED_DIAM_NM_MIN = 225  # Minimale erwartete Partikelgröße in nm
-EXPECTED_DIAM_NM_MAX = 300  # Maximale erwartete Partikelgröße in nm
+
 
 # ============================================================================
 # FILTERPARAMETER
@@ -28,20 +28,20 @@ EXPECTED_DIAM_NM_MAX = 300  # Maximale erwartete Partikelgröße in nm
 # Manuelles Override möglich, wenn nicht None:
 GAUSSIAN_SIGMA_OVERRIDE = None  # Setze auf z.B. 7 für festen Wert, None für automatisch
 
-MIN_CIRCULARITY = 0.28
+MIN_CIRCULARITY = 0.22
 MAX_CIRCULARITY = 1
 MIN_INTENSITYMAX = 0.0  # max Intensität mindestens
 
 # Qualitätsfilter für Partikel-Fitting
-MIN_QUALITY_SCORE = 0.15  # Minimale Qualität des Profils (0-1)
-MIN_CENTER_QUALITY = 0.3  # Minimale Zentrierungsqualität (0-1)
+MIN_QUALITY_SCORE = 0.01  # Minimale Qualität des Profils (0-1)
+MIN_CENTER_QUALITY = 0.2  # Minimale Zentrierungsqualität (0-1)
 # MAX_CENTER_OFFSET_PX wird basierend auf Pixelgröße automatisch angepasst
-MAX_CENTER_OFFSET_NM = 50.0  # Maximale Abweichung des Zentrums in nm (wird zu Pixel umgerechnet)
-MAX_RADIUS_CHANGE_FACTOR = 0.7  # Maximale relative Änderung des Radius (z.B. 0.7 = 70%)
+MAX_CENTER_OFFSET_NM = 20.0  # Maximale Abweichung des Zentrums in nm (wird zu Pixel umgerechnet)
+MAX_RADIUS_CHANGE_FACTOR = 0.4  # Maximale relative Änderung des Radius (z.B. 0.7 = 70%)
 
 # Faktoren für Bereichsberechnung (können angepasst werden)
-MIN_AREA_FACTOR = 3.0  # Faktor für minimale Fläche: factor * π * (min_radius)^2
-MAX_AREA_FACTOR = 4.0  # Faktor für maximale Fläche: factor * π * (max_radius)^2
+MIN_AREA_FACTOR = .85  # Faktor für minimale Fläche: factor * π * (min_radius)^2
+MAX_AREA_FACTOR = 1.1  # Faktor für maximale Fläche: factor * π * (max_radius)^2
 
 # Debug-Modus: Zeigt an, warum Partikel herausgefiltert werden
 DEBUG_FILTERING = True
@@ -621,7 +621,7 @@ def segment_particles_watershed(tif_path):
             })
         else:
             # Detaillierte Plots für größere Partikel (>= 120 nm)
-            if False :  # Nur für das erste große Partikel
+            if True :  # Nur für das erste große Partikel
                 # Erstelle eine Figur mit zwei Subplots: Profil + Bildausschnitt
                 fig = plt.figure(figsize=(14, 6))
                 
@@ -879,7 +879,15 @@ if __name__ == "__main__":
     paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\100 nm\100nm_T2_03.tif"
     # paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\100 nm\100nm_T2_04.tif"
     paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\500 nm\500nm_T2_01.tif"
-    paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\500 nm\500nm_T2_02.tif"
+    paths = r"D:\SEM\2025_12-17\50nm_T2_03.tif"
+    paths = r"D:\SEM\2025_12-17\20nm_T2_02.tif"
+    paths = r"D:\SEM\2025_12-17\500nm_T1_04.tif"
+
+        
+    particle_nm = extract_particle_size_from_path(Path(paths))
+
+    EXPECTED_DIAM_NM_MIN = particle_nm *0.6  # Minimale erwartete Partikelgröße in nm
+    EXPECTED_DIAM_NM_MAX = particle_nm*1.5 # Maximale erwartete Partikelgröße in nm
 
     segment_particles_watershed(paths)  # Pfad anpassen
 

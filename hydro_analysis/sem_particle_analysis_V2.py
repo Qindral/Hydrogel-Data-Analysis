@@ -344,5 +344,5 @@ def analyze_sem_particles(tif_path: str | Path):
 
 if __name__ == "__main__":
     # HIER deinen Datei-Pfad einsetzen:
-    tif_file = r"Z:\Diffusion in Hydrogel Data\SEM Particles\100 nm\100nm_T1_03.tif"
+    tif_file = r"D:\SEM\2025_12-17\50nm_T2_03.tif"
     analyze_sem_particles(tif_file)

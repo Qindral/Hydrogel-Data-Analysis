@@ -73,6 +73,7 @@ def main() -> None:
             "base_name": r["base_name"],
             "particle_size_nm": r.get("particle_size_nm"),
             "D_MSD_um2_per_s": r.get("D_MSD"),
+            "weight": weight,
         })
 
     summary_df = pd.DataFrame(rows)
