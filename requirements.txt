@@ -15,7 +15,7 @@ tifffile>=2023.0.0
 Pillow>=10.0.0
 opencv-python>=4.8.0
 scikit-image>=0.21.0
-
+ttf-opensans
 # Optional: GUI packages
 magicgui>=0.7.0
 qtpy>=2.3.0

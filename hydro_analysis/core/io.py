@@ -213,28 +213,48 @@ def check_text_encoding(path: Path) -> str:
 
 def extract_particle_size_from_path(folder_path: Path) -> Optional[float]:
     """
-    Extract particle size (in nm) from folder name.
-    
-    Supports various naming formats:
-    - "50nm"
-    - "100_nm" 
-    - "200 nm"
-    
+    Extract particle size (in nm) from path (file name or folder).
+
+    Priority order:
+    1. If path is a file: check filename first
+    2. Then check parent folder name
+    3. Then check parent's parent folder name
+
+    Supports naming formats:
+    - "50nm", "100_nm", "200 nm"
+    - Prioritizes standard sizes: 1000, 500, 200, 100, 50, 20 nm
+
     Args:
-        folder_path: Path object of the folder
+        folder_path: Path object (file or folder)
         
     Returns:
         Particle size in nanometers, or None if not found
     """
-    candidates = [folder_path.name]
-    if folder_path.suffix:
-        candidates.append(folder_path.parent.name)
-        candidates.append(folder_path.parent.parent.name)
+    # Build candidate list: start with current path, then walk up parents
+    candidates = []
+    if folder_path.is_file():
+        # For files: filename → parent → grandparent
+        candidates.append(folder_path.stem)  # filename without extension
+
     else:
+        # For folders: folder name → parent → grandparent
+        candidates.append(folder_path.name)
         candidates.append(folder_path.parent.name)
+        if folder_path.parent.parent != folder_path.parent:
+            candidates.append(folder_path.parent.parent.name)
+
+    # Standard particle sizes in descending order
+    standard_sizes = [1000, 500, 200, 100, 50, 20]
 
     for name in candidates:
-        match = re.search(r'(\d+)\s*nm', name, re.IGNORECASE)
+        # Try exact matches with standard sizes first
+        for size in standard_sizes:
+            pattern = rf'\b{size}\b'
+            if re.search(pattern, name, re.IGNORECASE):
+                return float(size)
+        
+        # Fallback: generic number extraction
+        match = re.search(r'(\d+)', name)
         if match:
             return float(match.group(1))
 

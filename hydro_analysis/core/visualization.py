@@ -522,206 +522,391 @@ def plot_overlaid_xy_hist_and_fits(
 # ============================================================================
 
 
-def plot_diffusion_comparison(combined_df: pd.DataFrame, results_df: pd.DataFrame, save_path: Path = None) -> None:
+def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path = None) -> None:
     """
     Create comparison plot of measured vs theoretical diffusion coefficients.
-    Shows individual files discretely with their uncertainties.
-    
+    Shows individual measurements and averages with error bars.
+    Follows the project style guide with logarithmic axes.
+
+    Uses the same input format as plot_theory_comparison for consistency.
+
     Args:
-        combined_df: DataFrame from combine_by_particle_size()
-        results_df: DataFrame from analyze_all_files() with individual file results
-        save_path: Directory to save plot
+        summary_df: DataFrame with columns: particle_size_nm, D_MSD_um2_per_s, weight
+        save_path: Directory to save plot (optional)
     """
-    # DLS measurements in µm²/s (converted from original nm²/ms values)
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import FixedLocator, FixedFormatter
+
+    # Style guide colors (Jet-derived palette)
+    COLOR_MEASURED_BASE = '#0000da'   # Index 1 base (blue)
+    COLOR_MEASURED_DARK = '#000099'   # Index 1 dark
+    COLOR_DLS = '#da00bd'             # Markierung A base (magenta)
+    COLOR_DLS_DARK = '#9b5191'        # Markierung A bright
+    COLOR_THEORY = 'black'
+
+    # DLS measurements in µm²/s
     DLS_MEASUREMENTS = {
-        20: 12.38750325 * 1e3 / 1000.0,   # nm²/ms -> µm²/s
-        50: 8.201969711 * 1e3 / 1000.0,
-        100: 4.139082033 * 1e3 / 1000.0,
-        200: 1.745323167 * 1e3 / 1000.0,
-        500: 0.621773811 * 1e3 / 1000.0,
-        1000: 0.356862091 * 1e3 / 1000.0
+        20: 12.38750325,
+        50: 8.201969711,
+        100: 4.139082033,
+        200: 1.745323167,
+        500: 0.621773811,
+        1000: 0.356862091,
     }
-    
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    particle_sizes = combined_df['particle_size_nm'].values
-    measured_D = combined_df['D_measured'].values
-    measured_D_err = combined_df['D_measured_std'].values
-    theoretical_D = combined_df['D_theoretical'].values
-    
-    # Color palette for different particle sizes
-    colors_by_size = plt.cm.tab10(np.linspace(0, 1, len(particle_sizes)))
-    size_to_color = dict(zip(particle_sizes, colors_by_size))
-    
-    # Plot individual files with small horizontal offset for visibility
-    # Use different markers for different FPS modes and gray out bad quality fits
-    offset_scale = 0.15  # Adjust this to control horizontal spread
-    for idx, file_data in results_df.iterrows():
-        size = file_data['particle_size_nm']
-        D = file_data['D']
-        D_err = file_data['D_std']
-        mode = file_data.get('mode', 'Unknown')
-        quality = file_data.get('quality_flag', 'unknown')
-        
-        # Different markers for different FPS modes
-        if mode == '60 FPS':
-            marker = '^'  # Triangle up for 60 FPS
-            base_alpha = 0.8
-        elif mode == '20 FPS':
-            marker = 's'  # Square for 20 FPS
-            base_alpha = 0.7
-        else:
-            marker = 'o'  # Circle for unknown
-            base_alpha = 0.6
-        
-        # Gray out bad quality fits
-        if quality != 'good':
-            color = 'gray'
-            alpha = 0.3
-            linewidth = 1.0
-        else:
-            color = size_to_color[size]
-            alpha = base_alpha
-            linewidth = 1.5
-        
-        # Calculate how many files we have for this size and create offset
-        size_files = results_df[results_df['particle_size_nm'] == size]
-        file_index = list(size_files.index).index(idx)
-        num_files = len(size_files)
-        
-        # Center the offsets around the nominal size
-        if num_files > 1:
-            offset = (file_index - (num_files - 1) / 2) * (size * offset_scale / num_files)
-        else:
-            offset = 0
-        
-        x_pos = size + offset
-        
-        # Plot individual file with error bar
-        ax.errorbar(x_pos, D, yerr=D_err, fmt=marker, 
-                   markersize=7, color=color, 
-                   ecolor=color, elinewidth=linewidth, 
-                   capsize=3, capthick=linewidth, alpha=alpha)
-    
-    # Add custom legend entries for different FPS modes and quality
-    ax.errorbar([], [], [], fmt='^', markersize=7, color='gray', 
-               ecolor='gray', elinewidth=1.5, capsize=3, capthick=1.5,
-               label='60 FPS (good quality)', alpha=0.8)
-    ax.errorbar([], [], [], fmt='s', markersize=7, color='gray', 
-               ecolor='gray', elinewidth=1.5, capsize=3, capthick=1.5,
-               label='20 FPS (good quality)', alpha=0.7)
-    ax.errorbar([], [], [], fmt='o', markersize=7, color='gray', 
-               ecolor='gray', elinewidth=1.0, capsize=3, capthick=1.0,
-               label='Bad quality (grayed out)', alpha=0.3)
-    
-    # Plot mean values for each size (larger markers)
-    ax.errorbar(particle_sizes, measured_D, yerr=measured_D_err, fmt='D', 
-               markersize=10, color='blue', ecolor='black', elinewidth=2, 
-               capsize=5, capthick=2, label='Mean D per Size ± Std', zorder=5)
-    
-    # Plot theoretical values
-    ax.scatter(particle_sizes, theoretical_D, s=150, color='black', 
-              marker='x', linewidths=3, label='Theoretical D (Stokes-Einstein)', zorder=6)
-    
-    # Plot DLS values if available
-    dls_sizes = [s for s in particle_sizes if s in DLS_MEASUREMENTS]
+
+    df = summary_df.dropna(subset=['particle_size_nm']).copy()
+
+    if df.empty:
+        print("Cannot create diffusion comparison: no particle size data")
+        return
+
+    # Style guide: figure size (7.15, 5.00) inch, ratio 1.43:1
+    fig, ax = plt.subplots(figsize=(7.15, 5.00), constrained_layout=True)
+
+    # Apply style guide tick settings (slightly larger)
+    ax.tick_params(axis='both', which='major', direction='in', length=5.0,
+                   width=1.2, top=True, right=True, labelsize=10)
+    ax.tick_params(axis='both', which='minor', direction='in', length=2.5,
+                   width=1.0, top=True, right=True)
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.3)
+
+    # Determine data and axis range
+    all_sizes = df['particle_size_nm'].unique()
+    x_min, x_max = 15, 1500
+
+    # Plot theoretical curve (dashed line)
+    sizes_range = np.logspace(np.log10(x_min), np.log10(x_max), 100)
+    D_theory_range = [calculate_theoretical_diffusion(s) for s in sizes_range]
+    ax.plot(sizes_range, D_theory_range, color=COLOR_THEORY, linewidth=2.2,
+           linestyle='--', zorder=5)
+
+    # Plot theoretical points at standard sizes
+    theory_sizes = [20, 50, 100, 200, 500, 1000]
+    theory_D = [calculate_theoretical_diffusion(s) for s in theory_sizes]
+    ax.scatter(theory_sizes, theory_D, s=80, marker='x', c=COLOR_THEORY,
+              linewidths=2.0, zorder=6)
+
+    # Horizontal offset factor for log scale
+    offset_factor = 0.93
+
+    # Collect statistics for averages
+    msd_stats = []  # (size, mean, std, n_particles)
+
+    # Plot MSD individual measurements and collect stats
+    if 'D_MSD_um2_per_s' in df.columns:
+        for size in sorted(df['particle_size_nm'].unique()):
+            subset = df[df['particle_size_nm'] == size]
+            # Get rows with valid D values
+            valid_subset = subset.dropna(subset=['D_MSD_um2_per_s'])
+            msd_vals = valid_subset['D_MSD_um2_per_s'].values
+            if len(msd_vals) > 0:
+                x_offset = size * offset_factor
+                # Individual: larger markers, alpha 0.6
+                ax.scatter([x_offset] * len(msd_vals), msd_vals,
+                          s=50, alpha=0.6, marker='o',
+                          facecolors=COLOR_MEASURED_BASE, edgecolors='none',
+                          zorder=2)
+                # Sum particle counts (weights) - use valid_subset to match D values
+                if 'weight' in valid_subset.columns:
+                    weights = valid_subset['weight'].fillna(0).values
+                    n_particles = int(np.sum(weights))
+                else:
+                    n_particles = len(msd_vals)
+                msd_stats.append((size, np.mean(msd_vals), np.std(msd_vals), n_particles))
+
+    # Plot MSD averages with error bars
+    if msd_stats:
+        sizes_msd = [s[0] * offset_factor for s in msd_stats]
+        means_msd = [s[1] for s in msd_stats]
+        stds_msd = [s[2] for s in msd_stats]
+        ax.errorbar(sizes_msd, means_msd, yerr=stds_msd,
+                   fmt='o', markersize=12, markerfacecolor=COLOR_MEASURED_BASE,
+                   markeredgecolor=COLOR_MEASURED_DARK, markeredgewidth=1.2,
+                   ecolor=COLOR_MEASURED_DARK, elinewidth=1.8, capsize=5.0, capthick=1.8,
+                   zorder=10, label='_nolegend_')
+
+    # Plot DLS reference values
+    dls_sizes = [s for s in all_sizes if s in DLS_MEASUREMENTS]
     dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
     if dls_sizes:
-        ax.scatter(dls_sizes, dls_D, s=150, color='red', marker='*', 
-                  linewidths=2, edgecolors='darkred', label='D from DLS', zorder=6)
-    
+        ax.scatter(dls_sizes, dls_D, s=150, marker='*',
+                  facecolors=COLOR_DLS, edgecolors=COLOR_DLS_DARK,
+                  linewidths=1.0, zorder=8)
+
+    # Create legend handles
+    legend_elements = [
+        Line2D([0], [0], color=COLOR_THEORY, linewidth=2.2, linestyle='--',
+               label='Stokes-Einstein Theory'),
+        Line2D([0], [0], marker='x', color=COLOR_THEORY, markersize=10,
+               markeredgewidth=2.0, label='Theoretical D', linestyle='None'),
+        Line2D([0], [0], marker='*', color='w', markerfacecolor=COLOR_DLS,
+               markeredgecolor=COLOR_DLS_DARK, markersize=14, markeredgewidth=1.0,
+               label='DLS Reference', linestyle='None'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor=COLOR_MEASURED_BASE,
+               markeredgecolor=COLOR_MEASURED_DARK, markersize=12, markeredgewidth=1.2,
+               label='MSD Mean (± SD)', linestyle='None'),
+        Line2D([0], [0], marker='o', color=COLOR_MEASURED_BASE, markersize=8, alpha=0.6,
+               label='MSD Individual', linestyle='None'),
+    ]
+
     ax.set_xscale('log')
     ax.set_yscale('log')
-    ax.set_xlabel('Particle size [nm]', fontsize=12)
-    ax.set_ylabel('Diffusion coefficient D [µm²/s]', fontsize=12)
-    ax.set_title('Diffusion Coefficients in water: Comparing two analysis methods\nStep Size Method vs Theory', 
-                fontsize=14, fontweight='bold')
-    ax.legend(fontsize=10, loc='best')
-    ax.grid(True, alpha=0.3, which='both')
-    
-    plt.tight_layout()
+    ax.set_xlim(x_min, x_max)
+
+    # Custom x-axis ticks at particle sizes
+    ax.xaxis.set_major_locator(FixedLocator([20, 50, 100, 200, 500, 1000]))
+    ax.xaxis.set_major_formatter(FixedFormatter(['20', '50', '100', '200', '500', '1000']))
+    ax.xaxis.set_minor_locator(FixedLocator([]))  # No minor ticks
+
+    # Axis labels (larger: 12pt)
+    ax.set_xlabel('Particle Size (nm)', fontsize=12)
+    ax.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=12)
+
+    # Title (style guide: 12pt, semibold)
+    ax.set_title('Diffusion Coefficients: MSD Method vs Theory',
+                fontsize=13, fontweight='semibold')
+
+    # Legend
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=10, frameon=False)
+
+    # Add sample size annotations (n = total trajectories)
+    for size, mean, std, n in msd_stats:
+        y_pos = mean / (1 + std / mean + 0.4) if mean > 0 and std > 0 else mean * 0.6
+        ax.annotate(f'n={n}', xy=(size * offset_factor, y_pos),
+                   fontsize=9, ha='center', va='top', color=COLOR_MEASURED_DARK)
+
     plt.show()
+
     if save_path is not None:
-        plt.savefig(save_path / 'diffusion_comparison_stepsize_individual.png', dpi=300)
-        print(f"\n✓ Comparison plot saved to: {save_path / 'diffusion_comparison_stepsize_individual.png'}")
-        
+        save_path.mkdir(parents=True, exist_ok=True)
+        # Save as PNG (style guide: 600 dpi)
+        png_path = save_path / 'diffusion_comparison_msd.png'
+        fig.savefig(png_path, dpi=600, bbox_inches='tight')
+
+        # Also save as PDF
+        pdf_path = save_path / 'diffusion_comparison_msd.pdf'
+        fig.savefig(pdf_path, bbox_inches='tight')
+
+        print(f"Diffusion comparison plot saved: {png_path}")
+        print(f"Diffusion comparison plot saved: {pdf_path}")
+
         plt.close(fig)
 
 
 def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
     """
     Plot measured vs theoretical diffusion coefficients.
-    
+
+    Shows individual measurements as small transparent markers and
+    averages with error bars (standard deviation) as larger prominent markers.
+    Includes DLS reference measurements and Stokes-Einstein theory curve.
+    Follows the project style guide with logarithmic axes.
+
     Args:
-        summary_df: DataFrame with results
+        summary_df: DataFrame with results (columns: particle_size_nm, D_MSD_um2_per_s, weight)
         save_path: Path to save plot
     """
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import FixedLocator, FixedFormatter
+
+    # Style guide colors (Jet-derived palette)
+    COLOR_MSD_BASE = '#0000da'       # Index 1 base (blue)
+    COLOR_MSD_DARK = '#000099'       # Index 1 dark
+    COLOR_STEP_BASE = '#da0000'      # Index 8 base (red)
+    COLOR_STEP_DARK = '#990000'      # Index 8 dark
+    COLOR_DLS = '#da00bd'            # Markierung A base (magenta)
+    COLOR_DLS_DARK = '#9b5191'       # Markierung A bright
+    COLOR_THEORY = 'black'
+
+    # DLS measurements in µm²/s (reference values)
+    DLS_MEASUREMENTS = {
+        20: 12.38750325,
+        50: 8.201969711,
+        100: 4.139082033,
+        200: 1.745323167,
+        500: 0.621773811,
+        1000: 0.356862091,
+    }
+
     df = summary_df.dropna(subset=['particle_size_nm']).copy()
-    
+
     if df.empty:
         print("Cannot create theory comparison: no particle size data")
         return
-    
+
     # Calculate theoretical D for each particle size
     df['D_theory'] = df['particle_size_nm'].apply(calculate_theoretical_diffusion)
-    
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    # Plot theoretical curve
-    sizes_range = np.logspace(np.log10(df['particle_size_nm'].min()), 
-                             np.log10(df['particle_size_nm'].max()), 100)
+
+    # Style guide: figure size (7.15, 5.00) inch, ratio 1.43:1
+    fig, ax = plt.subplots(figsize=(7.15, 5.00), constrained_layout=True)
+
+    # Apply style guide tick settings (slightly larger)
+    ax.tick_params(axis='both', which='major', direction='in', length=5.0,
+                   width=1.2, top=True, right=True, labelsize=10)
+    ax.tick_params(axis='both', which='minor', direction='in', length=2.5,
+                   width=1.0, top=True, right=True)
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.3)
+
+    # Axis range
+    x_min, x_max = 15, 1500
+
+    # Plot theoretical curve (dashed line)
+    sizes_range = np.logspace(np.log10(x_min), np.log10(x_max), 100)
     D_theory_range = [calculate_theoretical_diffusion(s) for s in sizes_range]
-    ax.plot(sizes_range, D_theory_range, 'k-', linewidth=2.5, 
-           label='Stokes-Einstein Theory', zorder=10)
-    
-    # Plot MSD measurements
+    ax.plot(sizes_range, D_theory_range, color=COLOR_THEORY, linewidth=2.2,
+           linestyle='--', label='Stokes-Einstein Theory', zorder=5)
+
+    # Horizontal offset factor for better visibility (multiplicative for log scale)
+    offset_factor = 0.90  # MSD slightly left
+    offset_factor_right = 1.10  # Step size slightly right
+
+    # Collect statistics for averages
+    msd_stats = []  # (size, mean, std, n_particles)
+    step_stats = []
+
+    # Plot MSD individual measurements and collect stats
     if 'D_MSD_um2_per_s' in df.columns:
-        for size in df['particle_size_nm'].unique():
+        for size in sorted(df['particle_size_nm'].unique()):
             subset = df[df['particle_size_nm'] == size]
-            msd_vals = subset['D_MSD_um2_per_s'].dropna()
+            valid_subset = subset.dropna(subset=['D_MSD_um2_per_s'])
+            msd_vals = valid_subset['D_MSD_um2_per_s'].values
             if len(msd_vals) > 0:
-                ax.scatter([size] * len(msd_vals), msd_vals, 
-                          s=150, alpha=0.6, marker='o', 
-                          edgecolors='blue', linewidths=2,
-                          facecolors='lightblue')
-    
-    # Plot step size measurements
+                x_offset = size * offset_factor
+                # Individual: larger markers, alpha 0.6
+                ax.scatter([x_offset] * len(msd_vals), msd_vals,
+                          s=50, alpha=0.6, marker='o',
+                          facecolors=COLOR_MSD_BASE, edgecolors='none',
+                          zorder=2)
+                # Sum particle counts (weights) - use fillna to handle NaN
+                if 'weight' in valid_subset.columns:
+                    n_particles = int(valid_subset['weight'].fillna(0).sum())
+                else:
+                    n_particles = len(msd_vals)
+                msd_stats.append((size, np.mean(msd_vals), np.std(msd_vals), n_particles))
+
+    # Plot step size individual measurements and collect stats
     if 'D_stepsize_um2_per_s' in df.columns:
-        for size in df['particle_size_nm'].unique():
+        for size in sorted(df['particle_size_nm'].unique()):
             subset = df[df['particle_size_nm'] == size]
-            step_vals = subset['D_stepsize_um2_per_s'].dropna()
+            valid_subset = subset.dropna(subset=['D_stepsize_um2_per_s'])
+            step_vals = valid_subset['D_stepsize_um2_per_s'].values
             if len(step_vals) > 0:
-                ax.scatter([size] * len(step_vals), step_vals,
-                          s=150, alpha=0.6, marker='^',
-                          edgecolors='red', linewidths=2,
-                          facecolors='lightcoral')
-    
-    # Create legend handles manually
-    from matplotlib.lines import Line2D
+                x_offset = size * offset_factor_right
+                # Individual: larger markers, alpha 0.6
+                ax.scatter([x_offset] * len(step_vals), step_vals,
+                          s=50, alpha=0.6, marker='s',
+                          facecolors=COLOR_STEP_BASE, edgecolors='none',
+                          zorder=2)
+                # Sum particle counts (weights) - use fillna to handle NaN
+                if 'weight' in valid_subset.columns:
+                    n_particles = int(valid_subset['weight'].fillna(0).sum())
+                else:
+                    n_particles = len(step_vals)
+                step_stats.append((size, np.mean(step_vals), np.std(step_vals), n_particles))
+
+    # Plot MSD averages with error bars
+    if msd_stats:
+        sizes_msd = [s[0] * offset_factor for s in msd_stats]
+        means_msd = [s[1] for s in msd_stats]
+        stds_msd = [s[2] for s in msd_stats]
+        ax.errorbar(sizes_msd, means_msd, yerr=stds_msd,
+                   fmt='o', markersize=12, markerfacecolor=COLOR_MSD_BASE,
+                   markeredgecolor=COLOR_MSD_DARK, markeredgewidth=1.2,
+                   ecolor=COLOR_MSD_DARK, elinewidth=1.8, capsize=5.0, capthick=1.8,
+                   zorder=10, label='_nolegend_')
+
+    # Plot step size averages with error bars
+    if step_stats:
+        sizes_step = [s[0] * offset_factor_right for s in step_stats]
+        means_step = [s[1] for s in step_stats]
+        stds_step = [s[2] for s in step_stats]
+        ax.errorbar(sizes_step, means_step, yerr=stds_step,
+                   fmt='s', markersize=12, markerfacecolor=COLOR_STEP_BASE,
+                   markeredgecolor=COLOR_STEP_DARK, markeredgewidth=1.2,
+                   ecolor=COLOR_STEP_DARK, elinewidth=1.8, capsize=5.0, capthick=1.8,
+                   zorder=10, label='_nolegend_')
+
+    # Plot DLS reference values for ALL standard sizes
+    standard_sizes = [20, 50, 100, 200, 500, 1000]
+    dls_sizes = [s for s in standard_sizes if s in DLS_MEASUREMENTS]
+    dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
+    if dls_sizes:
+        ax.scatter(dls_sizes, dls_D, s=150, marker='*',
+                  facecolors=COLOR_DLS, edgecolors=COLOR_DLS_DARK,
+                  linewidths=1.0, zorder=8)
+
+    # Plot theoretical points at ALL standard sizes
+    theory_sizes = standard_sizes
+    theory_D = [calculate_theoretical_diffusion(s) for s in theory_sizes]
+    ax.scatter(theory_sizes, theory_D, s=80, marker='x', c=COLOR_THEORY,
+              linewidths=2.0, zorder=6)
+
+    # Create legend handles (larger markers to match plot)
     legend_elements = [
-        Line2D([0], [0], color='k', linewidth=2.5, label='Stokes-Einstein Theory'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='lightblue',
-               markeredgecolor='blue', markersize=12, markeredgewidth=2, 
-               label='MSD Method', linestyle='None'),
-        Line2D([0], [0], marker='^', color='w', markerfacecolor='lightcoral',
-               markeredgecolor='red', markersize=12, markeredgewidth=2,
-               label='Step Size Method', linestyle='None')
+        Line2D([0], [0], color=COLOR_THEORY, linewidth=2.2, linestyle='--',
+               label='Stokes-Einstein Theory'),
+        Line2D([0], [0], marker='x', color=COLOR_THEORY, markersize=10,
+               markeredgewidth=2.0, label='Theoretical D', linestyle='None'),
+        Line2D([0], [0], marker='*', color='w', markerfacecolor=COLOR_DLS,
+               markeredgecolor=COLOR_DLS_DARK, markersize=14, markeredgewidth=1.0,
+               label='DLS Reference', linestyle='None'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor=COLOR_MSD_BASE,
+               markeredgecolor=COLOR_MSD_DARK, markersize=12, markeredgewidth=1.2,
+               label='MSD Method (Mean ± SD)', linestyle='None'),
+        Line2D([0], [0], marker='o', color=COLOR_MSD_BASE, markersize=8, alpha=0.6,
+               label='MSD Individual', linestyle='None'),
+        Line2D([0], [0], marker='s', color='w', markerfacecolor=COLOR_STEP_BASE,
+               markeredgecolor=COLOR_STEP_DARK, markersize=12, markeredgewidth=1.2,
+               label='Step Size Method (Mean ± SD)', linestyle='None'),
+        Line2D([0], [0], marker='s', color=COLOR_STEP_BASE, markersize=8, alpha=0.6,
+               label='Step Size Individual', linestyle='None'),
     ]
-    
-    ax.set_xlabel('Particle Size (nm)', fontsize=14)
-    ax.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=14)
-    ax.set_title('Measured vs Theoretical Diffusion Coefficients', 
-                fontsize=16, fontweight='bold')
-    ax.legend(handles=legend_elements, loc='best', fontsize=12)
-    ax.grid(True, alpha=0.3, which='both')
+
+    # Logarithmic scales
     ax.set_xscale('log')
     ax.set_yscale('log')
-    
-    fig.tight_layout()
+    ax.set_xlim(x_min, x_max)
+
+    # Custom x-axis ticks at particle sizes
+    ax.xaxis.set_major_locator(FixedLocator([20, 50, 100, 200, 500, 1000]))
+    ax.xaxis.set_major_formatter(FixedFormatter(['20', '50', '100', '200', '500', '1000']))
+    ax.xaxis.set_minor_locator(FixedLocator([]))  # No minor ticks
+
+    # Axis labels (larger: 12pt)
+    ax.set_xlabel('Particle Size (nm)', fontsize=12)
+    ax.set_ylabel('Diffusion Coefficient (µm²/s)', fontsize=12)
+
+    # Title (style guide: 13pt, semibold)
+    ax.set_title('Measured vs Theoretical Diffusion Coefficients',
+                fontsize=13, fontweight='semibold')
+
+    # Legend
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=10, frameon=False)
+
+    # Add sample size annotations (n = total trajectories)
+    for size, mean, std, n in msd_stats:
+        y_pos = mean / (1 + std / mean + 0.4) if mean > 0 and std > 0 else mean * 0.6
+        ax.annotate(f'n={n}', xy=(size * offset_factor, y_pos),
+                   fontsize=9, ha='center', va='top', color=COLOR_MSD_DARK)
+    for size, mean, std, n in step_stats:
+        y_pos = mean / (1 + std / mean + 0.4) if mean > 0 and std > 0 else mean * 0.6
+        ax.annotate(f'n={n}', xy=(size * offset_factor_right, y_pos),
+                   fontsize=9, ha='center', va='top', color=COLOR_STEP_DARK)
+
     plt.show()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    # Save as PNG (style guide: 600 dpi)
+    fig.savefig(save_path, dpi=600, bbox_inches='tight')
+
+    # Also save as PDF (vector format for publication)
+    pdf_path = save_path.with_suffix('.pdf')
+    fig.savefig(pdf_path, bbox_inches='tight')
+
     plt.close(fig)
     print(f"Theory comparison plot saved: {save_path}")
+    print(f"Theory comparison plot saved: {pdf_path}")
 
 
 # ============================================================================

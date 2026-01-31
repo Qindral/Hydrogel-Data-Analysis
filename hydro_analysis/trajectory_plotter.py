@@ -3,23 +3,43 @@ Trajectory Plotter
 
 - Find 500 nm XML inside Tracks/ folders
 - Load XML + REC + TIFF via core.io
-- Show frame 79 with tracks colored by D
+- Show frame with tracks colored by D
 """
 
 from pathlib import Path
 from typing import Optional
-
+import re
+import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import colors
+from matplotlib import font_manager as fm
 import numpy as np
 import tifffile
+from matplotlib_scalebar.scalebar import ScaleBar
 
 from core.analysis import calculate_step_sizes, diffusion_2d_from_1d_fits, fit_gaussian_diffusion_1d
 from core.io import extract_particle_size_from_path, single_file_data
 
 
 ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Trajectory_Visualisation")
-FRAME_INDEX = 277
+
+df_cutout = pd.read_csv(r"E:\PhD Data Analysis\SPT 2025 II\Trajectory_Visualisation\Cutout.txt") #<-- Path to frame and cutout
+# print(df)
+
+# for idx, row in df.iterrows():
+#     print('width/height',(row["cutout1_p1"]-row["cutout2_p1"])/(row["cutout1_p2"]-row["cutout2_p2"]))
+DEFAULT_FRAME_INDEX = 277
+REQUIRED_CUTOUT_COLUMNS = (
+    "particle_nm",
+    "frame",
+    "cutout1_p1",
+    "cutout1_p2",
+    "cutout2_p1",
+    "cutout2_p2",
+)
+CUTOUT_WIDTH_OVER_HEIGHT = 1.4
+TRACK_HISTORY_SECONDS = 0.5
+SCALEBAR_UM = 5.0
 
 def load_tiff_stack(tif_path: Path) -> np.ndarray:
     """Load TIFF as (T, Y, X) or (T, Z/Y, X) stack."""
@@ -40,7 +60,7 @@ def find_xmls_in_tracks(root: Path) -> list[Path]:
     return sorted(root.rglob("Tracks/*.xml"))
 
 
-def show_frame_79(result_dict) -> None:
+def show_frame(result_dict, frame_index: int, cutout_bounds=None) -> None:
     tif_path = Path(result_dict.get("tif_path")) if result_dict.get("tif_path") else None
     if tif_path is None or not tif_path.exists():
         print("[!] No TIFF path found from core.io for this XML.")
@@ -53,19 +73,19 @@ def show_frame_79(result_dict) -> None:
     stack = load_tiff_stack(tif_path)
     print(f"[OK] Stack shape: {stack.shape}")
 
-    if FRAME_INDEX < 0 or FRAME_INDEX >= stack.shape[0]:
-        print(f"[!] Frame {FRAME_INDEX} out of range (0..{stack.shape[0] - 1})")
+    if frame_index < 0 or frame_index >= stack.shape[0]:
+        print(f"[!] Frame {frame_index} out of range (0..{stack.shape[0] - 1})")
         return
 
     fig = plt.figure(figsize=(6, 6))
     title_fps = f"{fps:.2f}" if isinstance(fps, (int, float)) else "n/a"
     title_mpp = f"{mpp:.3f}" if isinstance(mpp, (int, float)) else "n/a"
-    window_title = f"{tif_path.name} | frame {FRAME_INDEX} | mpp={title_mpp} | fps={title_fps}"
+    window_title = f"{tif_path.name} | frame {frame_index} | mpp={title_mpp} | fps={title_fps}"
     try:
         fig.canvas.manager.set_window_title(window_title)
     except Exception:
         pass
-    frame = stack[FRAME_INDEX]
+    frame = stack[frame_index]
     frame_display = (frame.astype(np.float32)).clip(min=0)
     ax = plt.gca()
     frame_min, frame_max = np.min(frame_display), np.max(frame_display)
@@ -81,43 +101,58 @@ def show_frame_79(result_dict) -> None:
     if tracks_df is None or tracks_df.empty:
         print("[!] Tracks data is empty; skipping tracks overlay.")
     else:
+        history_frames = _history_frames_from_fps(fps, TRACK_HISTORY_SECONDS)
         overlay_tracks_by_diffusion(
             ax,
             tracks_df,
             fps=fps,
             mpp=mpp,
             d_max=15.0,
-            frame_index=FRAME_INDEX,
-            history=40,
+            frame_index=frame_index,
+            history=history_frames,
             alpha_now=0.96,
-            alpha_past=0.03,
+            alpha_past=0.07,
             linewidth=3.0,
         )
-        highlight_current_particles(ax, tracks_df, frame_index=FRAME_INDEX)
-        crop = compute_crop_window(
-            tracks_df,
-            frame_index=FRAME_INDEX,
-            image_shape=frame.shape,
-            target_count=12,
-            aspect=1.7,
-            margin_px=5,
-        )
-        if crop is not None:
-            x_min, x_max, y_min, y_max, count = crop
-            if isinstance(mpp, (int, float)) and mpp > 0:
-                pad_px = 5.0 / mpp
-                x_min -= pad_px
-                x_max += pad_px
-                y_min -= pad_px
-                y_max += pad_px
-                height, width = frame.shape[:2]
-                x_min, x_max = _shift_window_to_bounds(x_min, x_max, 0.0, float(width - 1))
-                y_min, y_max = _shift_window_to_bounds(y_min, y_max, 0.0, float(height - 1))
+        highlight_current_particles(ax, tracks_df, frame_index=frame_index)
+        if cutout_bounds is not None:
+            x_min, x_max, y_min, y_max = _enforce_cutout_ratio(
+                cutout_bounds, width_over_height=CUTOUT_WIDTH_OVER_HEIGHT
+            )
+            height, width = frame.shape[:2]
+            x_min, x_max = _shift_window_to_bounds(x_min, x_max, 0.0, float(width - 1))
+            y_min, y_max = _clamp_vertical_lower_only(y_min, y_max, 0.0, float(height - 1))
             ax.set_xlim(x_min, x_max)
             ax.set_ylim(y_max, y_min)  # origin="upper"
-            print(f"[OK] Cropped view: {count} particles in frame {FRAME_INDEX}")
+            print(
+                f"[OK] Cutout view: x=({x_min:.1f},{x_max:.1f}) "
+                f"y=({y_min:.1f},{y_max:.1f}) frame={frame_index}"
+            )
+        else:
+            crop = compute_crop_window(
+                tracks_df,
+                frame_index=frame_index,
+                image_shape=frame.shape,
+                target_count=12,
+                aspect=1.7,
+                margin_px=5,
+            )
+            if crop is not None:
+                x_min, x_max, y_min, y_max, count = crop
+                if isinstance(mpp, (int, float)) and mpp > 0:
+                    pad_px = 5.0 / mpp
+                    x_min -= pad_px
+                    x_max += pad_px
+                    y_min -= pad_px
+                    y_max += pad_px
+                    height, width = frame.shape[:2]
+                    x_min, x_max = _shift_window_to_bounds(x_min, x_max, 0.0, float(width - 1))
+                    y_min, y_max = _shift_window_to_bounds(y_min, y_max, 0.0, float(height - 1))
+                ax.set_xlim(x_min, x_max)
+                ax.set_ylim(y_max, y_min)  # origin="upper"
+                print(f"[OK] Cropped view: {count} particles in frame {frame_index}")
 
-    add_scalebar(ax, frame.shape, length_um=10.0, mpp=mpp)
+    add_scalebar(ax, frame.shape, length_um=SCALEBAR_UM, mpp=mpp)
     plt.axis("off")
     plt.tight_layout()
     plt.show()
@@ -144,7 +179,6 @@ def add_scalebar(ax, image_shape, length_um: float, mpp: Optional[float]) -> Non
         width_view = x_max - x_min
 
     length_px = length_um / mpp
-
     pad_px = 10.0
     if length_px > width_view - 2 * pad_px:
         pad_px = 2.0
@@ -152,21 +186,44 @@ def add_scalebar(ax, image_shape, length_um: float, mpp: Optional[float]) -> Non
         print("[!] Scalebar does not fit in image; skipped.")
         return
 
-    x_end = x_max - pad_px
-    x_start = x_end - length_px
-    y = y_max - pad_px
+    fig = ax.figure
+    if fig is not None and fig.canvas is not None:
+        fig.canvas.draw()
+        axes_height_px = ax.bbox.height
+    else:
+        axes_height_px = height_view
 
-    ax.plot([x_start, x_end], [y, y], color="white", linewidth=3, solid_capstyle="butt")
-    ax.text(
-        (x_start + x_end) / 2,
-        y - 6,
-        f"{length_um:g} µm",
+    thickness_px = 8.0
+    font_size_pt = 15.0
+    width_fraction = thickness_px / axes_height_px if axes_height_px > 0 else 0.01
+
+    # ScaleBar requires font_properties as dict or string, not FontProperties object
+    try:
+        available = {f.name for f in fm.fontManager.ttflist}
+    except Exception:
+        available = set()
+    font_props_dict: dict = {"size": font_size_pt}
+    if "Open Sans" in available:
+        font_props_dict["family"] = "Open Sans"
+
+    scalebar = ScaleBar(
+        mpp,
+        units="um",
+        dimension="si-length",
+        fixed_value=length_um,
+        fixed_units="um",
+        location="lower right",
+        width_fraction=width_fraction,
+        sep=2,
+        frameon=True,
         color="white",
-        ha="center",
-        va="bottom",
-        fontsize=9,
-        bbox=dict(facecolor="black", alpha=0.5, edgecolor="none", pad=1.5),
+        box_color="black",
+        box_alpha=0.6,
+        scale_loc="top",
+        label_loc="bottom",
+        font_properties=font_props_dict,
     )
+    ax.add_artist(scalebar)
 
 
 def highlight_current_particles(ax, tracks_df, frame_index: int) -> None:
@@ -177,10 +234,10 @@ def highlight_current_particles(ax, tracks_df, frame_index: int) -> None:
     ax.scatter(
         current["x"],
         current["y"],
-        s=80,
+        s=85,
         facecolors="none",
         edgecolors="hotpink",
-        linewidths=3.0,
+        linewidths=1.50,
         zorder=5,
     )
 
@@ -360,6 +417,102 @@ def _shift_window_to_bounds(minv: float, maxv: float, low: float, high: float):
     return minv, maxv
 
 
+def _history_frames_from_fps(fps: Optional[float], seconds: float) -> int:
+    if not isinstance(fps, (int, float)) or fps <= 0:
+        return 1
+    frames = int(round(float(fps) * float(seconds)))
+    return max(frames, 1)
+
+
+def _enforce_cutout_ratio(
+    cutout_bounds: tuple[float, float, float, float],
+    width_over_height: float,
+) -> tuple[float, float, float, float]:
+    x_min, x_max, y_min, y_max = cutout_bounds
+    width = max(x_max - x_min, 1.0)
+    target_height = width / float(width_over_height)
+    new_y_max = y_min + target_height
+    return (x_min, x_max, y_min, new_y_max)
+
+
+def _clamp_vertical_lower_only(
+    y_min: float, y_max: float, low: float, high: float
+) -> tuple[float, float]:
+    if y_min < low:
+        y_min = low
+    if y_max > high:
+        y_max = high
+    if y_max <= y_min:
+        y_max = min(high, y_min + 1.0)
+    return y_min, y_max
+
+
+def _coerce_particle_nm(value) -> Optional[float]:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = re.search(r"(\d+(?:\.\d+)?)", str(value))
+    return float(match.group(1)) if match else None
+
+
+def _get_cutout_row(df_cutout: pd.DataFrame, particle_size_nm: Optional[float]) -> Optional[pd.Series]:
+    if particle_size_nm is None:
+        return None
+    if "particle_nm" not in df_cutout.columns:
+        print("[!] Cutout table missing 'particle_nm' column.")
+        return None
+
+    series = df_cutout["particle_nm"].apply(_coerce_particle_nm)
+    diffs = (series - float(particle_size_nm)).abs()
+    if diffs.isna().all():
+        print(f"[!] Could not parse particle_nm values for size {particle_size_nm} nm.")
+        return None
+    idx = diffs.idxmin()
+    if not np.isfinite(diffs.loc[idx]) or diffs.loc[idx] > 0.5:
+        print(f"[!] No close cutout row found for size {particle_size_nm} nm.")
+        return None
+    return df_cutout.loc[idx]
+
+
+def _cutout_bounds_from_row(row: pd.Series) -> Optional[tuple[float, float, float, float]]:
+    try:
+        x1 = float(row["cutout1_p1"])
+        y1 = float(row["cutout1_p2"])
+        x2 = float(row["cutout2_p1"])
+        y2 = float(row["cutout2_p2"])
+    except Exception:
+        return None
+
+    x_min, x_max = (min(x1, x2), max(x1, x2))
+    y_min, y_max = (min(y1, y2), max(y1, y2))
+    return (x_min, x_max, y_min, y_max)
+
+
+def _particles_present_from_row(row: pd.Series) -> Optional[float]:
+    if "particles_present" in row:
+        return row["particles_present"]
+    if "particle_present" in row:
+        return row["particle_present"]
+    return None
+
+
+def _count_particles_in_cutout(tracks_df: pd.DataFrame, frame_index: int, cutout_bounds) -> int:
+    if tracks_df is None or tracks_df.empty:
+        return 0
+    x_min, x_max, y_min, y_max = cutout_bounds
+    frame_df = tracks_df[tracks_df["frame"] == frame_index]
+    if frame_df.empty:
+        return 0
+    in_cutout = frame_df[
+        (frame_df["x"] >= x_min)
+        & (frame_df["x"] <= x_max)
+        & (frame_df["y"] >= y_min)
+        & (frame_df["y"] <= y_max)
+    ]
+    return int(in_cutout.shape[0])
+
+
 def main() -> None:
     xml_files = find_xmls_in_tracks(ROOT_PATH)
     if not xml_files:
@@ -368,6 +521,7 @@ def main() -> None:
 
     for xml_path in xml_files:
         print(f"\n[OK] Using XML: {xml_path}")
+        print(extract_particle_size_from_path(xml_path))
         result = single_file_data(xml_path)
         if result is None:
             print("[!] core.io.single_file_data returned None (missing calibration?). Skipping.")
@@ -375,7 +529,39 @@ def main() -> None:
         if result.get("mpp") is None or result.get("fps") is None:
             print("[!] Missing mpp/fps from .rec. Skipping.")
             continue
-        show_frame_79(result)
+        particle_nm = result.get("particle_size_nm")
+        print(f"Particle size: {particle_nm} nm")
+        cutout_row = _get_cutout_row(df_cutout, particle_nm)
+        if cutout_row is None:
+            print(f"[!] No cutout row found for {particle_nm} nm. Using default frame.")
+            show_frame(result, DEFAULT_FRAME_INDEX, cutout_bounds=None)
+            continue
+
+        missing_cols = [col for col in REQUIRED_CUTOUT_COLUMNS if col not in cutout_row.index]
+        if missing_cols:
+            print(f"[!] Cutout row missing columns: {missing_cols}. Using default frame.")
+            show_frame(result, DEFAULT_FRAME_INDEX, cutout_bounds=None)
+            continue
+
+        frame_index = int(float(cutout_row["frame"]))
+        cutout_bounds = _cutout_bounds_from_row(cutout_row)
+        if cutout_bounds is None:
+            print(f"[!] Invalid cutout bounds for {particle_nm} nm. Using default frame.")
+            show_frame(result, DEFAULT_FRAME_INDEX, cutout_bounds=None)
+            continue
+
+        cutout_bounds = _enforce_cutout_ratio(
+            cutout_bounds, width_over_height=CUTOUT_WIDTH_OVER_HEIGHT
+        )
+        xml_count = _count_particles_in_cutout(result.get("tracks_df"), frame_index, cutout_bounds)
+        expected = _particles_present_from_row(cutout_row)
+        print(
+            f"[OK] {Path(result['xml_path']).name} | size={particle_nm} nm | "
+            f"frame={frame_index} | xml particles in cutout={xml_count} | "
+            f"particles_present={expected}"
+        )
+
+        show_frame(result, frame_index, cutout_bounds=cutout_bounds)
 
 
 if __name__ == "__main__":
