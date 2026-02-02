@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import json
 
 from pathlib import Path
 from PIL import Image
@@ -44,9 +45,1017 @@ MIN_AREA_FACTOR = .85  # Faktor für minimale Fläche: factor * π * (min_radius
 MAX_AREA_FACTOR = 1.1  # Faktor für maximale Fläche: factor * π * (max_radius)^2
 
 # Debug-Modus: Zeigt an, warum Partikel herausgefiltert werden
-DEBUG_FILTERING = True
+DEBUG_FILTERING = False
 
 OUTPUT_CSV = "segmented_particles_watershed.csv"
+
+# Threshold-Einstellungen Datei
+THRESHOLD_CONFIG_FILE = "particle_thresholds.json"
+
+# Ausgabe-Verzeichnis für Auswertungsdateien
+OUTPUT_DIR = Path(r"D:\SEM\Auswertung")
+
+# ============================================================================
+# THRESHOLD SPEICHERN / LADEN
+# ============================================================================
+
+def save_thresholds(contrast_thresh, uniformity_thresh, filepath=None):
+    """
+    Speichert die gewählten Threshold-Werte in eine JSON-Datei.
+    """
+    if filepath is None:
+        filepath = THRESHOLD_CONFIG_FILE
+
+    config = {
+        'contrast_threshold': float(contrast_thresh),
+        'uniformity_threshold': float(uniformity_thresh),
+    }
+
+    with open(filepath, 'w') as f:
+        json.dump(config, f, indent=2)
+
+    print(f"Thresholds gespeichert: {filepath}")
+    return config
+
+
+def load_thresholds(filepath=None):
+    """
+    Lädt gespeicherte Threshold-Werte aus einer JSON-Datei.
+    Gibt Default-Werte zurück falls Datei nicht existiert.
+    """
+    if filepath is None:
+        filepath = THRESHOLD_CONFIG_FILE
+
+    default_config = {
+        'contrast_threshold': 0.3,
+        'uniformity_threshold': 0.3,
+    }
+
+    try:
+        with open(filepath, 'r') as f:
+            config = json.load(f)
+        print(f"Thresholds geladen: Kontrast={config['contrast_threshold']:.2f}, "
+              f"Uniformität={config['uniformity_threshold']:.2f}")
+        return config
+    except FileNotFoundError:
+        print(f"Keine gespeicherten Thresholds gefunden, verwende Defaults.")
+        return default_config
+
+
+def add_scale_bar(ax, px_nm, image_shape, bar_length_nm=None, location='lower right',
+                  color='white', fontsize=10, box_alpha=0.7):
+    """
+    Fügt eine Maßstabsleiste (Scale Bar) zu einem Matplotlib-Axes hinzu.
+
+    Args:
+        ax: Matplotlib Axes Objekt
+        px_nm: Pixelgröße in nm/pixel
+        image_shape: (height, width) des Bildes in Pixel
+        bar_length_nm: Länge der Scale Bar in nm (None = automatisch)
+        location: Position ('lower right', 'lower left', 'upper right', 'upper left')
+        color: Farbe der Scale Bar und des Texts
+        fontsize: Schriftgröße
+        box_alpha: Transparenz der Hintergrundbox
+    """
+    height, width = image_shape[:2]
+
+    # Automatische Länge wählen (ca. 10-20% der Bildbreite)
+    if bar_length_nm is None:
+        image_width_nm = width * px_nm
+        # Wähle eine "schöne" Länge (100, 200, 500, 1000, 2000, 5000 nm etc.)
+        nice_lengths = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+        target_length = image_width_nm * 0.15  # ca. 15% der Bildbreite
+        bar_length_nm = min(nice_lengths, key=lambda x: abs(x - target_length))
+
+    bar_length_px = bar_length_nm / px_nm
+
+    # Position berechnen
+    margin = 0.05  # 5% Rand
+    bar_height_px = max(5, height * 0.01)  # Höhe der Bar
+
+    if 'right' in location:
+        x_start = width * (1 - margin) - bar_length_px
+    else:
+        x_start = width * margin
+
+    if 'lower' in location:
+        y_pos = height * (1 - margin)
+    else:
+        y_pos = height * margin
+
+    # Scale Bar zeichnen
+    from matplotlib.patches import Rectangle, FancyBboxPatch
+
+    # Hintergrund-Box
+    box_padding = 10
+    box_width = bar_length_px + 2 * box_padding
+    box_height = bar_height_px + fontsize * 2 + box_padding
+
+    if 'lower' in location:
+        box_y = y_pos - box_height
+    else:
+        box_y = y_pos
+
+    if 'right' in location:
+        box_x = x_start - box_padding
+    else:
+        box_x = x_start - box_padding
+
+    bg_box = FancyBboxPatch((box_x, box_y), box_width, box_height,
+                             boxstyle="round,pad=3", facecolor='black',
+                             alpha=box_alpha, edgecolor='none', zorder=10)
+    ax.add_patch(bg_box)
+
+    # Scale Bar selbst
+    bar = Rectangle((x_start, y_pos - bar_height_px), bar_length_px, bar_height_px,
+                    facecolor=color, edgecolor=color, zorder=11)
+    ax.add_patch(bar)
+
+    # Label
+    if bar_length_nm >= 1000:
+        label = f"{bar_length_nm/1000:.0f} µm"
+    else:
+        label = f"{bar_length_nm:.0f} nm"
+
+    ax.text(x_start + bar_length_px / 2, y_pos - bar_height_px - 5, label,
+            ha='center', va='bottom', color=color, fontsize=fontsize,
+            fontweight='bold', zorder=12)
+
+
+def save_segmented_image(image, particles, px_nm, output_path, title=None,
+                         show_accepted_only=False, thresholds=None):
+    """
+    Speichert ein Bild mit eingezeichneten Partikeln und Scale Bar.
+
+    Args:
+        image: Graustufenbild (numpy array)
+        particles: Liste von Partikel-Dicts
+        px_nm: Pixelgröße in nm/pixel
+        output_path: Pfad zum Speichern
+        title: Optionaler Titel
+        show_accepted_only: Wenn True, nur akzeptierte Partikel zeigen
+        thresholds: Dict mit 'contrast' und 'uniformity' Thresholds
+    """
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    ax.imshow(image, cmap='gray', vmin=0, vmax=255 if image.max() > 1 else 1)
+
+    cmap = plt.cm.RdYlGn
+    norm = Normalize(vmin=0, vmax=1)
+
+    # Partikel einzeichnen
+    for p in particles:
+        # Prüfe ob Partikel akzeptiert ist (falls Thresholds gegeben)
+        if thresholds:
+            c_score = p.get('contrast_score', 0)
+            u_score = p.get('uniformity_score', 0)
+            is_accepted = (c_score >= thresholds['contrast'] and
+                          u_score >= thresholds['uniformity'])
+            if show_accepted_only and not is_accepted:
+                continue
+            alpha = 1.0 if is_accepted else 0.3
+            linestyle = '-' if is_accepted else ':'
+        else:
+            alpha = 1.0
+            linestyle = '-'
+
+        cx, cy = p['x_px'], p['y_px']
+        r = p['refined_radius_px']
+        contrast = p.get('contrast_score', 0.5)
+        uniformity = p.get('uniformity_score', 0.5)
+        color = cmap(norm(contrast))
+        linewidth = 0.5 + 3.0 * uniformity
+
+        circle = plt.Circle((cx, cy), r, fill=False, color=color,
+                            linewidth=linewidth, alpha=alpha, linestyle=linestyle)
+        ax.add_patch(circle)
+
+    # Scale Bar hinzufügen
+    add_scale_bar(ax, px_nm, image.shape)
+
+    # Colorbar
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, orientation='vertical', fraction=0.03, pad=0.01)
+    cbar.set_label('Kontrast-Score')
+
+    # Titel
+    if title:
+        ax.set_title(title, fontsize=12)
+
+    ax.axis('off')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"Segmentiertes Bild gespeichert: {output_path}")
+
+
+def filter_particles_by_thresholds(particles, contrast_thresh=None, uniformity_thresh=None):
+    """
+    Filtert Partikel basierend auf Threshold-Werten.
+
+    Wenn keine Thresholds angegeben werden, werden die gespeicherten Werte verwendet.
+
+    Args:
+        particles: Liste von Partikel-Dicts mit 'contrast_score' und 'uniformity_score'
+        contrast_thresh: Kontrast-Score Threshold (None = aus Datei laden)
+        uniformity_thresh: Uniformitäts-Score Threshold (None = aus Datei laden)
+
+    Returns:
+        Liste der akzeptierten Partikel
+    """
+    # Thresholds laden falls nicht angegeben
+    if contrast_thresh is None or uniformity_thresh is None:
+        config = load_thresholds()
+        if contrast_thresh is None:
+            contrast_thresh = config['contrast_threshold']
+        if uniformity_thresh is None:
+            uniformity_thresh = config['uniformity_threshold']
+
+    # Partikel filtern
+    accepted = [p for p in particles
+                if p.get('contrast_score', 0) >= contrast_thresh
+                and p.get('uniformity_score', 0) >= uniformity_thresh]
+
+    print(f"Filterung: {len(accepted)}/{len(particles)} Partikel akzeptiert "
+          f"(Kontrast≥{contrast_thresh:.2f}, Uniformität≥{uniformity_thresh:.2f})")
+
+    return accepted
+
+
+# ============================================================================
+# PARTIKEL-VALIDIERUNG UND QUALITÄTSBEWERTUNG
+# ============================================================================
+
+def validate_particle(image, cx, cy, r, ring_width=5, n_theta=64):
+    """
+    Bewertet einen detektierten Partikel mit ZWEI kontinuierlichen Metriken:
+
+    1. KONTRAST-SCORE (für Farbe):
+       - Misst wie gut sich der Partikel vom Hintergrund abhebt
+       - Hoher Wert = Kante liegt richtig, guter Kontrast
+
+    2. UNIFORMITÄTS-SCORE (für Liniendicke):
+       - Misst die radiale Gleichmäßigkeit im Inneren
+       - Hoher Wert = gleichmäßig, keine internen Kanten
+
+    Args:
+        image: Graustufenbild (float)
+        cx, cy: Zentrum des Partikels
+        r: Radius des Partikels
+        ring_width: Breite des Außenrings für Vergleich (Pixel)
+        n_theta: Anzahl Abtastpunkte pro Kreis
+
+    Returns:
+        dict mit beiden Scores und Details
+    """
+    # Sicherstellen, dass wir innerhalb des Bildes bleiben
+    if (cx < r + ring_width or cx > image.shape[1] - r - ring_width or
+        cy < r + ring_width or cy > image.shape[0] - r - ring_width):
+        return {
+            'contrast_score': 0.0,
+            'uniformity_score': 0.0,
+            'quality_score': 0.0,
+            'details': {}
+        }
+
+    # --- 1. Intensitäten samplen ---
+    # Innenbereich (mehrere Radien)
+    inner_intensities = []
+    for r_sample in np.linspace(0.2 * r, 0.8 * r, 5):
+        if r_sample > 2:
+            vals = sample_circle(image, cx, cy, r_sample, n_theta)
+            inner_intensities.extend(vals)
+
+    # Auf dem Rand (Kante)
+    edge_intensities = sample_circle(image, cx, cy, r, n_theta)
+
+    # Außenring (5 Pixel außerhalb)
+    outer_intensities = []
+    for r_sample in np.linspace(r + 2, r + ring_width, 3):
+        vals = sample_circle(image, cx, cy, r_sample, n_theta)
+        outer_intensities.extend(vals)
+
+    inner_intensities = np.array(inner_intensities)
+    edge_intensities = np.array(edge_intensities)
+    outer_intensities = np.array(outer_intensities)
+
+    # --- 2. Metriken berechnen ---
+    inner_mean = np.mean(inner_intensities)
+    inner_std = np.std(inner_intensities)
+    edge_mean = np.mean(edge_intensities)
+    edge_std = np.std(edge_intensities)
+    outer_mean = np.mean(outer_intensities)
+
+    # === KONTRAST-SCORE (0-1) ===
+    # Kombiniert: Kontrast Innen/Außen + Kantenschärfe + Kanten-Gleichmäßigkeit
+    contrast = abs(inner_mean - outer_mean)
+    contrast_normalized = contrast / (max(inner_mean, outer_mean) + 1e-9)
+
+    # Kantenschärfe: Kante sollte zwischen Innen und Außen liegen
+    edge_position_quality = 1.0 - abs(edge_mean - (inner_mean + outer_mean) / 2) / (contrast + 1e-9)
+    edge_position_quality = max(0.0, min(1.0, edge_position_quality))
+
+    # Kanten-Gleichmäßigkeit (niedrige Varianz = gute Kante)
+    edge_uniformity = 1.0 / (1.0 + edge_std / (abs(inner_mean - outer_mean) + 1e-9))
+
+    contrast_score = (
+        0.4 * min(contrast_normalized * 3, 1.0) +  # Kontrast (verstärkt)
+        0.3 * edge_position_quality +               # Kantenposition
+        0.3 * edge_uniformity                       # Kanten-Gleichmäßigkeit
+    )
+    contrast_score = max(0.0, min(1.0, contrast_score))
+
+    # === UNIFORMITÄTS-SCORE (0-1) ===
+    # Misst wie gleichmäßig das Innere ist (keine internen Kanten)
+    radial_uniformity = 1.0 / (1.0 + inner_std / (inner_mean + 1e-9) * 5)
+
+    # Prüfe auf interne Gradienten (sollten klein sein)
+    # Sample auf verschiedenen Radien und prüfe Konsistenz
+    radial_means = []
+    for r_sample in np.linspace(0.3 * r, 0.7 * r, 4):
+        if r_sample > 2:
+            vals = sample_circle(image, cx, cy, r_sample, n_theta)
+            radial_means.append(np.mean(vals))
+
+    if len(radial_means) > 1:
+        radial_gradient = np.std(radial_means) / (np.mean(radial_means) + 1e-9)
+        internal_smoothness = 1.0 / (1.0 + radial_gradient * 10)
+    else:
+        internal_smoothness = 0.5
+
+    uniformity_score = (
+        0.6 * radial_uniformity +
+        0.4 * internal_smoothness
+    )
+    uniformity_score = max(0.0, min(1.0, uniformity_score))
+
+    # Gesamtqualität (Durchschnitt beider Scores)
+    quality_score = (contrast_score + uniformity_score) / 2
+
+    return {
+        'contrast_score': float(contrast_score),
+        'uniformity_score': float(uniformity_score),
+        'quality_score': float(quality_score),
+        'details': {
+            'inner_mean': float(inner_mean),
+            'inner_std': float(inner_std),
+            'edge_mean': float(edge_mean),
+            'edge_std': float(edge_std),
+            'outer_mean': float(outer_mean),
+            'contrast': float(contrast),
+            'contrast_normalized': float(contrast_normalized),
+            'edge_position_quality': float(edge_position_quality),
+            'edge_uniformity': float(edge_uniformity),
+            'radial_uniformity': float(radial_uniformity),
+            'internal_smoothness': float(internal_smoothness),
+        }
+    }
+
+
+def refine_particle_position(image, cx, cy, r, max_shift=None, n_steps=5):
+    """
+    Versucht die Partikelposition zu optimieren.
+
+    Sucht in einem Gitter um die aktuelle Position nach besserer Platzierung.
+
+    Args:
+        image: Graustufenbild
+        cx, cy: Aktuelle Zentrumsposition
+        r: Radius
+        max_shift: Maximale Verschiebung (Standard: 30% des Radius)
+        n_steps: Anzahl Schritte pro Richtung
+
+    Returns:
+        cx_new, cy_new, quality_improved
+    """
+    if max_shift is None:
+        max_shift = r * 0.3
+
+    best_cx, best_cy = cx, cy
+    best_quality = validate_particle(image, cx, cy, r)['quality_score']
+
+    # Grid-Suche
+    for dx in np.linspace(-max_shift, max_shift, n_steps):
+        for dy in np.linspace(-max_shift, max_shift, n_steps):
+            cx_try = cx + dx
+            cy_try = cy + dy
+
+            validation = validate_particle(image, cx_try, cy_try, r)
+            if validation['quality_score'] > best_quality:
+                best_quality = validation['quality_score']
+                best_cx = cx_try
+                best_cy = cy_try
+
+    return best_cx, best_cy, best_quality > validate_particle(image, cx, cy, r)['quality_score']
+
+
+def visualize_validation_results(image, particles, save_path=None):
+    """
+    Visualisiert die Validierungsergebnisse mit ZWEI Metriken (statisch).
+    Für interaktive Version siehe: interactive_threshold_viewer()
+    """
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+    # --- 1. Bild mit farbcodierten Kreisen ---
+    axes[0].imshow(image, cmap='gray')
+
+    cmap = plt.cm.RdYlGn
+    norm = Normalize(vmin=0, vmax=1)
+
+    for p in particles:
+        cx, cy = p['x_px'], p['y_px']
+        r = p['refined_radius_px']
+        contrast = p.get('contrast_score', 0.5)
+        uniformity = p.get('uniformity_score', 0.5)
+        color = cmap(norm(contrast))
+        linewidth = 0.5 + 3.0 * uniformity
+        circle = plt.Circle((cx, cy), r, fill=False, color=color, linewidth=linewidth)
+        axes[0].add_patch(circle)
+
+    axes[0].set_title('Partikel-Bewertung\nFarbe = Kontrast, Dicke = Uniformität')
+    axes[0].axis('off')
+
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes[0], orientation='vertical', fraction=0.046, pad=0.04)
+    cbar.set_label('Kontrast-Score', fontsize=10)
+
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='gray', linewidth=0.5, label='Uniformität: 0.0'),
+        Line2D([0], [0], color='gray', linewidth=2.0, label='Uniformität: 0.5'),
+        Line2D([0], [0], color='gray', linewidth=3.5, label='Uniformität: 1.0'),
+    ]
+    axes[0].legend(handles=legend_elements, loc='upper right', fontsize=8)
+
+    # --- 2. Histogramm Kontrast-Score ---
+    contrast_scores = [p.get('contrast_score', 0) for p in particles]
+    n_bins = 20
+    counts, bins, patches = axes[1].hist(contrast_scores, bins=n_bins, edgecolor='black')
+    bin_centers = 0.5 * (bins[:-1] + bins[1:])
+    for patch, bc in zip(patches, bin_centers):
+        patch.set_facecolor(cmap(norm(bc)))
+    axes[1].axvline(np.mean(contrast_scores), color='black', linestyle='--', linewidth=2,
+                   label=f'Mittel: {np.mean(contrast_scores):.2f}')
+    axes[1].set_xlabel('Kontrast-Score', fontsize=11)
+    axes[1].set_ylabel('Anzahl Partikel', fontsize=11)
+    axes[1].set_title('Verteilung Kontrast-Score')
+    axes[1].legend()
+
+    # --- 3. Histogramm Uniformitäts-Score ---
+    uniformity_scores = [p.get('uniformity_score', 0) for p in particles]
+    counts2, bins2, patches2 = axes[2].hist(uniformity_scores, bins=n_bins,
+                                            edgecolor='black', color='steelblue', alpha=0.7)
+    bin_centers2 = 0.5 * (bins2[:-1] + bins2[1:])
+    for bc, count in zip(bin_centers2, counts2):
+        if count > 0:
+            linewidth = 0.5 + 3.0 * bc
+            axes[2].plot([bc, bc], [0, -max(counts2) * 0.1], color='gray',
+                        linewidth=linewidth, solid_capstyle='round')
+    axes[2].axvline(np.mean(uniformity_scores), color='red', linestyle='--', linewidth=2,
+                   label=f'Mittel: {np.mean(uniformity_scores):.2f}')
+    axes[2].set_xlabel('Uniformitäts-Score', fontsize=11)
+    axes[2].set_ylabel('Anzahl Partikel', fontsize=11)
+    axes[2].set_title('Verteilung Uniformitäts-Score')
+    axes[2].legend()
+    axes[2].set_ylim(bottom=-max(counts2) * 0.15)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # Statistik
+    print(f"\n{'='*60}")
+    print("BEWERTUNGSSTATISTIK:")
+    print(f"{'='*60}")
+    print(f"Gesamt: {len(particles)} Partikel")
+    print(f"Kontrast-Score:    Mittel={np.mean(contrast_scores):.3f}, Std={np.std(contrast_scores):.3f}")
+    print(f"Uniformitäts-Score: Mittel={np.mean(uniformity_scores):.3f}, Std={np.std(uniformity_scores):.3f}")
+    print(f"{'='*60}\n")
+
+
+def interactive_threshold_viewer(image, particles, load_previous=True):
+    """
+    INTERAKTIVE Visualisierung mit Slider für Threshold-Werte.
+
+    Ermöglicht das Einstellen von:
+    - Kontrast-Score Threshold
+    - Uniformitäts-Score Threshold
+
+    Zeigt in Echtzeit welche Partikel die Kriterien erfüllen.
+    Speichert die gewählten Thresholds automatisch für spätere Verwendung.
+
+    Args:
+        image: Originalbild
+        particles: Liste von dicts mit x_px, y_px, refined_radius_px, contrast_score, uniformity_score
+        load_previous: Wenn True, werden vorherige Threshold-Werte als Startwerte geladen
+
+    Returns:
+        final_thresh_c, final_thresh_u, accepted_particles
+    """
+    from matplotlib.widgets import Slider, Button
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+
+    # Lade vorherige Thresholds als Startwerte
+    if load_previous:
+        saved_config = load_thresholds()
+        init_thresh_c = saved_config['contrast_threshold']
+        init_thresh_u = saved_config['uniformity_threshold']
+    else:
+        init_thresh_c = 0.3
+        init_thresh_u = 0.3
+
+    # Daten extrahieren
+    contrast_scores = np.array([p.get('contrast_score', 0) for p in particles])
+    uniformity_scores = np.array([p.get('uniformity_score', 0) for p in particles])
+
+    # Figure erstellen
+    fig = plt.figure(figsize=(16, 10))
+
+    # Layout: Bild links, Histogramme rechts, Slider unten
+    ax_image = fig.add_axes([0.05, 0.25, 0.55, 0.70])
+    ax_hist_contrast = fig.add_axes([0.65, 0.55, 0.30, 0.35])
+    ax_hist_uniform = fig.add_axes([0.65, 0.12, 0.30, 0.35])
+
+    # Slider-Achsen
+    ax_slider_contrast = fig.add_axes([0.15, 0.12, 0.35, 0.03])
+    ax_slider_uniform = fig.add_axes([0.15, 0.06, 0.35, 0.03])
+
+    # Info-Text Achse
+    ax_info = fig.add_axes([0.05, 0.01, 0.50, 0.04])
+    ax_info.axis('off')
+
+    # Colormap
+    cmap = plt.cm.RdYlGn
+    norm = Normalize(vmin=0, vmax=1)
+
+    # --- Initiales Bild zeichnen ---
+    ax_image.imshow(image, cmap='gray')
+    ax_image.set_title('Partikel-Filterung (interaktiv)')
+    ax_image.axis('off')
+
+    # Kreise als Liste speichern für Updates
+    circles = []
+    for p in particles:
+        cx, cy = p['x_px'], p['y_px']
+        r = p['refined_radius_px']
+        contrast = p.get('contrast_score', 0.5)
+        uniformity = p.get('uniformity_score', 0.5)
+        color = cmap(norm(contrast))
+        linewidth = 0.5 + 3.0 * uniformity
+        circle = plt.Circle((cx, cy), r, fill=False, color=color, linewidth=linewidth)
+        ax_image.add_patch(circle)
+        circles.append(circle)
+
+    # Colorbar
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax_image, orientation='vertical', fraction=0.03, pad=0.01)
+    cbar.set_label('Kontrast-Score')
+
+    # --- Histogramme zeichnen ---
+    # Kontrast-Histogramm
+    n_bins = 20
+    counts_c, bins_c, patches_c = ax_hist_contrast.hist(contrast_scores, bins=n_bins, edgecolor='black')
+    bin_centers_c = 0.5 * (bins_c[:-1] + bins_c[1:])
+    for patch, bc in zip(patches_c, bin_centers_c):
+        patch.set_facecolor(cmap(norm(bc)))
+    threshold_line_c = ax_hist_contrast.axvline(init_thresh_c, color='red', linestyle='-', linewidth=2, label='Threshold')
+    ax_hist_contrast.set_xlabel('Kontrast-Score')
+    ax_hist_contrast.set_ylabel('Anzahl')
+    ax_hist_contrast.set_title('Kontrast-Score Verteilung')
+    ax_hist_contrast.legend()
+
+    # Uniformitäts-Histogramm
+    counts_u, bins_u, patches_u = ax_hist_uniform.hist(uniformity_scores, bins=n_bins,
+                                                        edgecolor='black', color='steelblue', alpha=0.7)
+    threshold_line_u = ax_hist_uniform.axvline(init_thresh_u, color='red', linestyle='-', linewidth=2, label='Threshold')
+    ax_hist_uniform.set_xlabel('Uniformitäts-Score')
+    ax_hist_uniform.set_ylabel('Anzahl')
+    ax_hist_uniform.set_title('Uniformitäts-Score Verteilung')
+    ax_hist_uniform.legend()
+
+    # --- Slider erstellen (mit geladenen Startwerten) ---
+    slider_contrast = Slider(
+        ax_slider_contrast, 'Kontrast\nThreshold',
+        0.0, 1.0, valinit=init_thresh_c, valstep=0.01,
+        color='green'
+    )
+    slider_uniform = Slider(
+        ax_slider_uniform, 'Uniformität\nThreshold',
+        0.0, 1.0, valinit=init_thresh_u, valstep=0.01,
+        color='steelblue'
+    )
+
+    # Info-Text
+    info_text = ax_info.text(0.5, 0.5, '', ha='center', va='center', fontsize=12,
+                             transform=ax_info.transAxes)
+
+    def update(val):
+        """Update-Funktion für Slider"""
+        thresh_c = slider_contrast.val
+        thresh_u = slider_uniform.val
+
+        # Zähler für akzeptierte Partikel
+        n_accepted = 0
+        accepted_diams = []
+
+        # Kreise updaten
+        for i, (circle, p) in enumerate(zip(circles, particles)):
+            c_score = p.get('contrast_score', 0)
+            u_score = p.get('uniformity_score', 0)
+
+            if c_score >= thresh_c and u_score >= thresh_u:
+                # Akzeptiert: normal anzeigen
+                circle.set_alpha(1.0)
+                circle.set_linestyle('-')
+                n_accepted += 1
+                accepted_diams.append(p['refined_diam_nm'])
+            else:
+                # Abgelehnt: transparent und gestrichelt
+                circle.set_alpha(0.15)
+                circle.set_linestyle(':')
+
+        # Threshold-Linien updaten
+        threshold_line_c.set_xdata([thresh_c, thresh_c])
+        threshold_line_u.set_xdata([thresh_u, thresh_u])
+
+        # Info-Text updaten
+        if accepted_diams:
+            mean_d = np.mean(accepted_diams)
+            std_d = np.std(accepted_diams)
+            info = (f"Akzeptiert: {n_accepted}/{len(particles)} Partikel ({100*n_accepted/len(particles):.1f}%)  |  "
+                   f"Durchmesser: {mean_d:.1f} ± {std_d:.1f} nm")
+        else:
+            info = f"Akzeptiert: 0/{len(particles)} Partikel (0%)"
+        info_text.set_text(info)
+
+        fig.canvas.draw_idle()
+
+    # Slider mit Update verbinden
+    slider_contrast.on_changed(update)
+    slider_uniform.on_changed(update)
+
+    # Initial update
+    update(None)
+
+    plt.show()
+
+    # Finale Werte zurückgeben
+    final_thresh_c = slider_contrast.val
+    final_thresh_u = slider_uniform.val
+
+    # Thresholds für spätere Verwendung speichern
+    save_thresholds(final_thresh_c, final_thresh_u)
+
+    print(f"\n{'='*60}")
+    print("GEWÄHLTE THRESHOLD-WERTE:")
+    print(f"{'='*60}")
+    print(f"Kontrast-Score Threshold:    {final_thresh_c:.2f}")
+    print(f"Uniformitäts-Score Threshold: {final_thresh_u:.2f}")
+
+    accepted = [p for p in particles
+                if p.get('contrast_score', 0) >= final_thresh_c
+                and p.get('uniformity_score', 0) >= final_thresh_u]
+    print(f"\nAkzeptierte Partikel: {len(accepted)}/{len(particles)}")
+    if accepted:
+        diams = [p['refined_diam_nm'] for p in accepted]
+        print(f"Durchmesser: {np.mean(diams):.1f} ± {np.std(diams):.1f} nm")
+    print(f"{'='*60}\n")
+
+    return final_thresh_c, final_thresh_u, accepted
+
+
+def create_circular_template(radius, edge_width=2):
+    """
+    Erstellt ein kreisförmiges Template für Template Matching.
+
+    Das Template hat:
+    - Hohe Werte im Inneren
+    - Fallende Werte am Rand (Kante)
+    - Niedrige Werte außen
+    """
+    size = int(2 * radius + 10)
+    if size % 2 == 0:
+        size += 1  # Ungerade Größe für symmetrisches Template
+
+    center = size // 2
+    y, x = np.ogrid[:size, :size]
+    dist = np.sqrt((x - center)**2 + (y - center)**2)
+
+    # Kreisförmiges Template mit weichem Rand
+    template = np.zeros((size, size), dtype=float)
+
+    # Innerer Bereich: hoch
+    inner_mask = dist < (radius - edge_width)
+    template[inner_mask] = 1.0
+
+    # Randbereich: Gradient
+    edge_mask = (dist >= radius - edge_width) & (dist <= radius + edge_width)
+    template[edge_mask] = 0.5 * (1 + np.cos(np.pi * (dist[edge_mask] - (radius - edge_width)) / (2 * edge_width)))
+
+    # Normalisieren
+    template = (template - template.mean()) / (template.std() + 1e-9)
+
+    return template
+
+
+def segment_particles_template_matching(tif_path, particle_nm, n_scales=14,
+                                        size_factor_min=0.8, size_factor_max=1.2):
+    """
+    Partikelsegmentierung mit Multi-Scale Template Matching.
+
+    Besonders gut für:
+    - Partikel mit bekannter Größe
+    - Überlappende Partikel
+    - Konsistente Partikelformen
+
+    Args:
+        tif_path: Pfad zum TIFF-Bild
+        particle_nm: Erwartete Partikelgröße in nm (aus Dateiname/Pfad extrahiert)
+        n_scales: Anzahl der Skalen für Template Matching
+        size_factor_min: Faktor für minimale Partikelgröße (default: 0.6)
+        size_factor_max: Faktor für maximale Partikelgröße (default: 1.5)
+
+    Ausgabedateien werden im selben Ordner wie die Eingabedatei gespeichert:
+        - segmented_particles_of_{filename}.csv (alle Partikel)
+        - segmented_particles_of_{filename}_accepted.csv (akzeptierte Partikel)
+        - segmented_of_{filename}.png (Bild mit Segmentierung und Scalebar)
+        - histogram_of_{filename}.png
+        - hist_partikel_of_{filename}_um.txt
+    """
+    from skimage.feature import match_template
+
+    tif_path = Path(tif_path)
+
+    # --- Ausgabe-Verzeichnis und Basis-Dateiname ---
+    output_dir = OUTPUT_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    base_name = tif_path.stem  # Dateiname ohne Erweiterung
+
+    # --- Erwartete Partikelgröße aus übergebenem Parameter ---
+    expected_diam_min = particle_nm * size_factor_min
+    expected_diam_max = particle_nm * size_factor_max
+
+    # --- Pixelgröße aus FEI-Metadaten ---
+    meta = summarize_sem_metadata(tif_path)
+    px_nm = 0.5 * (meta["summary"]["pixel_width_nm"] + meta["summary"]["pixel_height_nm"])
+
+    if px_nm is None or px_nm <= 0:
+        raise ValueError("Pixelgröße konnte nicht aus Metadaten extrahiert werden.")
+
+    print(f"\n{'='*60}")
+    print(f"TEMPLATE MATCHING SEGMENTIERUNG")
+    print(f"{'='*60}")
+    print(f"Datei: {tif_path.name}")
+    print(f"Pixelgröße: {px_nm:.4f} nm/pixel")
+    print(f"Erwartete Partikelgröße: {expected_diam_min:.0f} - {expected_diam_max:.0f} nm (Nominal: {particle_nm} nm)")
+
+    # --- Radius in Pixel ---
+    min_radius_px = (expected_diam_min / 2.0) / px_nm
+    max_radius_px = (expected_diam_max / 2.0) / px_nm
+
+    print(f"  Min. Radius: {min_radius_px:.2f} px, Max. Radius: {max_radius_px:.2f} px")
+    print(f"{'='*60}\n")
+
+    # --- Bild laden ---
+    pil_img = Image.open(tif_path)
+    if np.max(pil_img) < 255:
+        img_gray = pil_img.convert("L")
+    else:
+        img_gray = pil_img
+    image_original = np.array(img_gray)  # Originalbild für Anzeige (uint8)
+    image = np.array(img_gray, dtype=float)  # Float für Berechnungen
+
+    # Normalisieren NUR für Template Matching (nicht für Anzeige)
+    image_norm = (image - image.mean()) / (image.std() + 1e-9)
+
+    # --- Multi-Scale Template Matching ---
+    radii = np.linspace(min_radius_px, max_radius_px, n_scales)
+    all_detections = []
+
+    for r in radii:
+        template = create_circular_template(r)
+        response = match_template(image_norm, template, pad_input=True)
+
+        # Finde lokale Maxima in der Response
+        threshold = 0.3  # Anpassbar
+        coords = peak_local_max(
+            response,
+            min_distance=int(r * 0.8),
+            threshold_abs=threshold,
+        )
+
+        for (cy, cx) in coords:
+            # Response-Wert als Qualitätsmaß
+            quality = response[cy, cx]
+            all_detections.append({
+                'cx': cx,
+                'cy': cy,
+                'r': r,
+                'quality': quality,
+                'diam_nm': 2 * r * px_nm,
+            })
+
+    print(f"Initiale Detektionen: {len(all_detections)}")
+
+    # --- NMS über alle Skalen ---
+    results = []
+    circles = []
+
+    for det in all_detections:
+        results.append({
+            'label': len(results) + 1,
+            'x_px': float(det['cx']),
+            'y_px': float(det['cy']),
+            'refined_radius_px': float(det['r']),
+            'refined_diam_px': float(2 * det['r']),
+            'refined_diam_nm': float(det['diam_nm']),
+            'quality': float(det['quality']),
+        })
+        circles.append((det['cx'], det['cy'], det['r'], det['quality']))
+
+    # NMS
+    results, circles = nms_circles(results, circles, overlap_thresh=0.4)
+    print(f"Nach NMS: {len(results)} Partikel")
+
+    # --- Radius-Refinement und Validierung für jeden detektierten Partikel ---
+    refined_results = []
+    refined_circles = []
+
+    print("Validiere Partikel...")
+    for res, (cx, cy, r, q) in zip(results, circles):
+        # Verfeinere mit Gradient-Methode
+        r_refined, _, _ = refine_radius(image, cx, cy, r)
+
+        # Prüfe ob Refinement sinnvoll
+        if r_refined < min_radius_px * 0.5 or r_refined > max_radius_px * 1.5:
+            r_refined = r  # Behalte Original
+
+        # --- VALIDIERUNG ---
+        validation = validate_particle(image, cx, cy, r_refined)
+
+        # Bei niedrigem Kontrast-Score: versuche Position zu optimieren
+        if validation['contrast_score'] < 0.4:
+            cx_new, cy_new, improved = refine_particle_position(image, cx, cy, r_refined)
+            if improved:
+                cx, cy = cx_new, cy_new
+                validation = validate_particle(image, cx, cy, r_refined)
+
+        diam_nm = 2 * r_refined * px_nm
+
+        refined_results.append({
+            'label': len(refined_results) + 1,
+            'x_px': float(cx),
+            'y_px': float(cy),
+            'refined_radius_px': float(r_refined),
+            'refined_diam_px': float(2 * r_refined),
+            'refined_diam_nm': float(diam_nm),
+            'template_quality': float(q),
+            'contrast_score': float(validation['contrast_score']),
+            'uniformity_score': float(validation['uniformity_score']),
+            'quality_score': float(validation['quality_score']),
+            **{f'val_{k}': v for k, v in validation['details'].items()}
+        })
+        refined_circles.append((cx, cy, r_refined, validation['quality_score']))
+
+    print(f"Final: {len(refined_results)} Partikel")
+
+    # --- CSV speichern (alle Partikel) ---
+    df = pd.DataFrame(refined_results)
+    output_csv = output_dir / f"segmented_particles_of_{base_name}.csv"
+    df.to_csv(output_csv, index=False)
+    print(f"\nAlle Ergebnisse gespeichert: {output_csv}")
+
+    # --- INTERAKTIVE Threshold-Visualisierung ---
+    # Der Benutzer kann hier die Thresholds für Kontrast und Uniformität einstellen
+    # und sieht in Echtzeit welche Partikel akzeptiert werden
+    print("\n" + "="*60)
+    print("INTERAKTIVE THRESHOLD-AUSWAHL")
+    print("="*60)
+    print("Verwende die Slider um die Thresholds anzupassen.")
+    print("Schließe das Fenster um fortzufahren.")
+    print("="*60 + "\n")
+
+    final_thresh_c, final_thresh_u, accepted_particles = interactive_threshold_viewer(
+        image_original, refined_results
+    )
+
+    # --- Histogramm (nur akzeptierte Partikel) ---
+    if accepted_particles:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        diams = [r['refined_diam_nm'] for r in accepted_particles]
+        ax.hist(diams, bins=20, edgecolor='black', color='green', alpha=0.7)
+        ax.axvline(np.mean(diams), color='red', linestyle='--',
+                  label=f'Mittel: {np.mean(diams):.1f} nm')
+        ax.axvline(particle_nm, color='blue', linestyle=':',
+                  label=f'Erwartet: {particle_nm:.0f} nm')
+        ax.set_xlabel('Durchmesser (nm)')
+        ax.set_ylabel('Anzahl')
+        ax.set_title(f'Größenverteilung (akzeptierte Partikel, n={len(diams)})\n'
+                    f'Mittel: {np.mean(diams):.1f} nm, Std: {np.std(diams):.1f} nm\n'
+                    f'Thresholds: Kontrast≥{final_thresh_c:.2f}, Uniformität≥{final_thresh_u:.2f}')
+        ax.legend()
+        plt.tight_layout()
+        histogram_path = output_dir / f"histogram_of_{base_name}.png"
+        plt.savefig(histogram_path, dpi=150)
+        print(f"Histogramm gespeichert: {histogram_path}")
+        plt.show()
+
+    # Akzeptierte Partikel speichern
+    df_accepted = pd.DataFrame(accepted_particles)
+    accepted_csv = output_dir / f"segmented_particles_of_{base_name}_accepted.csv"
+    df_accepted.to_csv(accepted_csv, index=False)
+    print(f"Akzeptierte Partikel gespeichert: {accepted_csv}")
+
+    # --- Segmentiertes Bild mit Scale Bar speichern ---
+    thresholds = {'contrast': final_thresh_c, 'uniformity': final_thresh_u}
+
+    # Alle Partikel (akzeptiert + abgelehnt sichtbar)
+    segmented_path_all = output_dir / f"segmented_of_{base_name}_all.png"
+    save_segmented_image(
+        image_original, refined_results, px_nm, segmented_path_all,
+        title=f"{base_name} - Alle Partikel (n={len(refined_results)})",
+        show_accepted_only=False, thresholds=thresholds
+    )
+
+    # Nur akzeptierte Partikel
+    segmented_path_accepted = output_dir / f"segmented_of_{base_name}_accepted.png"
+    save_segmented_image(
+        image_original, refined_results, px_nm, segmented_path_accepted,
+        title=f"{base_name} - Akzeptierte Partikel (n={len(accepted_particles)})\n"
+              f"Kontrast≥{final_thresh_c:.2f}, Uniformität≥{final_thresh_u:.2f}",
+        show_accepted_only=True, thresholds=thresholds
+    )
+
+    # Durchmesser in µm exportieren (nur akzeptierte)
+    if accepted_particles:
+        diam_um = np.array([r["refined_diam_nm"] for r in accepted_particles]) / 1000.0
+        hist_um_path = output_dir / f"hist_partikel_of_{base_name}_um.txt"
+        export_diameter_histogram_um(diam_um, hist_um_path)
+
+    # Rückgabe: alle Ergebnisse, Kreise, akzeptierte Partikel, und gewählte Thresholds
+    return {
+        'all_particles': refined_results,
+        'circles': refined_circles,
+        'accepted_particles': accepted_particles,
+        'thresholds': {
+            'contrast': final_thresh_c,
+            'uniformity': final_thresh_u
+        },
+        'px_nm': px_nm
+    }
+
+
+def nms_circles(results, circles, overlap_thresh=0.5):
+    """
+    Non-Maximum Suppression für überlappende Kreise.
+    Behält den Kreis mit höherer Qualität bei Überlappung.
+    """
+    if len(circles) == 0:
+        return results, circles
+
+    # Sortiere nach Qualität (absteigend)
+    indices = sorted(range(len(circles)), key=lambda i: circles[i][3], reverse=True)
+
+    keep = []
+    suppressed = set()
+
+    for i in indices:
+        if i in suppressed:
+            continue
+
+        keep.append(i)
+        cx1, cy1, r1, _ = circles[i]
+
+        # Prüfe Überlappung mit allen anderen
+        for j in indices:
+            if j in suppressed or j == i:
+                continue
+
+            cx2, cy2, r2, _ = circles[j]
+
+            # Abstand zwischen Zentren
+            dist = np.sqrt((cx1 - cx2)**2 + (cy1 - cy2)**2)
+
+            # Überlappung berechnen (IoU-ähnlich für Kreise)
+            if dist < (r1 + r2) * overlap_thresh:
+                suppressed.add(j)
+
+    # Filtere Ergebnisse
+    results_filtered = [results[i] for i in keep]
+    circles_filtered = [circles[i] for i in keep]
+
+    return results_filtered, circles_filtered
+
 
 def sample_circle(image, cx, cy, r, n_theta=64):
     """
@@ -149,12 +1158,18 @@ def refine_radius(image,
     # stärkster negativer Gradient = Kante (hell -> dunkel)
     idx = np.argmin(dI)
 
-    d_mean = (max(mean_I) + min(mean_I))/2
-    idx_mean =np.where(mean_I<d_mean)[0]
-    #print(idx, mean_I,d_mean,idx_mean)
-    idx = max(idx, idx_mean[0])  # sicherstellen, dass Kante außerhalb des Mittelwerts liegt
-    #print(idx)
-    r_edge = 0.5 * (radii[idx] + radii[idx+1])
+    d_mean = (max(mean_I) + min(mean_I)) / 2
+    idx_mean = np.where(mean_I < d_mean)[0]
+
+    # Absicherung: falls kein Wert unter dem Mittelwert liegt
+    if len(idx_mean) > 0:
+        idx = max(idx, idx_mean[0])  # sicherstellen, dass Kante außerhalb des Mittelwerts liegt
+
+    # Absicherung: idx darf nicht der letzte Index sein
+    if idx >= len(radii) - 1:
+        idx = len(radii) - 2
+
+    r_edge = 0.5 * (radii[idx] + radii[idx + 1])
 
     return r_edge, radii, mean_I
 
@@ -418,8 +1433,26 @@ def safe_float(d: dict, key: str):
         return float(val)
     except ValueError:
         return None
-def segment_particles_watershed(tif_path):
+def segment_particles_watershed(tif_path, particle_nm, size_factor_min=0.8, size_factor_max=1.2):
+    """
+    Partikelsegmentierung mit Watershed-Methode.
+
+    Args:
+        tif_path: Pfad zum TIFF-Bild
+        particle_nm: Erwartete Partikelgröße in nm (aus Dateiname/Pfad extrahiert)
+        size_factor_min: Faktor für minimale Partikelgröße (default: 0.6)
+        size_factor_max: Faktor für maximale Partikelgröße (default: 1.5)
+    """
     tif_path = Path(tif_path)
+
+    # --- Ausgabe-Verzeichnis und Basis-Dateiname ---
+    output_dir = OUTPUT_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    base_name = tif_path.stem  # Dateiname ohne Erweiterung
+
+    # --- Erwartete Partikelgröße aus übergebenem Parameter ---
+    expected_diam_min = particle_nm * size_factor_min
+    expected_diam_max = particle_nm * size_factor_max
 
     # --- Pixelgröße aus FEI-Metadaten (falls vorhanden) -------------
     meta = summarize_sem_metadata(tif_path)
@@ -431,31 +1464,31 @@ def segment_particles_watershed(tif_path):
                         "Bitte prüfe die TIFF-Metadaten.")
     
     print(f"\n{'='*60}")
-    print(f"BILDINFORMATIONEN:")
+    print(f"WATERSHED SEGMENTIERUNG")
     print(f"{'='*60}")
     print(f"Datei: {tif_path.name}")
     print(f"Pixelgröße: {px_nm:.4f} nm/pixel")
-    print(f"Erwartete Partikelgröße: {EXPECTED_DIAM_NM_MIN:.0f} - {EXPECTED_DIAM_NM_MAX:.0f} nm")
+    print(f"Erwartete Partikelgröße: {expected_diam_min:.0f} - {expected_diam_max:.0f} nm (Nominal: {particle_nm} nm)")
     print(f"{'='*60}\n")
-    
+
     # --- Automatische Berechnung der Pixel-basierten Parameter aus nm-Werten ---
     # Minimale und maximale Partikelradien in Pixel
-    min_radius_nm = EXPECTED_DIAM_NM_MIN / 2.0
-    max_radius_nm = EXPECTED_DIAM_NM_MAX / 2.0
+    min_radius_nm = expected_diam_min / 2.0
+    max_radius_nm = expected_diam_max / 2.0
     min_radius_px = min_radius_nm / px_nm
     max_radius_px = max_radius_nm / px_nm
-    
+
     # Flächenberechnung in Pixel
     MIN_AREA_PX = int(MIN_AREA_FACTOR * np.pi * min_radius_px**2)
     MAX_AREA_PX = int(MAX_AREA_FACTOR * np.pi * max_radius_px**2)
-    
+
     # Gaussian Sigma: sollte etwa 5-10% des minimalen Partikeldurchmessers entsprechen
     # Für bessere Anpassung: ca. 2-3% des Durchmessers oder min. 2-3 Pixel
     if GAUSSIAN_SIGMA_OVERRIDE is not None:
         GAUSSIAN_SIGMA = GAUSSIAN_SIGMA_OVERRIDE
     else:
         # Automatisch basierend auf Partikelgröße: ca. 2-3% des min. Durchmessers
-        gaussian_sigma_nm = EXPECTED_DIAM_NM_MIN * 0.025  # 2.5% des Durchmessers
+        gaussian_sigma_nm = expected_diam_min * 0.025  # 2.5% des Durchmessers
         GAUSSIAN_SIGMA = max(gaussian_sigma_nm / px_nm, 1.5)  # Mindestens 1.5 Pixel
         GAUSSIAN_SIGMA = min(GAUSSIAN_SIGMA, 10.0)  # Maximal 10 Pixel
     
@@ -621,7 +1654,7 @@ def segment_particles_watershed(tif_path):
             })
         else:
             # Detaillierte Plots für größere Partikel (>= 120 nm)
-            if True :  # Nur für das erste große Partikel
+            if False :  # Nur für das erste große Partikel
                 # Erstelle eine Figur mit zwei Subplots: Profil + Bildausschnitt
                 fig = plt.figure(figsize=(14, 6))
                 
@@ -682,6 +1715,16 @@ def segment_particles_watershed(tif_path):
         eq_refined_px = 2.0 * r_refined
         eq_refined_nm = eq_refined_px * px_nm  # px_nm kommt aus deinen Metadaten
 
+        # --- NEUE VALIDIERUNG ---
+        particle_validation = validate_particle(image, cx, cy, r_refined)
+
+        # Bei niedrigem Kontrast-Score: versuche Position zu optimieren
+        if particle_validation['contrast_score'] < 0.4:
+            cx_new, cy_new, improved = refine_particle_position(image, cx, cy, r_refined)
+            if improved:
+                cx, cy = cx_new, cy_new
+                particle_validation = validate_particle(image, cx, cy, r_refined)
+
         results.append(
             dict(
                 label=int(r.label),
@@ -696,8 +1739,11 @@ def segment_particles_watershed(tif_path):
                 eq_diam_nm=float(eq_diam_px * px_nm),
                 refined_diam_px=float(eq_refined_px),
                 refined_diam_nm=float(eq_refined_nm),
+                refined_radius_px=float(r_refined),
                 radius_change_factor=float(radius_change_factor),
-                quality_score=float(profile_quality['quality_score']),
+                contrast_score=float(particle_validation['contrast_score']),
+                uniformity_score=float(particle_validation['uniformity_score']),
+                quality_score=float(particle_validation['quality_score']),
                 gradient_sharpness=float(profile_quality['gradient_sharpness']),
                 profile_symmetry=float(profile_quality['profile_symmetry']),
                 edge_contrast=float(profile_quality['edge_contrast']),
@@ -706,6 +1752,7 @@ def segment_particles_watershed(tif_path):
                 angular_cv=float(center_quality['angular_cv']),
                 mean_intensity=float(r.mean_intensity),
                 max_intensity=float(r.max_intensity),
+                **{f'val_{k}': v for k, v in particle_validation['details'].items()}
             )
         )
     
@@ -798,22 +1845,23 @@ def segment_particles_watershed(tif_path):
         print("Keine Partikel gefunden – Threshold/Parameter anpassen.")
         return
 
+    # --- CSV speichern (alle Partikel) ---
     df = pd.DataFrame(results)
-    df.to_csv(OUTPUT_CSV, index=False)
-    print(f"{len(df)} Partikel gefunden. Ergebnisse in: {OUTPUT_CSV}")
+    output_csv = output_dir / f"segmented_particles_of_{base_name}.csv"
+    df.to_csv(output_csv, index=False)
+    print(f"{len(df)} Partikel gefunden. Ergebnisse in: {output_csv}")
 
-    
-
-    # Optional: als DataFrame speichern
+    # Optional: gefilterte Partikel speichern
     filtered_df = pd.DataFrame(filtered_results)
-    filtered_csv = Path(OUTPUT_CSV).with_name("filtered_" + Path(OUTPUT_CSV).name)
+    filtered_csv = output_dir / f"segmented_particles_of_{base_name}_filtered.csv"
     filtered_df.to_csv(filtered_csv, index=False)
 
     print(f"{len(filtered_results)} Partikel nach Filterung. Gefilterte Ergebnisse in: {filtered_csv}")
 
     # Für weitere Verarbeitung/Plotting die gefilterte Liste verwenden
     results = filtered_results
-    # --- 8) Overlay + Histogram ------------------------------------
+
+    # --- 8) Overlay ------------------------------------
     fig, axes = plt.subplots(1, 3, figsize=(14, 4))
     axes[0].imshow(image, cmap="gray")
     axes[0].set_title("Original")
@@ -828,68 +1876,214 @@ def segment_particles_watershed(tif_path):
         x = r["x_px"]
         y = r["y_px"]
         rad = r["eq_diam_px"] / 2.0
-        circ_patch = plt.Circle((x, y), rad, fill=False, linewidth=1,color='red')
+        circ_patch = plt.Circle((x, y), rad, fill=False, linewidth=1, color='red')
         axes[2].add_patch(circ_patch)
     axes[2].set_title("Segmentierte Partikel (Kreise = eq. Durchmesser)")
     axes[2].axis("off")
     plt.tight_layout()
     plt.show()
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(image, cmap="gray", interpolation="nearest")
 
-    for r in results:
-        x = r["x_px"]
-        y = r["y_px"]
-        rad = r["refined_diam_px"] / 2.0   # statt eq_diam_px/2
+    # --- INTERAKTIVE Threshold-Visualisierung ---
+    print("\n" + "="*60)
+    print("INTERAKTIVE THRESHOLD-AUSWAHL")
+    print("="*60)
+    print("Verwende die Slider um die Thresholds anzupassen.")
+    print("Schließe das Fenster um fortzufahren.")
+    print("="*60 + "\n")
 
-        circ_patch = plt.Circle((x, y), radius=rad, fill=False, linewidth=1, color='blue'
-                                )
-        ax.add_patch(circ_patch)
+    final_thresh_c, final_thresh_u, accepted_particles = interactive_threshold_viewer(
+        image, results
+    )
 
-    ax.set_title("Partikel mit lokal verfeinertem Radius (Kantenfit)")
-    ax.set_axis_off()
-    plt.tight_layout()
-    plt.show()
-    plt.figure(figsize=(5, 4))
-    plt.hist(df["eq_diam_nm"], bins=30)
-    plt.xlabel("Äquivalenter Durchmesser [nm]")
-    plt.ylabel("Anzahl")
-    plt.title("Durchmesserverteilung")
-    plt.tight_layout()
-    plt.show()
+    # --- Histogramm nur für akzeptierte Partikel ---
+    if accepted_particles:
+        plt.figure(figsize=(8, 5))
+        diams = [r["refined_diam_nm"] for r in accepted_particles]
+        plt.hist(diams, bins=30, edgecolor='black', color='green', alpha=0.7)
+        plt.axvline(np.mean(diams), color='red', linestyle='--',
+                   label=f'Mittel: {np.mean(diams):.1f} nm')
+        plt.xlabel("Durchmesser [nm]")
+        plt.ylabel("Anzahl")
+        plt.title(f"Größenverteilung (akzeptierte Partikel, n={len(diams)})\n"
+                 f"Mittel: {np.mean(diams):.1f} nm, Std: {np.std(diams):.1f} nm\n"
+                 f"Thresholds: Kontrast≥{final_thresh_c:.2f}, Uniformität≥{final_thresh_u:.2f}")
+        plt.legend()
+        plt.tight_layout()
+        histogram_path = output_dir / f"histogram_of_{base_name}.png"
+        plt.savefig(histogram_path, dpi=150)
+        print(f"Histogramm gespeichert: {histogram_path}")
+        plt.show()
 
+    # Durchmesser in µm ableiten (nur akzeptierte)
+    if accepted_particles:
+        diam_um = np.array([r["refined_diam_nm"] for r in accepted_particles]) / 1000.0
+        hist_um_path = output_dir / f"hist_partikel_of_{base_name}_um.txt"
+        export_diameter_histogram_um(diam_um, hist_um_path)
 
-    # Durchmesser in µm ableiten
-    diam_um = df["refined_diam_nm"] / 1000.0   # nm -> µm
+    # Akzeptierte Partikel speichern
+    df_accepted = pd.DataFrame(accepted_particles)
+    accepted_csv = output_dir / f"segmented_particles_of_{base_name}_accepted.csv"
+    df_accepted.to_csv(accepted_csv, index=False)
+    print(f"Akzeptierte Partikel gespeichert: {accepted_csv}")
 
-    export_diameter_histogram_um(diam_um, "hist_partikel_um.txt")
+    # --- Segmentiertes Bild mit Scale Bar speichern ---
+    thresholds = {'contrast': final_thresh_c, 'uniformity': final_thresh_u}
 
+    # Alle Partikel (akzeptiert + abgelehnt sichtbar)
+    segmented_path_all = output_dir / f"segmented_of_{base_name}_all.png"
+    save_segmented_image(
+        image, results, px_nm, segmented_path_all,
+        title=f"{base_name} - Alle Partikel (n={len(results)})",
+        show_accepted_only=False, thresholds=thresholds
+    )
 
+    # Nur akzeptierte Partikel
+    segmented_path_accepted = output_dir / f"segmented_of_{base_name}_accepted.png"
+    save_segmented_image(
+        image, results, px_nm, segmented_path_accepted,
+        title=f"{base_name} - Akzeptierte Partikel (n={len(accepted_particles)})\n"
+              f"Kontrast≥{final_thresh_c:.2f}, Uniformität≥{final_thresh_u:.2f}",
+        show_accepted_only=True, thresholds=thresholds
+    )
+
+    # Rückgabe: alle Ergebnisse, akzeptierte Partikel, und gewählte Thresholds
+    return {
+        'all_particles': results,
+        'accepted_particles': accepted_particles,
+        'thresholds': {
+            'contrast': final_thresh_c,
+            'uniformity': final_thresh_u
+        },
+        'px_nm': px_nm
+    }
+def get_expected_output_paths(tif_path):
+    tif_path = Path(tif_path)
+    output_dir = OUTPUT_DIR
+    base_name = tif_path.stem
+    return [
+        output_dir / f"segmented_particles_of_{base_name}.csv",
+        output_dir / f"segmented_particles_of_{base_name}_accepted.csv",
+        output_dir / f"segmented_of_{base_name}_all.png",
+        output_dir / f"segmented_of_{base_name}_accepted.png",
+    ]
 
 
 if __name__ == "__main__":
-    paths= r"Z:\Diffusion in Hydrogel Data\SEM Particles\20nm\Latex particle_T2_20nm_007.tif"
-    paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\50nm\Latex particle_T2_50nm_005.tif"
-    paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\200 nm\Latex particle_Cpad_200nm_001.tif"
-    paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\200 nm\Latex particle_Cpad_200nm_003.tif"
-    #paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\1000\1000nm_10kx_001.tif"
-    #paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\1000\1000nm_20kx_003.tif"
-    paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\100 nm\100nm_T1_03.tif"
-    paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\100 nm\100nm_T1_04.tif"
-    paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\100 nm\100nm_T2_03.tif"
-    # paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\100 nm\100nm_T2_04.tif"
-    paths = r"Z:\Diffusion in Hydrogel Data\SEM Particles\500 nm\500nm_T2_01.tif"
-    paths = r"D:\SEM\2025_12-17\50nm_T2_03.tif"
-    paths = r"D:\SEM\2025_12-17\20nm_T2_02.tif"
-    paths = r"D:\SEM\2025_12-17\500nm_T1_04.tif"
+    # ============================================================================
+    # EINGABE: Ordner oder einzelne Datei
+    # ============================================================================
+    input_path = r"D:\SEM"
 
-        
-    particle_nm = extract_particle_size_from_path(Path(paths))
+    # Wähle Methode:
+    # - 'template': Template Matching (empfohlen für bekannte Partikelgrößen)
+    # - 'watershed': Watershed-Methode (gut für gut separierte Partikel)
+    METHOD = 'template'  # 'template' oder 'watershed'
 
-    EXPECTED_DIAM_NM_MIN = particle_nm *0.6  # Minimale erwartete Partikelgröße in nm
-    EXPECTED_DIAM_NM_MAX = particle_nm*1.5 # Maximale erwartete Partikelgröße in nm
+    # ============================================================================
+    # BATCH-VERARBEITUNG
+    # ============================================================================
+    input_path = Path(input_path)
 
-    segment_particles_watershed(paths)  # Pfad anpassen
+    # Sammle alle TIF-Dateien
+    if input_path.is_dir():
+        # Ordner: Finde alle .tif Dateien (rekursiv)
+        tif_files = list(input_path.rglob("*.tif")) + list(input_path.rglob("*.TIF"))
+        print(f"\n{'='*70}")
+        print(f"BATCH-VERARBEITUNG: {len(tif_files)} TIF-Dateien gefunden")
+        print(f"Ordner: {input_path}")
+        print(f"{'='*70}\n")
+    elif input_path.is_file() and input_path.suffix.lower() == '.tif':
+        # Einzelne Datei
+        tif_files = [input_path]
+        print(f"\nEinzeldatei: {input_path}\n")
+    else:
+        raise ValueError(f"Ungültiger Pfad: {input_path}")
+
+    # Ergebnisse sammeln
+    results_summary = []
+    failed_files = []
+    skipped_files = []
+
+    for i, tif_path in enumerate(tif_files, 1):
+        print(f"\n{'#'*70}")
+        print(f"# DATEI {i}/{len(tif_files)}: {tif_path.name}")
+        print(f"# Pfad: {tif_path}")
+        print(f"{'#'*70}")
+
+        expected_outputs = get_expected_output_paths(tif_path)
+        if all(p.exists() for p in expected_outputs):
+            print("Ausgabe existiert bereits (CSV/PNG). Ueberspringe Datei.")
+            skipped_files.append(tif_path.name)
+            results_summary.append({
+                'file': tif_path.name,
+                'status': 'SKIPPED',
+                'reason': 'outputs_exist'
+            })
+            continue
+
+        try:
+            # Partikelgröße aus Dateiname/Pfad extrahieren
+            particle_nm = extract_particle_size_from_path(tif_path)
+            print(f"Erkannte Partikelgröße: {particle_nm} nm")
+
+            # Segmentierung durchführen (particle_nm wird übergeben)
+            if METHOD == 'template':
+                result = segment_particles_template_matching(tif_path, particle_nm=particle_nm, n_scales=24)
+            else:
+                result = segment_particles_watershed(tif_path, particle_nm=particle_nm)
+
+            # Ergebnis speichern
+            if result:
+                n_all = len(result['all_particles'])
+                n_accepted = len(result['accepted_particles'])
+                results_summary.append({
+                    'file': tif_path.name,
+                    'particle_size_nm': particle_nm,
+                    'total_detected': n_all,
+                    'accepted': n_accepted,
+                    'acceptance_rate': n_accepted / n_all * 100 if n_all > 0 else 0,
+                    'contrast_threshold': result['thresholds']['contrast'],
+                    'uniformity_threshold': result['thresholds']['uniformity'],
+                    'status': 'OK'
+                })
+
+        except Exception as e:
+            print(f"\n!!! FEHLER bei {tif_path.name}: {e}")
+            failed_files.append({'file': tif_path.name, 'error': str(e)})
+            results_summary.append({
+                'file': tif_path.name,
+                'status': 'FEHLER',
+                'error': str(e)
+            })
+
+    # ============================================================================
+    # ZUSAMMENFASSUNG
+    # ============================================================================
+    print(f"\n\n{'='*70}")
+    print("BATCH-VERARBEITUNG ABGESCHLOSSEN")
+    print(f"{'='*70}")
+    successful = len(tif_files) - len(failed_files) - len(skipped_files)
+    print(f"Erfolgreich: {successful}/{len(tif_files)} Dateien")
+
+    if failed_files:
+        print(f"\nFehlgeschlagen ({len(failed_files)}):")
+        for f in failed_files:
+            print(f"  - {f['file']}: {f['error']}")
+
+    if skipped_files:
+        print(f"\nUebersprungen ({len(skipped_files)}):")
+        for f in skipped_files:
+            print(f"  - {f}")
+
+    # Zusammenfassung als CSV speichern
+    if results_summary:
+        summary_df = pd.DataFrame(results_summary)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        summary_path = OUTPUT_DIR / "batch_summary.csv"
+        summary_df.to_csv(summary_path, index=False)
+        print(f"\nZusammenfassung gespeichert: {summary_path}")
+
+    print(f"{'='*70}\n")
 
 
 

@@ -47,7 +47,7 @@ MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS
 VERBOSE = True
 
 # Pickle caching
-NEUBERECHNEN = True  # Set to True to force recomputation
+NEUBERECHNEN = False  # Set to True to force recomputation
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
 
 

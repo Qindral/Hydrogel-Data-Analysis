@@ -23,7 +23,7 @@ ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
 
 XML_FOLDERS = {
     20.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\20 nm\20 nm 20 mg\Tracks")],
-    50.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks")],
+    50.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks_new")],#Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks")],
     100.0: [ROOT_PATH / "100 nm" / "Tracks"],
     200.0: [ROOT_PATH / "200 nm" / "Tracks"],
     500.0: [ROOT_PATH / "500 nm" / "Tracks"],
@@ -36,7 +36,7 @@ MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS
 VERBOSE = False
 
 # Pickle caching
-NEUBERECHNEN = False  # Set to True to force recomputation
+NEUBERECHNEN =False  # Set to True to force recomputation
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_results.pkl"
 
 

@@ -249,7 +249,7 @@ def extract_particle_size_from_path(folder_path: Path) -> Optional[float]:
     for name in candidates:
         # Try exact matches with standard sizes first
         for size in standard_sizes:
-            pattern = rf'\b{size}\b'
+            pattern = rf'{size}'
             if re.search(pattern, name, re.IGNORECASE):
                 return float(size)
         
