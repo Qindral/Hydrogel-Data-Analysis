@@ -197,9 +197,9 @@ Index	base	dark	bright
 8	#da0000	#990000	#de1f1f
 
 Für besondere Markierungen:
-A	#da00bd	#2c071a	#9b5191
-B	#da0000	#990000	#de1f1f
-C	#da0000	#990000	#de1f1f
+A	#da00bd	#551344	#9b5191
+B	#512279	#4f1055	#9850b4
+C	#237735	#1a5e3c	#54ad49
 
 Regel:
 
