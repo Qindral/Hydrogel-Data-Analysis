@@ -3,7 +3,9 @@
     "allow": [
       "Bash(venvScriptspython.exe \"C:\\\\Users\\\\Jonas\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Jonas-Documents-GitHub-Hydrogel-Data-Analysis\\\\423ee0d3-5221-4ac8-a80f-b30e6c2eea16\\\\scratchpad\\\\test_theory_plot.py\")",
       "Bash(./venv/Scripts/python.exe:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)"
     ]
   }
 }

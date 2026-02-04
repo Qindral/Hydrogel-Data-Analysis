@@ -1,259 +1,161 @@
 """
-TrackMate XML Particle Counter and Step Size Diffusion Analysis - 20mg Hydrogel
+Step size diffusion analysis (20 mg Hydrogel) using core modules only.
 
-This script processes TrackMate-generated XML files to count particles and calculate
-diffusion coefficients using the step size (displacement) method for particles in 20mg hydrogel.
+Loads XML files from explicit folders per particle size, computes step size diffusion per file,
+and shows the final theory comparison plot.
 
-Main features:
-- Scans directory structure for particle size folders with Tracks subfolders
-- Counts total particles per particle size from TrackMate XML files
-- Calculates diffusion coefficients from step size distributions
-- Exports summary statistics and comparisons with theory to CSV
-
-Method: Diffusion coefficient from displacement distributions
-For each particle track, calculate frame-to-frame displacements in x and y:
-    dx_i = x_{i+1} - x_i
-    dy_i = y_{i+1} - y_i
-Fit Gaussian distributions to dx and dy separately to extract variance σ².
-For 2D Brownian motion: σ² = 2*D*dt, therefore:
-    D = σ² / (2 * dt)
-where dt is the time interval between frames.
-
-Author: Jonas
-Date: 2026-01-13
+Supports pickle caching to speed up repeated runs.
+Set NEUBERECHNEN = True to force recomputation.
 """
 
-# Import all functions and constants from the D0 version
-import sys
 from pathlib import Path
+import pickle
+import pandas as pd
 
-# Add parent directory to path to import from Schrittweiten_methode_D0
-sys.path.insert(0, str(Path(__file__).parent))
+from core.io import single_file_data
+from core.analysis import perform_stepsize_analysis, DEFAULT_STEP_INTERVAL
+from core.visualization import plot_step_size_overlay, plot_dx_dy_distributions, plot_theory_comparison
 
-from Schrittweiten_methode_D0 import (
-    # Utility functions
-    extract_particle_size_from_path,
-    parse_rec_file,
-    get_mpp_from_fps_and_size,
-    get_mpp_from_fps,
-    # XML parsing
-    extract_image_dimensions_from_xml,
-    read_trackmate_xml,
-    collect_all_files_by_particle_size,
-    find_tracks_in_particle_folders,
-    # Analysis functions
-    calculate_step_sizes,
-    calculate_diffusion_from_steps,
-    analyze_single_file,
-    analyze_all_files,
-    combine_by_particle_size,
-    count_particles_per_size,
-    # Plotting functions
-    plot_step_size_distributions,
-    plot_step_size_overlay,
-    plot_dx_dy_distributions,
-    plot_diffusion_comparison,
-    print_comparison_table,
-    calculate_theoretical_D,
-    # Constants
-    BOLTZMANN_CONSTANT,
-    TEMPERATURE,
-    WATER_VISCOSITY,
-    DEFAULT_MPP,
-    DEFAULT_FPS,
-    STEP_INTERVAL,
-    MIN_TRACK_LENGTH,
-    MAX_SIGMA_RATIO,
-    MAX_MEAN_SIGMA_RATIO
-)
-
-# ============================================================================
-# CONFIGURATION - 20MG SPECIFIC PATHS
-# ============================================================================
-
-# Directory paths for 20mg measurements
+# -----------------------------
+# Configuration
+# -----------------------------
 ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
-SAVE_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\trackmate_MSD_results")
 
-# Create output directory if it doesn't exist
-SAVE_PATH.mkdir(parents=True, exist_ok=True)
+XML_FOLDERS = {
+    20.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\20 nm\20 nm 20 mg\Tracks")],
+    50.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks_new")],
+    100.0: [ROOT_PATH / "100 nm" / "Tracks"],
+    200.0: [ROOT_PATH / "200 nm" / "Tracks"],
+    500.0: [ROOT_PATH / "500 nm" / "Tracks"],
+    1000.0: [ROOT_PATH / "1000 nm" / "Tracks"],
+}
+
+SAVE_PATH = None
+SAVE_PATH = Path(f"E:\\PhD Data Analysis\\SPT 2025 II\\Hydrogel Messung\\20mg C16\\Plots_{pd.Timestamp.now().strftime('%Y%m%d')}")
+STEP_INTERVAL = DEFAULT_STEP_INTERVAL
+VERBOSE = False
+PRINT_FILE_SUMMARY = True
+PLOT_STEP_OVERLAY = True
+PLOT_DX_DY_DISTS = False
+
+# Pickle caching
+NEUBERECHNEN = False  # Set to True to force recomputation
+CACHE_FILE = Path(__file__).parent / "cache" / "stepsize_20mg_results.pkl"
 
 
-# ============================================================================
-# MAIN EXECUTION
-# ============================================================================
+def load_cached_results() -> dict | None:
+    """Load results from pickle cache if available."""
+    if NEUBERECHNEN:
+        print("NEUBERECHNEN=True: Ignoriere Cache, berechne neu...")
+        return None
+    if not CACHE_FILE.exists():
+        print(f"Kein Cache gefunden: {CACHE_FILE}")
+        return None
+    try:
+        with open(CACHE_FILE, "rb") as f:
+            results = pickle.load(f)
+        print(f"Cache geladen: {CACHE_FILE} ({len(results)} Dateien)")
+        return results
+    except Exception as e:
+        print(f"Fehler beim Laden des Cache: {e}")
+        return None
 
-def main():
-    """
-    Main execution function for step size diffusion analysis in 20mg hydrogel.
-    
-    This function:
-    1. Scans for XML track files and extracts FPS from .rec files
-    2. Counts particles per particle size
-    3. Calculates diffusion coefficients using step size method
-    4. Creates plots and exports results
-    """
-    print("=" * 70)
-    print("TrackMate Step Size Diffusion Analysis - 20mg Hydrogel")
-    print("=" * 70)
-    print(f"\nRoot directory: {ROOT_PATH}")
-    print(f"Save directory: {SAVE_PATH}")
-    print(f"Step interval: {STEP_INTERVAL} (using every {STEP_INTERVAL}{'st' if STEP_INTERVAL == 1 else 'rd' if STEP_INTERVAL == 3 else 'th'} step)")
-    print(f"Minimum track length: {MIN_TRACK_LENGTH} points")
-    print(f"Quality thresholds: sigma_ratio <= {MAX_SIGMA_RATIO}, mean/sigma <= {MAX_MEAN_SIGMA_RATIO}\n")
-    
-    # Step 1: Collect XML files with FPS data
-    print("=" * 70)
-    print("Step 1: Scanning for XML track files and calibration data...")
-    print("=" * 70)
-    
-    files_df = collect_all_files_by_particle_size(ROOT_PATH)
-    
-    if files_df.empty:
-        print("\nERROR: No XML files found!")
-        print("Please check that the ROOT_PATH is correct and contains particle size folders with Tracks/ subfolders.")
+
+def save_results_to_cache(results: dict) -> None:
+    """Save results to pickle cache."""
+    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(CACHE_FILE, "wb") as f:
+        pickle.dump(results, f)
+    print(f"Cache gespeichert: {CACHE_FILE} ({len(results)} Dateien)")
+
+
+def compute_results() -> dict:
+    """Compute step size analysis for all XML files."""
+    results = {}
+    total_files = 0
+    processed = 0
+
+    for size_nm, folders in XML_FOLDERS.items():
+        for folder in folders:
+            if not folder.exists():
+                print(f"WARNING: folder not found: {folder}")
+                continue
+            xml_files = list(folder.glob("*.xml"))
+            total_files += len(xml_files)
+            for xml_path in sorted(xml_files):
+                rd = single_file_data(xml_path)
+                if rd is None:
+                    continue
+                rd["particle_size_nm"] = size_nm if rd.get("particle_size_nm") is None else rd["particle_size_nm"]
+                perform_stepsize_analysis(rd, step_interval=STEP_INTERVAL)
+                results[rd["xml_path"]] = rd
+                processed += 1
+                if processed % 10 == 0:
+                    print(f"  Verarbeitet: {processed}/{total_files}")
+
+    print(f"Analyse abgeschlossen: {processed} Dateien verarbeitet")
+    return results
+
+
+def main() -> None:
+    # Try to load from cache first
+    results = load_cached_results()
+
+    if results is None:
+        # Compute fresh results
+        results = compute_results()
+        if results:
+            save_results_to_cache(results)
+
+    if not results:
+        print("No analyzable files found.")
         return
-    
-    print(f"\n[OK] Found {len(files_df)} XML files across {files_df['particle_size_nm'].nunique()} particle sizes")
-    
-    # Save XML file listing
-    output_files_csv = SAVE_PATH / "xml_file_associations_20mg.csv"
-    files_df.to_csv(output_files_csv, index=False)
-    print(f"[OK] XML file associations saved to: {output_files_csv}")
-    
-    # Display mode statistics
-    import pandas as pd
-    xml_with_fps = files_df[files_df['fps'].notna()]
-    
-    if not xml_with_fps.empty:
-        print("\n" + "=" * 70)
-        print("MODE DETECTION STATISTICS")
-        print("=" * 70)
-        
-        # Group by mode
-        mode_20 = xml_with_fps[xml_with_fps['mode'] == '20 FPS']
-        mode_60 = xml_with_fps[xml_with_fps['mode'] == '60 FPS']
-        mode_unknown = xml_with_fps[xml_with_fps['mode'] == 'Unknown']
-        
-        print(f"\nTotal XML files: {len(xml_with_fps)}")
-        print(f"  • 20 FPS mode: {len(mode_20)} files ({len(mode_20)/len(xml_with_fps)*100:.1f}%)")
-        print(f"  • 60 FPS mode: {len(mode_60)} files ({len(mode_60)/len(xml_with_fps)*100:.1f}%)")
-        if len(mode_unknown) > 0:
-            print(f"  • Unknown mode: {len(mode_unknown)} files ({len(mode_unknown)/len(xml_with_fps)*100:.1f}%)")
-        
-        # Detailed breakdown by particle size
-        print("\n" + "-" * 70)
-        print("BREAKDOWN BY PARTICLE SIZE")
-        print("-" * 70)
-        
-        for particle_size in sorted(xml_with_fps['particle_size_nm'].unique()):
-            size_files = xml_with_fps[xml_with_fps['particle_size_nm'] == particle_size]
-            print(f"\n{particle_size:.0f} nm ({len(size_files)} XML files):")
-            for _, row in size_files.iterrows():
-                size_str = f"{row['x_max']}×{row['y_max']}" if pd.notna(row['x_max']) else "unknown"
-                print(f"  • {row['xml_name']}: {row['mode']} ({size_str}, {row['mpp']} µm/px)")
-    else:
-        print("\nWarning: No calibration data found - will use default values")
-    
-    # Step 2: Count particles
-    print("\n" + "=" * 70)
-    print("Step 2: Counting particles from XML files...")
-    print("=" * 70 + "\n")
-    
-    # Count particles per size
-    particle_counts = []
-    for particle_size in sorted(files_df['particle_size_nm'].unique()):
-        size_xmls = files_df[files_df['particle_size_nm'] == particle_size]
-        total_particles = 0
-        
-        print(f"{particle_size:.0f} nm:")
-        for _, row in size_xmls.iterrows():
-            xml_path = Path(row['xml_path'])
-            df = read_trackmate_xml(xml_path)
-            if df is not None and not df.empty:
-                num_particles = df['particle'].nunique()
-                total_particles += num_particles
-                print(f"  • {row['xml_name']}: {num_particles} particles")
-        
-        particle_counts.append({
-            'particle_size_nm': particle_size,
-            'num_xml_files': len(size_xmls),
-            'total_particles': total_particles
+
+    rows = []
+    for r in results.values():
+        fit = r.get("fit_results_step")
+        if fit is None:
+            continue
+        # Count unique particles from tracks_df
+        tracks_df = r.get("tracks_df")
+        if tracks_df is not None and "particle" in tracks_df.columns:
+            n_particles = len(tracks_df["particle"].unique())
+        else:
+            n_particles = r.get("number_of_tracks", 0) or 0
+        n_steps = fit.get("n_steps_x", 0) or 0
+        rows.append({
+            "xml_path": r["xml_path"],
+            "base_name": r["base_name"],
+            "particle_size_nm": r.get("particle_size_nm"),
+            "D_stepsize_um2_per_s": r.get("D_step"),
+            "fps": r.get("fps"),
+            "mpp_um_per_px": r.get("mpp"),
+            "n_particles": n_particles,
+            "n_steps": n_steps,
+            "weight": n_particles,
         })
-        
-        print(f"  → Total: {total_particles} particles from {len(size_xmls)} files\n")
-    
-    # Create summary DataFrame
-    summary_df = pd.DataFrame(particle_counts)
-    
-    # Print summary table
-    print("=" * 70)
-    print("PARTICLE COUNT SUMMARY")
-    print("=" * 70)
-    print(summary_df.to_string(index=False))
-    print("=" * 70)
-    
-    # Save particle count summary
-    output_summary_csv = SAVE_PATH / "particle_count_summary_20mg.csv"
-    summary_df.to_csv(output_summary_csv, index=False)
-    print(f"\n[OK] Particle count summary saved to: {output_summary_csv}")
-    
-    # Step 3: Calculate diffusion coefficients from step sizes
-    print("\n" + "=" * 70)
-    print("Step 3: Calculating diffusion coefficients from step sizes...")
-    print("=" * 70)
-    
-    results_df = analyze_all_files(files_df)
-    
-    if not results_df.empty:
-        # Save individual file results
-        output_results_csv = SAVE_PATH / "hydrogel_20mg_stepsize_analysis_results.csv"
-        results_df.to_csv(output_results_csv, index=False)
-        print(f"\n[OK] Individual file results saved to: {output_results_csv}")
-        
-        # Step 4: Combine results by particle size
-        print("\n" + "=" * 70)
-        print("Step 4: Combining results by particle size...")
-        print("=" * 70)
-        
-        combined_df = combine_by_particle_size(results_df)
-        
-        # Save combined results
-        output_combined_csv = SAVE_PATH / "hydrogel_20mg_diffusion_coefficients_stepsize.csv"
-        combined_df.to_csv(output_combined_csv, index=False)
-        print(f"\n[OK] Combined results saved to: {output_combined_csv}")
-        
-        # Print comparison table
-        print_comparison_table(combined_df)
-        
-        # Step 5: Create visualizations
-        print("\n" + "=" * 70)
-        print("Step 5: Creating visualizations...")
-        print("=" * 70)
-        
-        # Plot diffusion comparison
-        plot_diffusion_comparison(combined_df, results_df, SAVE_PATH)
-        
-        # Plot individual file distributions
-        plot_step_size_distributions(results_df, SAVE_PATH)
-        plot_dx_dy_distributions(results_df, SAVE_PATH)
-        plot_step_size_overlay(results_df, SAVE_PATH)
-        
-        print("\n" + "=" * 70)
-        print("ANALYSIS COMPLETE")
-        print("=" * 70)
-        print(f"\nAll results saved to: {SAVE_PATH}")
-        print("\nGenerated files:")
-        print(f"  • xml_file_associations_20mg.csv")
-        print(f"  • particle_count_summary_20mg.csv")
-        print(f"  • hydrogel_20mg_stepsize_analysis_results.csv")
-        print(f"  • hydrogel_20mg_diffusion_coefficients_stepsize.csv")
-        print(f"  • diffusion_comparison_stepsize_individual.png")
-        print(f"  • Individual step size distribution plots")
-        print(f"  • Individual dx/dy distribution plots")
-        print(f"  • Step size overlay plot")
-    else:
-        print("\nERROR: No valid analysis results - check that XML files contain valid track data")
+
+    summary_df = pd.DataFrame(rows)
+
+    if VERBOSE:
+        print(summary_df.to_string(index=False))
+    if PRINT_FILE_SUMMARY:
+        cols = ["base_name", "particle_size_nm", "n_particles", "n_steps", "fps", "mpp_um_per_px", "D_stepsize_um2_per_s"]
+        file_df = summary_df[cols].sort_values(["particle_size_nm", "base_name"])
+        print("\nPro Datei (Step Size):")
+        print(file_df.to_string(index=False))
+
+    if SAVE_PATH is not None:
+        SAVE_PATH.mkdir(parents=True, exist_ok=True)
+
+    if PLOT_STEP_OVERLAY and SAVE_PATH is not None:
+        plot_step_size_overlay(results, SAVE_PATH, step_interval=STEP_INTERVAL)
+    if PLOT_DX_DY_DISTS and SAVE_PATH is not None:
+        plot_dx_dy_distributions(results, SAVE_PATH, step_interval=STEP_INTERVAL)
+
+    if SAVE_PATH is not None:
+        theory_plot = SAVE_PATH / "diffusion_comparison_stepsize.png"
+        plot_theory_comparison(summary_df, theory_plot)
 
 
 if __name__ == "__main__":

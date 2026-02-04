@@ -27,6 +27,7 @@ TRACK_FOLDERS = {
     "Tracks": Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks"),
     "Tracks_new": Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks_new"),
     "Tracks_old": Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks_old"),
+    "Tracks_test": Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks_test"),
 }
 
 PARTICLE_SIZE_NM = 50.0  # Nominal particle size

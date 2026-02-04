@@ -1,161 +1,173 @@
 """
 Step size diffusion analysis (water) using core modules only.
 
-Uses explicit XML folders per particle size, runs step size analysis for each file,
-then shows only final outputs:
-- Step-size statistics per particle size
-- Diffusion comparison (measured vs theory + DLS)
+Loads XML files from explicit folders per particle size, computes step size diffusion per file,
+and shows the final theory comparison plot.
+
+Supports pickle caching to speed up repeated runs.
+Set NEUBERECHNEN = True to force recomputation.
 """
 
 from pathlib import Path
-import numpy as np
+import pickle
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from core.io import single_file_data
-from core.analysis import (
-    perform_stepsize_analysis,
-    calculate_theoretical_diffusion,
-    DEFAULT_STEP_INTERVAL,
-)
-from core.visualization import plot_diffusion_comparison
+from core.analysis import perform_stepsize_analysis, DEFAULT_STEP_INTERVAL
+from core.visualization import plot_step_size_overlay, plot_dx_dy_distributions, plot_theory_comparison
 
 # -----------------------------
 # Configuration
 # -----------------------------
-ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung")
 XML_FOLDERS = {
-    20.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks"),Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.16\Tracks_20")],
-    50.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_50")],
-    100.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks")],
-    200.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\200 nm\Tracks")],
-    500.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\500 nm\Tracks")],
-    1000.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_1000")],
+    20.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks"),
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.16\Tracks_20"),
+    ],
+    50.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_50"),
+    ],
+    100.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks"),
+    ],
+    200.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\200 nm\Tracks"),
+    ],
+    500.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\500 nm\Tracks"),
+    ],
+    1000.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_1000"),
+    ],
 }
 
-# Folder for 20mg C16 analysis --- IGNORE ---
-
-ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
-XML_FOLDERS = {
-    20.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\20 nm\20 nm 20 mg\Tracks")],
-    50.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks")],
-    100.0: [],
-    200.0: [],
-    500.0: [],
-    1000.0: [],
-}
-
-
-SAVE_PATH = None                 # show plots only
+SAVE_PATH = None
+SAVE_PATH = Path(f"E:\\PhD Data Analysis\\SPT 2025 II\\D_0 Wassermessung\\Plots_{pd.Timestamp.now().strftime('%Y%m%d')}")
 STEP_INTERVAL = DEFAULT_STEP_INTERVAL
-VERBOSE = True
+VERBOSE = False
+PRINT_FILE_SUMMARY = True
+PLOT_STEP_OVERLAY = True
+PLOT_DX_DY_DISTS = False
+
+# Pickle caching
+NEUBERECHNEN = False  # Set to True to force recomputation
+CACHE_FILE = Path(__file__).parent / "cache" / "stepsize_d0_results.pkl"
 
 
-def main() -> None:
-    # Collect results for all files
+def load_cached_results() -> dict | None:
+    """Load results from pickle cache if available."""
+    if NEUBERECHNEN:
+        print("NEUBERECHNEN=True: Ignoriere Cache, berechne neu...")
+        return None
+    if not CACHE_FILE.exists():
+        print(f"Kein Cache gefunden: {CACHE_FILE}")
+        return None
+    try:
+        with open(CACHE_FILE, "rb") as f:
+            results = pickle.load(f)
+        print(f"Cache geladen: {CACHE_FILE} ({len(results)} Dateien)")
+        return results
+    except Exception as e:
+        print(f"Fehler beim Laden des Cache: {e}")
+        return None
+
+
+def save_results_to_cache(results: dict) -> None:
+    """Save results to pickle cache."""
+    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(CACHE_FILE, "wb") as f:
+        pickle.dump(results, f)
+    print(f"Cache gespeichert: {CACHE_FILE} ({len(results)} Dateien)")
+
+
+def compute_results() -> dict:
+    """Compute step size analysis for all XML files."""
     results = {}
-    for size_nm, folder in XML_FOLDERS.items():
+    total_files = 0
+    processed = 0
 
-        for folder in XML_FOLDERS[size_nm]:
-            for xml_path in sorted(folder.glob("*.xml")):
+    for size_nm, folders in XML_FOLDERS.items():
+        for folder in folders:
+            if not folder.exists():
+                print(f"WARNING: folder not found: {folder}")
+                continue
+            xml_files = list(folder.glob("*.xml"))
+            total_files += len(xml_files)
+            for xml_path in sorted(xml_files):
                 rd = single_file_data(xml_path)
                 if rd is None:
                     continue
                 rd["particle_size_nm"] = size_nm if rd.get("particle_size_nm") is None else rd["particle_size_nm"]
                 perform_stepsize_analysis(rd, step_interval=STEP_INTERVAL)
                 results[rd["xml_path"]] = rd
+                processed += 1
+                if processed % 10 == 0:
+                    print(f"  Verarbeitet: {processed}/{total_files}")
+
+    print(f"Analyse abgeschlossen: {processed} Dateien verarbeitet")
+    return results
+
+
+def main() -> None:
+    # Try to load from cache first
+    results = load_cached_results()
+
+    if results is None:
+        # Compute fresh results
+        results = compute_results()
+        if results:
+            save_results_to_cache(results)
 
     if not results:
         print("No analyzable files found.")
         return
 
-    # Build per-file results_df (minimal columns needed by plot_diffusion_comparison)
     rows = []
     for r in results.values():
         fit = r.get("fit_results_step")
-        if not fit:
+        if fit is None:
             continue
+        # Count unique particles from tracks_df
+        tracks_df = r.get("tracks_df")
+        if tracks_df is not None and "particle" in tracks_df.columns:
+            n_particles = len(tracks_df["particle"].unique())
+        else:
+            n_particles = r.get("number_of_tracks", 0) or 0
+        n_steps = fit.get("n_steps_x", 0) or 0
         rows.append({
             "xml_path": r["xml_path"],
-            "xml_name": r["base_name"],
+            "base_name": r["base_name"],
             "particle_size_nm": r.get("particle_size_nm"),
-            "D": r.get("D_step"),
-            "D_std": fit.get("D_dir_disagreement_um2_per_s", 0.0) or 0.0,
-            "mode": "Unknown",
-            "quality_flag": fit.get("quality_flag", "unknown"),
-            "num_steps": fit.get("n_steps_x", 0),
-            "mpp": r.get("mpp"),
+            "D_stepsize_um2_per_s": r.get("D_step"),
+            "fps": r.get("fps"),
+            "mpp_um_per_px": r.get("mpp"),
+            "n_particles": n_particles,
+            "n_steps": n_steps,
+            "weight": n_particles,
         })
-    results_df = pd.DataFrame(rows)
 
-    # Build combined_df (per particle size)
-    groups = results_df.groupby("particle_size_nm", dropna=True)
-    combined_rows = []
-    for size, g in groups:
-        w = g["num_steps"].to_numpy(dtype=float)
-        d_vals = g["D"].to_numpy(dtype=float)
-        d_err = g["D_std"].to_numpy(dtype=float)
-        if np.nansum(w) > 0:
-            d_weighted = np.average(d_vals, weights=w)
-            d_weighted_err = np.sqrt(np.nansum((w * d_err) ** 2)) / np.nansum(w)
-        else:
-            d_weighted = np.nan
-            d_weighted_err = np.nan
-        combined_rows.append({
-            "particle_size_nm": size,
-            "num_files": int(len(g)),
-            "total_particles": int(len(g)),
-            "total_steps": int(np.nansum(w)),
-            "D_measured": d_weighted,
-            "D_measured_std": d_weighted_err,
-            "D_theoretical": calculate_theoretical_diffusion(size),
-        })
-    combined_df = pd.DataFrame(combined_rows)
+    summary_df = pd.DataFrame(rows)
 
-    # Step-size statistics per particle size (mean/std of |step| in nm)
-    step_stats = []
-    for size, g in groups:
-        steps_nm_all = []
-        for _, row in g.iterrows():
-            rd = results[row["xml_path"]]
-            step_df = rd["fit_results_step"]["step_df"]
-            mpp = row["mpp"]
-            steps_nm = np.sqrt(step_df["dx"].to_numpy()**2 + step_df["dy"].to_numpy()**2) * mpp * 1000.0
-            steps_nm_all.append(steps_nm)
-        if steps_nm_all:
-            cat = np.concatenate(steps_nm_all)
-            step_stats.append({
-                "particle_size_nm": size,
-                "mean_step_nm": float(np.nanmean(cat)),
-                "std_step_nm": float(np.nanstd(cat)),
-                "n": int(cat.size),
-            })
-    step_df = pd.DataFrame(step_stats).sort_values("particle_size_nm")
+    if VERBOSE:
+        print(summary_df.to_string(index=False))
+    if PRINT_FILE_SUMMARY:
+        cols = ["base_name", "particle_size_nm", "n_particles", "n_steps", "fps", "mpp_um_per_px", "D_stepsize_um2_per_s"]
+        file_df = summary_df[cols].sort_values(["particle_size_nm", "base_name"])
+        print("\nPro Datei (Step Size):")
+        print(file_df.to_string(index=False))
 
-    # Plot step statistics
-    if not step_df.empty:
-        fig, ax = plt.subplots(figsize=(9, 5))
-        ax.errorbar(step_df["particle_size_nm"], step_df["mean_step_nm"], yerr=step_df["std_step_nm"], fmt="o-", capsize=4)
-        ax.set_xscale("log")
-        ax.set_xlabel("Particle size [nm]")
-        ax.set_ylabel("Mean step size [nm]")
-        ax.set_title("Step-size statistics per particle size")
-        ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.show()
+    if SAVE_PATH is not None:
+        SAVE_PATH.mkdir(parents=True, exist_ok=True)
 
-    # Final diffusion comparison plot
-    plot_diffusion_comparison(combined_df, results_df, save_path=SAVE_PATH)
-    for particle_size, group in combined_df.groupby("particle_size_nm"):
-        row = group.iloc[0]
-        if VERBOSE:
-            print(f"Particle size: {particle_size} nm")
-            print(f"  • Measured D: {row['D_measured']:.4f} ± {row['D_measured_std']:.4f} µm²/s")
-            print(f"  • Theoretical D: {row['D_theoretical']:.4f} µm²/s")
-            print(f"  • Number of files: {row['num_files']}")
-            print(f"  • Total steps: {row['total_steps']}")
-            print(f"  • Total particles: {row['total_particles']}")
-            print("")
+    if PLOT_STEP_OVERLAY and SAVE_PATH is not None:
+        plot_step_size_overlay(results, SAVE_PATH, step_interval=STEP_INTERVAL)
+    if PLOT_DX_DY_DISTS and SAVE_PATH is not None:
+        plot_dx_dy_distributions(results, SAVE_PATH, step_interval=STEP_INTERVAL)
+
+    if SAVE_PATH is not None:
+        theory_plot = SAVE_PATH / "diffusion_comparison_stepsize.png"
+        plot_theory_comparison(summary_df, theory_plot)
+
 
 if __name__ == "__main__":
     main()
