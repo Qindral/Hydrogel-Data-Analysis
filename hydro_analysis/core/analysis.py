@@ -14,7 +14,7 @@ from .physics import calculate_theoretical_diffusion
 
 # Standard analysis settings for canonical keys in result_dict
 DEFAULT_MSD_FIT_POINTS = 6
-DEFAULT_STEP_INTERVAL = 1
+DEFAULT_STEP_INTERVAL = 3
 
 
 def _get_tracks_df(data: pd.DataFrame | Dict[str, Any]) -> Optional[pd.DataFrame]:

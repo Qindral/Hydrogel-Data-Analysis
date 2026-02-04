@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from core.io import single_file_data
+from core.io import single_file_data, get_dls_reference_maps
 from core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
 from core.visualization import plot_theory_comparison, plot_diffusion_comparison
 from core.physics import calculate_theoretical_diffusion
@@ -122,6 +122,7 @@ def plot_imsd_overlays_by_size(
     results: dict,
     save_path: Path | None,
     max_curves_per_size: int | None = None,
+    size_override: dict[float, float] | None = None,
 ) -> None:
     size_map = _collect_imsd_by_size(results)
     if not size_map:
@@ -173,7 +174,8 @@ def plot_imsd_overlays_by_size(
         lags = np.asarray(imsd_all.index.values, dtype=float)
         lags = lags[np.isfinite(lags) & (lags > 0)]
         if lags.size > 0:
-            D_theory = calculate_theoretical_diffusion(particle_size_nm=size_nm)
+            mapped_size = size_override.get(size_nm, size_nm) if size_override else size_nm
+            D_theory = calculate_theoretical_diffusion(particle_size_nm=mapped_size)
             x_line = np.logspace(np.log10(lags.min()), np.log10(lags.max()), 100)
             ax.loglog(
                 x_line,
@@ -181,7 +183,7 @@ def plot_imsd_overlays_by_size(
                 color="black",
                 linestyle="--",
                 linewidth=2.0,
-                label=f"Theory (D={D_theory:.3g} µm²/s)",
+                label=f"Theory (D={D_theory:.3g} µm²/s, size={mapped_size:.1f} nm)",
             )
 
         ax.set_xlabel("Lag Time (s)", fontsize=10)
@@ -246,9 +248,27 @@ def main() -> None:
         print("\nPro Datei (MSD):")
         print(file_df.to_string(index=False))
 
+    dls_maps = get_dls_reference_maps()
+    size_override = dls_maps["size_override_nm"]
+    size_err = dls_maps["size_err_nm"]
+    dls_override = dls_maps["dls_D_um2_per_s"]
+    dls_err = dls_maps["dls_D_err_um2_per_s"]
+
     #plot_theory_comparison(summary_df, SAVE_PATH)
-    plot_imsd_overlays_by_size(results, SAVE_PATH, max_curves_per_size=MAX_IMSD_CURVES_PER_SIZE)
-    plot_diffusion_comparison(summary_df, SAVE_PATH)
+    plot_imsd_overlays_by_size(
+        results,
+        SAVE_PATH,
+        max_curves_per_size=MAX_IMSD_CURVES_PER_SIZE,
+        size_override=size_override,
+    )
+    plot_diffusion_comparison(
+        summary_df,
+        SAVE_PATH,
+        size_override=size_override,
+        size_err=size_err,
+        dls_override=dls_override,
+        dls_err=dls_err,
+    )
 
 
 if __name__ == "__main__":

@@ -556,6 +556,9 @@ def _parse_measurement_sheet(df: pd.DataFrame) -> MeasurementData:
     # Parse correlation function and intensity trace from right side of sheet
     _parse_correlation_and_trace(df, measurement)
 
+    # Parse size distribution data
+    _parse_size_distribution(df, measurement)
+
     return measurement
 
 
@@ -647,6 +650,76 @@ def _parse_correlation_and_trace(df: pd.DataFrame, measurement: MeasurementData)
                 time=np.array(times),
                 intensity=np.array(intensities),
             )
+
+
+def _parse_size_distribution(df: pd.DataFrame, measurement: MeasurementData) -> None:
+    """Parse size distribution data.
+
+    Sheet structure (columns 5-11):
+    - Column 5: Particle diameter [nm]
+    - Column 6: Size distribution Intensity weighted [%]
+    - Column 7: Size distribution Volume weighted [%]
+    - Column 8: Size distribution Number weighted [%]
+    - Columns 9-11: Undersize (cumulative) data
+    """
+    diameter_col = None
+    intensity_col = None
+    volume_col = None
+    number_col = None
+
+    # Search for "Particle diameter" column header
+    for col_idx in range(len(df.columns)):
+        for row_idx in range(4, min(10, len(df))):
+            val = _get_cell_str(df, row_idx, col_idx)
+            if "particle diameter" in val:
+                diameter_col = col_idx
+                # Size distribution columns follow
+                intensity_col = col_idx + 1
+                volume_col = col_idx + 2
+                number_col = col_idx + 3
+                break
+        if diameter_col is not None:
+            break
+
+    if diameter_col is None:
+        return
+
+    # Find data start (after unit row with [nm])
+    data_start = 8  # Default
+    for row_idx in range(4, min(12, len(df))):
+        val = _get_cell_str(df, row_idx, diameter_col)
+        if "[nm]" in val:
+            data_start = row_idx + 1
+            break
+
+    # Extract data
+    diameters = []
+    intensity_dist = []
+    volume_dist = []
+    number_dist = []
+
+    for row_idx in range(data_start, len(df)):
+        diameter = _safe_float(_get_cell(df, row_idx, diameter_col))
+        if diameter is None:
+            break
+        diameters.append(diameter)
+        intensity_dist.append(_safe_float(_get_cell(df, row_idx, intensity_col)) or 0.0)
+        volume_dist.append(_safe_float(_get_cell(df, row_idx, volume_col)) or 0.0)
+        number_dist.append(_safe_float(_get_cell(df, row_idx, number_col)) or 0.0)
+
+    if diameters:
+        measurement.size_distribution_volume = pd.DataFrame({
+            "diameter_nm": diameters,
+            "frequency_pct": volume_dist,
+        })
+        measurement.size_distribution_intensity = pd.DataFrame({
+            "diameter_nm": diameters,
+            "frequency_pct": intensity_dist,
+        })
+        measurement.size_distribution_number = pd.DataFrame({
+            "diameter_nm": diameters,
+            "frequency_pct": number_dist,
+        })
 
 
 def load_litesizer_xlsx(path: str | Path) -> LiteSizerData:

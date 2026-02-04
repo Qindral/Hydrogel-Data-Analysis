@@ -5,7 +5,8 @@
       "Bash(./venv/Scripts/python.exe:*)",
       "Bash(ls:*)",
       "Bash(python:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(dir:*)"
     ]
   }
 }

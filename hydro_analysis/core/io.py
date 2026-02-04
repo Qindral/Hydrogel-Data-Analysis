@@ -143,6 +143,86 @@ def parse_rec_file(rec_path: Path) -> Dict[str, Any]:
 # XML parsing 
 # -----------------------------
 
+def get_dls_reference_maps() -> Dict[str, Dict[float, float]]:
+    """
+    Reference values (DLS) for particle size calibration and DLS diffusion.
+
+    Returns dicts keyed by nominal particle size (nm):
+      - size_override_nm: measured diameter (nm)
+      - size_err_nm: diameter uncertainty (nm)
+      - dls_D_um2_per_s: DLS diffusion coefficient (um^2/s)
+      - dls_D_err_um2_per_s: DLS diffusion uncertainty (um^2/s)
+      - pdi_percent: polydispersity index (%)
+      - pdi_err_percent: PDI uncertainty (%)
+      - n: number of measurements
+    """
+    size_override_nm = {
+        20.0: 34.8,
+        50.0: 50.5,
+        100.0: 102.5,
+        200.0: 239.5,
+        500.0: 621.5,
+        1000.0: 1266.5,
+    }
+    size_err_nm = {
+        20.0: 0.3,
+        50.0: 0.1,
+        100.0: 0.1,
+        200.0: 1.0,
+        500.0: 21.8,
+        1000.0: 47.0,
+    }
+    dls_D_um2_per_s = {
+        20.0: 12.323,
+        50.0: 8.481,
+        100.0: 4.183,
+        200.0: 1.790,
+        500.0: 0.700,
+        1000.0: 0.341,
+    }
+    dls_D_err_um2_per_s = {
+        20.0: 0.098,
+        50.0: 0.014,
+        100.0: 0.006,
+        200.0: 0.007,
+        500.0: 0.026,
+        1000.0: 0.013,
+    }
+    pdi_percent = {
+        20.0: 22.7,
+        50.0: 16.8,
+        100.0: 2.3,
+        200.0: 11.9,
+        500.0: 74.1,
+        1000.0: 97.4,
+    }
+    pdi_err_percent = {
+        20.0: 0.5,
+        50.0: 1.6,
+        100.0: 1.5,
+        200.0: 1.3,
+        500.0: 64.2,
+        1000.0: 83.3,
+    }
+    n = {
+        20.0: 3.0,
+        50.0: 3.0,
+        100.0: 3.0,
+        200.0: 3.0,
+        500.0: 12.0,
+        1000.0: 6.0,
+    }
+
+    return {
+        "size_override_nm": size_override_nm,
+        "size_err_nm": size_err_nm,
+        "dls_D_um2_per_s": dls_D_um2_per_s,
+        "dls_D_err_um2_per_s": dls_D_err_um2_per_s,
+        "pdi_percent": pdi_percent,
+        "pdi_err_percent": pdi_err_percent,
+        "n": n,
+    }
+
 def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
     """
     Parse TrackMate XML file and convert to pandas DataFrame.

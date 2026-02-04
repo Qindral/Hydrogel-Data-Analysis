@@ -522,7 +522,14 @@ def plot_overlaid_xy_hist_and_fits(
 # ============================================================================
 
 
-def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path = None) -> None:
+def plot_diffusion_comparison(
+    summary_df: pd.DataFrame,
+    save_path: Path = None,
+    size_override: dict[float, float] | None = None,
+    size_err: dict[float, float] | None = None,
+    dls_override: dict[float, float] | None = None,
+    dls_err: dict[float, float] | None = None,
+) -> None:
     """
     Create comparison plot of measured vs theoretical diffusion coefficients.
     Shows individual measurements and averages with error bars.
@@ -553,6 +560,17 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path = None) 
         500: 0.621773811,
         1000: 0.356862091,
     }
+    dls_values = dls_override if dls_override else DLS_MEASUREMENTS
+
+    def _map_size(size: float) -> float:
+        if size_override and size in size_override:
+            return float(size_override[size])
+        return float(size)
+
+    def _size_err(size: float) -> float:
+        if size_err and size in size_err:
+            return float(size_err[size])
+        return 0.0
 
     df = summary_df.dropna(subset=['particle_size_nm']).copy()
 
@@ -583,9 +601,12 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path = None) 
 
     # Plot theoretical points at standard sizes
     theory_sizes = [20, 50, 100, 200, 500, 1000]
-    theory_D = [calculate_theoretical_diffusion(s) for s in theory_sizes]
-    ax.scatter(theory_sizes, theory_D, s=80, marker='x', c=COLOR_THEORY,
-              linewidths=2.0, zorder=6)
+    theory_x = [_map_size(float(s)) for s in theory_sizes]
+    theory_D = [calculate_theoretical_diffusion(x) for x in theory_x]
+    theory_xerr = [(_size_err(float(s)) if _size_err(float(s)) > 0.1 else 0.0) for s in theory_sizes]
+    ax.errorbar(theory_x, theory_D, xerr=theory_xerr, fmt='x', markersize=10,
+              markeredgewidth=2.0, color=COLOR_THEORY, ecolor=COLOR_THEORY,
+              elinewidth=1.2, capsize=3.0, capthick=1.2, linestyle='None', zorder=6)
 
     # Horizontal offset factor for log scale
     offset_factor = 0.93
@@ -601,7 +622,8 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path = None) 
             valid_subset = subset.dropna(subset=['D_MSD_um2_per_s'])
             msd_vals = valid_subset['D_MSD_um2_per_s'].values
             if len(msd_vals) > 0:
-                x_offset = size * offset_factor
+                x_size = _map_size(float(size))
+                x_offset = x_size * offset_factor
                 # Individual: larger markers, alpha 0.6
                 ax.scatter([x_offset] * len(msd_vals), msd_vals,
                           s=50, alpha=0.6, marker='o',
@@ -613,26 +635,33 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path = None) 
                     n_particles = int(np.sum(weights))
                 else:
                     n_particles = len(msd_vals)
-                msd_stats.append((size, np.mean(msd_vals), np.std(msd_vals), n_particles))
+                msd_stats.append((float(size), np.mean(msd_vals), np.std(msd_vals), n_particles))
 
     # Plot MSD averages with error bars
     if msd_stats:
-        sizes_msd = [s[0] * offset_factor for s in msd_stats]
+        sizes_msd = [_map_size(s[0]) * offset_factor for s in msd_stats]
         means_msd = [s[1] for s in msd_stats]
         stds_msd = [s[2] for s in msd_stats]
-        ax.errorbar(sizes_msd, means_msd, yerr=stds_msd,
+        xerr_msd = [(_size_err(s[0]) if _size_err(s[0]) > 0.1 else 0.0) for s in msd_stats]
+        ax.errorbar(sizes_msd, means_msd, yerr=stds_msd, xerr=xerr_msd,
                    fmt='o', markersize=12, markerfacecolor=COLOR_MEASURED_BASE,
                    markeredgecolor=COLOR_MEASURED_DARK, markeredgewidth=1.2,
                    ecolor=COLOR_MEASURED_DARK, elinewidth=1.8, capsize=5.0, capthick=1.8,
                    zorder=10, label='_nolegend_')
 
     # Plot DLS reference values
-    dls_sizes = [s for s in all_sizes if s in DLS_MEASUREMENTS]
-    dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
+    dls_sizes = [s for s in all_sizes if s in dls_values]
+    dls_D = [dls_values[s] for s in dls_sizes]
     if dls_sizes:
-        ax.scatter(dls_sizes, dls_D, s=150, marker='*',
-                  facecolors=COLOR_DLS, edgecolors=COLOR_DLS_DARK,
-                  linewidths=1.0, zorder=8)
+        dls_x = [_map_size(float(s)) for s in dls_sizes]
+        dls_xerr = [(_size_err(float(s)) if _size_err(float(s)) > 0.1 else 0.0) for s in dls_sizes]
+        dls_yerr = [dls_err.get(float(s), 0.0) for s in dls_sizes] if dls_err else None
+        ax.errorbar(dls_x, dls_D, xerr=dls_xerr, yerr=dls_yerr,
+                  fmt='*', markersize=14,
+                  markerfacecolor=COLOR_DLS, markeredgecolor=COLOR_DLS_DARK,
+                  markeredgewidth=1.0,
+                  ecolor=COLOR_DLS_DARK, elinewidth=1.2, capsize=3.0, capthick=1.2,
+                  zorder=8)
 
     # Create legend handles
     legend_elements = [
@@ -673,7 +702,7 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path = None) 
     # Add sample size annotations (n = total trajectories)
     for size, mean, std, n in msd_stats:
         y_pos = mean / (1 + std / mean + 0.4) if mean > 0 and std > 0 else mean * 0.6
-        ax.annotate(f'n={n}', xy=(size * offset_factor, y_pos),
+        ax.annotate(f'n={n}', xy=(_map_size(size) * offset_factor, y_pos),
                    fontsize=9, ha='center', va='top', color=COLOR_MEASURED_DARK)
 
     plt.show()
@@ -694,7 +723,14 @@ def plot_diffusion_comparison(summary_df: pd.DataFrame, save_path: Path = None) 
         plt.close(fig)
 
 
-def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
+def plot_theory_comparison(
+    summary_df: pd.DataFrame,
+    save_path: Path,
+    size_override: dict[float, float] | None = None,
+    size_err: dict[float, float] | None = None,
+    dls_override: dict[float, float] | None = None,
+    dls_err: dict[float, float] | None = None,
+):
     """
     Plot measured vs theoretical diffusion coefficients.
 
@@ -752,6 +788,16 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
     # Axis range
     x_min, x_max = 15, 1500
 
+    def _map_size(size: float) -> float:
+        if size_override and size in size_override:
+            return float(size_override[size])
+        return float(size)
+
+    def _size_err(size: float) -> float:
+        if size_err and size in size_err:
+            return float(size_err[size])
+        return 0.0
+
     # Plot theoretical curve (dashed line)
     sizes_range = np.logspace(np.log10(x_min), np.log10(x_max), 100)
     D_theory_range = [calculate_theoretical_diffusion(s) for s in sizes_range]
@@ -773,7 +819,8 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
             valid_subset = subset.dropna(subset=['D_MSD_um2_per_s'])
             msd_vals = valid_subset['D_MSD_um2_per_s'].values
             if len(msd_vals) > 0:
-                x_offset = size * offset_factor
+                x_size = _map_size(float(size))
+                x_offset = x_size * offset_factor
                 # Individual: larger markers, alpha 0.6
                 ax.scatter([x_offset] * len(msd_vals), msd_vals,
                           s=50, alpha=0.6, marker='o',
@@ -784,7 +831,7 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
                     n_particles = int(valid_subset['weight'].fillna(0).sum())
                 else:
                     n_particles = len(msd_vals)
-                msd_stats.append((size, np.mean(msd_vals), np.std(msd_vals), n_particles))
+                msd_stats.append((float(size), np.mean(msd_vals), np.std(msd_vals), n_particles))
 
     # Plot step size individual measurements and collect stats
     if 'D_stepsize_um2_per_s' in df.columns:
@@ -793,7 +840,8 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
             valid_subset = subset.dropna(subset=['D_stepsize_um2_per_s'])
             step_vals = valid_subset['D_stepsize_um2_per_s'].values
             if len(step_vals) > 0:
-                x_offset = size * offset_factor_right
+                x_size = _map_size(float(size))
+                x_offset = x_size * offset_factor_right
                 # Individual: larger markers, alpha 0.6
                 ax.scatter([x_offset] * len(step_vals), step_vals,
                           s=50, alpha=0.6, marker='s',
@@ -804,14 +852,15 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
                     n_particles = int(valid_subset['weight'].fillna(0).sum())
                 else:
                     n_particles = len(step_vals)
-                step_stats.append((size, np.mean(step_vals), np.std(step_vals), n_particles))
+                step_stats.append((float(size), np.mean(step_vals), np.std(step_vals), n_particles))
 
     # Plot MSD averages with error bars
     if msd_stats:
-        sizes_msd = [s[0] * offset_factor for s in msd_stats]
+        sizes_msd = [_map_size(s[0]) * offset_factor for s in msd_stats]
         means_msd = [s[1] for s in msd_stats]
         stds_msd = [s[2] for s in msd_stats]
-        ax.errorbar(sizes_msd, means_msd, yerr=stds_msd,
+        xerr_msd = [(_size_err(s[0]) if _size_err(s[0]) > 0.1 else 0.0) for s in msd_stats]
+        ax.errorbar(sizes_msd, means_msd, yerr=stds_msd, xerr=xerr_msd,
                    fmt='o', markersize=12, markerfacecolor=COLOR_MSD_BASE,
                    markeredgecolor=COLOR_MSD_DARK, markeredgewidth=1.2,
                    ecolor=COLOR_MSD_DARK, elinewidth=1.8, capsize=5.0, capthick=1.8,
@@ -819,10 +868,11 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
 
     # Plot step size averages with error bars
     if step_stats:
-        sizes_step = [s[0] * offset_factor_right for s in step_stats]
+        sizes_step = [_map_size(s[0]) * offset_factor_right for s in step_stats]
         means_step = [s[1] for s in step_stats]
         stds_step = [s[2] for s in step_stats]
-        ax.errorbar(sizes_step, means_step, yerr=stds_step,
+        xerr_step = [(_size_err(s[0]) if _size_err(s[0]) > 0.1 else 0.0) for s in step_stats]
+        ax.errorbar(sizes_step, means_step, yerr=stds_step, xerr=xerr_step,
                    fmt='s', markersize=12, markerfacecolor=COLOR_STEP_BASE,
                    markeredgecolor=COLOR_STEP_DARK, markeredgewidth=1.2,
                    ecolor=COLOR_STEP_DARK, elinewidth=1.8, capsize=5.0, capthick=1.8,
@@ -830,18 +880,26 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
 
     # Plot DLS reference values for ALL standard sizes
     standard_sizes = [20, 50, 100, 200, 500, 1000]
-    dls_sizes = [s for s in standard_sizes if s in DLS_MEASUREMENTS]
-    dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
+    dls_sizes = [s for s in standard_sizes if s in dls_values]
+    dls_D = [dls_values[s] for s in dls_sizes]
     if dls_sizes:
-        ax.scatter(dls_sizes, dls_D, s=150, marker='*',
-                  facecolors=COLOR_DLS, edgecolors=COLOR_DLS_DARK,
-                  linewidths=1.0, zorder=8)
+        dls_x = [_map_size(float(s)) for s in dls_sizes]
+        dls_xerr = [(_size_err(float(s)) if _size_err(float(s)) > 0.1 else 0.0) for s in dls_sizes]
+        dls_yerr = [dls_err.get(float(s), 0.0) for s in dls_sizes] if dls_err else None
+        ax.errorbar(dls_x, dls_D, xerr=dls_xerr, yerr=dls_yerr, fmt='*', markersize=14,
+                   markerfacecolor=COLOR_DLS, markeredgecolor=COLOR_DLS_DARK,
+                   markeredgewidth=1.0,
+                   ecolor=COLOR_DLS_DARK, elinewidth=1.2, capsize=3.0, capthick=1.2,
+                   zorder=8)
 
     # Plot theoretical points at ALL standard sizes
     theory_sizes = standard_sizes
-    theory_D = [calculate_theoretical_diffusion(s) for s in theory_sizes]
-    ax.scatter(theory_sizes, theory_D, s=80, marker='x', c=COLOR_THEORY,
-              linewidths=2.0, zorder=6)
+    theory_x = [_map_size(s) for s in theory_sizes]
+    theory_D = [calculate_theoretical_diffusion(x) for x in theory_x]
+    theory_xerr = [(_size_err(s) if _size_err(s) > 0.1 else 0.0) for s in theory_sizes]
+    ax.errorbar(theory_x, theory_D, xerr=theory_xerr, fmt='x', markersize=10,
+               markeredgewidth=2.0, color=COLOR_THEORY, ecolor=COLOR_THEORY,
+               elinewidth=1.2, capsize=3.0, capthick=1.2, linestyle='None', zorder=6)
 
     # Create legend handles (larger markers to match plot)
     legend_elements = [
@@ -888,11 +946,11 @@ def plot_theory_comparison(summary_df: pd.DataFrame, save_path: Path):
     # Add sample size annotations (n = total trajectories)
     for size, mean, std, n in msd_stats:
         y_pos = mean / (1 + std / mean + 0.4) if mean > 0 and std > 0 else mean * 0.6
-        ax.annotate(f'n={n}', xy=(size * offset_factor, y_pos),
+        ax.annotate(f'n={n}', xy=(_map_size(size) * offset_factor, y_pos),
                    fontsize=9, ha='center', va='top', color=COLOR_MSD_DARK)
     for size, mean, std, n in step_stats:
         y_pos = mean / (1 + std / mean + 0.4) if mean > 0 and std > 0 else mean * 0.6
-        ax.annotate(f'n={n}', xy=(size * offset_factor_right, y_pos),
+        ax.annotate(f'n={n}', xy=(_map_size(size) * offset_factor_right, y_pos),
                    fontsize=9, ha='center', va='top', color=COLOR_STEP_DARK)
 
     plt.show()

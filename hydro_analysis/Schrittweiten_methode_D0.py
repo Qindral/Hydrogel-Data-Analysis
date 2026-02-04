@@ -12,7 +12,7 @@ from pathlib import Path
 import pickle
 import pandas as pd
 
-from core.io import single_file_data
+from core.io import single_file_data, get_dls_reference_maps
 from core.analysis import perform_stepsize_analysis, DEFAULT_STEP_INTERVAL
 from core.visualization import plot_step_size_overlay, plot_dx_dy_distributions, plot_theory_comparison
 
@@ -164,9 +164,22 @@ def main() -> None:
     if PLOT_DX_DY_DISTS and SAVE_PATH is not None:
         plot_dx_dy_distributions(results, SAVE_PATH, step_interval=STEP_INTERVAL)
 
+    dls_maps = get_dls_reference_maps()
+    size_override = dls_maps["size_override_nm"]
+    size_err = dls_maps["size_err_nm"]
+    dls_override = dls_maps["dls_D_um2_per_s"]
+    dls_err = dls_maps["dls_D_err_um2_per_s"]
+
     if SAVE_PATH is not None:
         theory_plot = SAVE_PATH / "diffusion_comparison_stepsize.png"
-        plot_theory_comparison(summary_df, theory_plot)
+        plot_theory_comparison(
+            summary_df,
+            theory_plot,
+            size_override=size_override,
+            size_err=size_err,
+            dls_override=dls_override,
+            dls_err=dls_err,
+        )
 
 
 if __name__ == "__main__":
