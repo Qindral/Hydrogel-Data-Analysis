@@ -1,0 +1,269 @@
+PROMPT / STYLEGUIDE: Scientific Figures in Python (Microscopy + Plots)
+0) Grundprinzipien
+
+Ziel: ruhige, präzise, journal-taugliche Figuren; Daten stehen visuell klar im Vordergrund.
+
+Maximal 2 Schriftarten im gesamten Projekt:
+
+Open Source Sans (serifenlos) für alles IN der Abbildung: Achsen, Ticks, Legenden, Scalebars, Labels, Annotationen.
+
+Palatino Linotype nur für Fließtext außerhalb der Abbildungen (z. B. Manuskripttext / Caption in Word/LaTeX, falls gewünscht).
+
+Einheitlichkeit > Kreativität: gleiche Strichstärken, gleiche Tick-Logik, gleiche Markerlogik in allen Figuren.
+
+1) Figure-Format, Export, Geometrie
+
+Standard-Seitenverhältnis (width:height): 1.43 : 1
+Beispiel: (width, height) = (7.15, 5.00) inch oder (14.3, 10.0) cm.
+
+Export:
+
+Plots als PDF/SVG (Vektor) für Paper/Poster.
+
+Zusätzlich PNG (raster) mit 600 dpi für schnelle Nutzung.
+
+Ränder/Layouts: immer constrained_layout=True oder tight_layout(), keine abgeschnittenen Labels.
+
+2) Typografie (Plots + Mikroskopie)
+
+Schriftfamilie in Figuren: Open Source Sans
+Gewichte: nur Regular und Semibold/Bold.
+
+Empfohlene Größen (als Startpunkt; final abhängig von Zielbreite):
+
+Titel (Plot-Titel): 11–12 pt (Semibold)
+
+Achsenlabel: 10 pt (Regular)
+
+Ticklabels: 8–9 pt (Regular)
+
+Legende: 8–9 pt (Regular)
+
+Panel-Labels (A, B, C …): 12 pt (Bold/Semibold)
+
+Mikroskopie-Scalebar-Text: 10 pt (Regular), bei sehr kleinen Insets 8–9 pt
+
+Typografie-Regeln:
+
+Keine Kursivschrift in Achsen außer Variablensymbolen (wenn überhaupt).
+
+Einheiten konsequent: 10 µm, 200 nm, Leerzeichen zwischen Zahl und Einheit.
+
+Keine All-Caps-Titel (wirkt schnell “Poster 2007”).
+
+3) Achsen, Ticks, Spine-Style
+
+Ticks auf allen Seiten: top=True, right=True
+
+Tick-Richtung: nach innen (direction="in")
+
+Major + Minor Ticks aktiv, Minor subtiler:
+
+Major Tick length: 4.0
+
+Minor Tick length: 2.0
+
+Tick width: 1.0
+
+Spines: sichtbar, aber nicht fett:
+
+Spine linewidth: 1.0
+
+Grid: standardmäßig aus. Nur bei Bedarf:
+
+sehr dünn, dezent, z. B. linewidth 0.6, alpha 0.2 (nicht dominant).
+
+4) Linien, Marker, Transparenzen (Lineplots / Time series)
+Linien
+
+Standard linewidth: 1.8
+
+Fit-Linien: 2.2 (immer klarer erkennbar als Datenlinie)
+
+Mehrere Experimente: Datenlinien eher 1.6, Fit-Linien 2.2, damit Hierarchie stimmt.
+
+Marker (für Datenpunkte)
+
+Marker nur, wenn Punkte relevant sind (z. B. Messpunkte), sonst line-only.
+
+Standardmarker für diskrete Messpunkte:
+
+o (Kreis) für Hauptdaten
+
+s (Quadrat) für Vergleichsdaten
+
+^ (Dreieck) für dritte Gruppe
+
+Markersize: 4.5
+
+Markeredgewidth: 0.8
+
+Markerfacecolor: gefüllt; bei starker Überlagerung: face alpha 0.85.
+
+Transparenz
+
+Bei Overplotting: alpha = 0.6–0.8
+
+Keine Transparenz bei Fits (Fits immer opak).
+
+5) Scatterplots + Errorbars (Messwerte mit Unsicherheit)
+
+Scatter-Marker: o, size = 22–28 (Matplotlib s), Startwert 26
+
+Errorbar-Linienstärke (elinewidth): 1.2
+
+capsize: 3.0
+
+capthick: 1.2
+
+zorder-Regel:
+
+Errorbars hinter die Marker (zorder 2)
+
+Marker davor (zorder 3)
+
+Wenn viele Punkte: Marker alpha 0.7, Errorbars alpha 0.5 (aber lesbar).
+
+6) Histogramme (inkl. Fit-Overlay)
+
+Bins: so wählen, dass Form sichtbar bleibt (typisch 25–60).
+Regel: eher mehr bins, aber nicht “kammartig”.
+
+Darstellung:
+
+Histogramm als stepfilled oder bar mit dezenter Kante.
+
+Fit-Kurve als klare Linie (linewidth 2.2) in dunkler Variante derselben Farbe.
+
+Wenn mehrere Histogramme:
+
+maximal 2–3 überlagern; sonst separate Panels.
+
+7) Mikroskopiebilder (Scalebar, Labels, Notizen)
+Scalebar
+
+Scalebar immer als klarer, einfarbiger Balken (weiß oder schwarz je nach Hintergrund).
+
+Balkenhöhe: ca. 1–1.5% der Bildhöhe (visuell stabil, nicht zu dünn).
+
+Textposition: rechts oder oberhalb des Balkens, mit kleinem Abstand (2–6 px je nach Auflösung).
+
+Schrift: Open Source Sans Regular, 10 pt (oder skaliert entsprechend).
+
+Outline (optional): Bei unruhigem Hintergrund: Text mit dünnem Rand (Stroke), nicht fetter Font.
+
+Annotationen im Bild (Pfeile, ROI, Labels)
+
+Farbe: Weiß/Schwarz oder eine einzige Akzentfarbe (sparsam!).
+
+Linienbreite: 1.6
+
+Pfeile: visuell wie LaTeX [stealth]
+
+Matplotlib-Entsprechung: arrowstyle='-|>'
+
+mutation_scale typischerweise 12–16
+
+ROI-Boxen: linewidth 1.4, keine knalligen Farben.
+
+8) Colormap-Regel (fix): Jet für Geschwindigkeit vs Partikelgröße
+
+cmap: jet
+
+Abbildungsvorgabe: Geschwindigkeit von log0 bis log15, korrespondierend zu Partikeln 20–1000 nm.
+
+Colorbar:
+
+Label: “velocity (log scale)” oder dein exakter Parametername
+
+Ticks: sinnvoll wenige (z. B. 0, 3, 6, 9, 12, 15)
+
+Ticklabels nicht zu groß (8–9 pt)
+
+9) 8 Akzentfarben (Jet-angelehnt) + dunkle & kräftige Variante
+
+Nutze diese Palette für Diskret-Serien (nicht für kontinuierliche Maps; dafür bleibt Jet).
+
+Format: base (für Daten) und dark (für Fits/Outlines), optional bright (für Highlights).
+
+Index	base	dark	bright
+1	#0000da	#000099	#1f1fde
+2	#004cff	#0035b2	#1f61ff
+3	#00c4ff	#0089b2	#1fcbff
+4	#49ffad	#33b279	#5bffb8
+5	#adff49	#79b233	#b8ff5b
+6	#ffd700	#b29600	#ffde1f
+7	#ff6800	#b24900	#ff751f
+8	#da0000	#990000	#de1f1f
+
+Für besondere Markierungen:
+A	#da00bd	#551344	#9b5191
+B	#512279	#4f1055	#9850b4
+C	#237735	#1a5e3c	#54ad49
+
+Regel:
+
+Datenserie: base
+
+Fit/Model derselben Serie: dark
+
+Hervorhebung (z. B. “best fit”): bright sparsam
+
+10) Mehrere Experimente übersichtlich darstellen
+
+Maximal 3–4 Serien pro Achse. Wenn mehr: Facets (Panels) oder getrennte Abbildungen.
+
+Legende: kurz, konsistent; bevorzugt außerhalb des Datenbereichs.
+
+Hierarchie:
+
+Primäre Daten: stärker/kontrastreich
+
+Sekundäre/Referenz: dünner, ggf. alpha 0.7
+
+Gleiche Achsenskalierung bei Vergleichsplots (sonst irreführend).
+
+Panel-Layout: 1×2 oder 2×2; Panel-Labels (A,B,C,D) links oben.
+
+11) Matplotlib-Starttemplate (optional als rcParams)
+
+Wenn du das als Code-Basis nutzen willst, ist das ein guter Startpunkt:
+
+import matplotlib as mpl
+
+mpl.rcParams.update({
+    "figure.figsize": (7.15, 5.00),   # ratio 1.43:1
+    "figure.dpi": 150,
+    "savefig.dpi": 600,
+    "savefig.bbox": "tight",
+
+    "font.family": "Open Sans",       # or your installed Open Source Sans name
+    "font.size": 9,
+
+    "axes.titlesize": 12,
+    "axes.titleweight": "semibold",
+    "axes.labelsize": 10,
+    "axes.linewidth": 1.0,
+
+    "xtick.direction": "in",
+    "ytick.direction": "in",
+    "xtick.top": True,
+    "ytick.right": True,
+    "xtick.major.size": 4.0,
+    "ytick.major.size": 4.0,
+    "xtick.minor.size": 2.0,
+    "ytick.minor.size": 2.0,
+    "xtick.major.width": 1.0,
+    "ytick.major.width": 1.0,
+
+    "lines.linewidth": 1.8,
+    "lines.markersize": 4.5,
+
+    "legend.fontsize": 9,
+    "legend.frameon": False,
+})
+
+
+Pfeile wie “stealth”:
+
+arrow_kw = dict(arrowstyle='-|>', mutation_scale=14, lw=1.6)

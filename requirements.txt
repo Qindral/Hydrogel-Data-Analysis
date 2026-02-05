@@ -1,0 +1,24 @@
+# Dependencies for hydro_analysis
+numpy>=1.24.0,<2.0
+chardet>=5.0
+pandas>=2.0.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+matplotlib-scalebar>=0.8
+trackpy>=0.6.0
+pims>=0.6
+imageio>=2.25
+tqdm>=4.65
+pco_image
+plotly>=5.0
+tifffile>=2023.0.0
+Pillow>=10.0.0
+opencv-python>=4.8.0
+scikit-image>=0.21.0
+ttf-opensans
+# Optional: GUI packages
+magicgui>=0.7.0
+qtpy>=2.3.0
+
+# Dev / testing
+pytest>=7.2

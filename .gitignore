@@ -1,0 +1,21 @@
+python-javabridge/
+3D-Print/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.png
+*.csv
+particle_thresholds.json
+hist_partikel_template_um.txt
