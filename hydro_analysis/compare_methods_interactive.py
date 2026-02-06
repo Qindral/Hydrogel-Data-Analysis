@@ -704,7 +704,7 @@ def main():
     print("=" * 70)
 
     # Example file path - adjust as needed
-    EXAMPLE_FILE = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\1000 nm\Tracks\1000 nm_4_Tracks.xml")
+    EXAMPLE_FILE = Path(r"E:\PhD Data Analysis\SPT 2025 II\2025.10.01\Tracks\A4_ontop_1d_50_20mg_processed_Tracks.xml")
 
     # Parse command line arguments if provided
     xml_path = EXAMPLE_FILE
