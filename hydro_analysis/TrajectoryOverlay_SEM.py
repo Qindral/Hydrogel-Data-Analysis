@@ -38,7 +38,7 @@ SAVE_PATH = None#Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations")
 
 # Visualization settings
 CROP_PADDING_UM = .4  # Padding around trajectory in µm
-TRAJECTORY_COLOR = "#3752ca"  # Blue
+TRAJECTORY_COLOR = "#5472f7"  # Blue
 TRAJECTORY_LINEWIDTH = 3.0
 TRAJECTORY_ALPHA = 0.96
 TRAJECTORY_ALPHA_PAST = 0.07
@@ -50,8 +50,8 @@ SPT_CONTRAST_HIGH_PCT = 77.0  # Upper percentile for contrast stretch
 SPT_CONTRAST_GAMMA = 0.9  # <1 brightens midtones, >1 darkens
 FRAME_SELECTION = "last"  # "last", "middle", or "random"
 SPT_GRID_ENABLED = True
-SPT_GRID_COLOR = "yellow"
-SPT_GRID_ALPHA = 0.3
+SPT_GRID_COLOR = "#b69c28"
+SPT_GRID_ALPHA = 0.6
 SPT_GRID_LINEWIDTH = 0.35
 SPT_GRID_MAX_LINES = 4000
 
@@ -520,7 +520,7 @@ def create_overlay_figure(
 
     # 2. SEM tiled (inverted green)
     ax2 = fig.add_subplot(1, 3, 2)
-    ax2.imshow(sem_tiled, origin='upper')
+    ax2.imshow(sem_tiled, origin='upper',cmap='gray')
     ax2.set_title('SEM (inverted, green, tiled)', fontsize=12)
     ax2.axis('off')
 
@@ -595,46 +595,12 @@ def create_scaled_single_trajectory_overlay(
     crop_w = max(1, x_max - x_min)
     crop_h = max(1, y_max - y_min)
 
-    # Physical sizes and target crop size based on SEM FOV
+    # Physical sizes
     spt_px_nm = spt_mpp_um * 1000.0
     sem_mpp_um = sem_px_nm / 1000.0
     h_sem, w_sem = sem_image.shape[:2]
     sem_physical_um_x = w_sem * sem_mpp_um
     sem_physical_um_y = h_sem * sem_mpp_um
-
-    target_crop_w = max(crop_w, int(round(sem_physical_um_x / spt_mpp_um)))
-    target_crop_h = max(crop_h, int(round(sem_physical_um_y / spt_mpp_um)))
-
-    # Re-center crop to match SEM physical size (keep trajectory centered)
-    cx = 0.5 * (traj['x'].min() + traj['x'].max())
-    cy = 0.5 * (traj['y'].min() + traj['y'].max())
-    x_min = int(round(cx - target_crop_w / 2))
-    x_max = x_min + target_crop_w
-    y_min = int(round(cy - target_crop_h / 2))
-    y_max = y_min + target_crop_h
-
-    img_h, img_w = spt_frame.shape[:2]
-    if (x_max - x_min) > img_w:
-        x_min, x_max = 0, img_w
-    else:
-        if x_min < 0:
-            x_max -= x_min
-            x_min = 0
-        if x_max > img_w:
-            x_min -= (x_max - img_w)
-            x_max = img_w
-    if (y_max - y_min) > img_h:
-        y_min, y_max = 0, img_h
-    else:
-        if y_min < 0:
-            y_max -= y_min
-            y_min = 0
-        if y_max > img_h:
-            y_min -= (y_max - img_h)
-            y_max = img_h
-
-    crop_w = max(1, x_max - x_min)
-    crop_h = max(1, y_max - y_min)
 
     # Crop SPT image (single frame, preserves 16-bit)
     spt_crop = spt_frame[y_min:y_max, x_min:x_max]
@@ -648,29 +614,40 @@ def create_scaled_single_trajectory_overlay(
     print(f"  SEM pixel: {sem_mpp_um:.4f} µm/px ({sem_px_nm:.2f} nm/px)")
     print(f"  SEM image physical size: {sem_physical_um_x:.2f} x {sem_physical_um_y:.2f} µm")
 
-    # === OUTPUT AT SPT RESOLUTION ===
-    # Keep SPT at original resolution; keep SEM native pixels and map by extent
-    sem_scale_factor = sem_mpp_um / spt_mpp_um
-    sem_extent_w = w_sem * sem_scale_factor
-    sem_extent_h = h_sem * sem_scale_factor
+    # === Scale SEM to match SPT physical size ===
+    # In SPT pixel coordinates, 1 SEM pixel spans sem_mpp / spt_mpp SPT pixels
+    sem_scale = sem_mpp_um / spt_mpp_um
+    sem_in_spt_w = w_sem * sem_scale  # SEM width in SPT pixel units
+    sem_in_spt_h = h_sem * sem_scale
 
-    print(f"\n  SEM scale factor: {sem_scale_factor:.4f} (mpp_SEM / mpp_SPT)")
-    print(f"  SEM extent (in SPT px): {sem_extent_w:.2f} x {sem_extent_h:.2f}")
-    print(f"  SEM/FOV ratio (x): {sem_physical_um_x / spt_crop_physical_um_x:.2f}")
+    print(f"\n  SEM scale factor: {sem_scale:.4f} (mpp_SEM / mpp_SPT)")
+    print(f"  SEM extent in SPT px: {sem_in_spt_w:.2f} x {sem_in_spt_h:.2f}")
 
-    # Tile SEM (native pixels) to fill the SPT crop area by physical size
-    n_tiles_x = int(np.ceil(crop_w / sem_extent_w))
-    n_tiles_y = int(np.ceil(crop_h / sem_extent_h))
-    print(f"  SEM tiling: {n_tiles_x} x {n_tiles_y} tiles")
+    needs_tiling = (sem_in_spt_w < crop_w) or (sem_in_spt_h < crop_h)
 
-    sem_tiled = np.tile(sem_image, (n_tiles_y, n_tiles_x))
-    sem_extent_px_w = n_tiles_x * sem_extent_w
-    sem_extent_px_h = n_tiles_y * sem_extent_h
+    if needs_tiling:
+        # SEM physical FOV < SPT crop → tile SEM to fill
+        n_tiles_x = int(np.ceil(crop_w / sem_in_spt_w))
+        n_tiles_y = int(np.ceil(crop_h / sem_in_spt_h))
+        print(f"  Case: TILING ({n_tiles_x} x {n_tiles_y} tiles)")
+        sem_for_overlay = np.tile(sem_image, (n_tiles_y, n_tiles_x))
+        sem_extent_w = n_tiles_x * sem_in_spt_w
+        sem_extent_h = n_tiles_y * sem_in_spt_h
+    else:
+        # SEM physical FOV >= SPT crop → crop SEM to match crop area
+        crop_sem_w = min(w_sem, int(round(spt_crop_physical_um_x / sem_mpp_um)))
+        crop_sem_h = min(h_sem, int(round(spt_crop_physical_um_y / sem_mpp_um)))
+        sx = max(0, (w_sem - crop_sem_w) // 2)
+        sy = max(0, (h_sem - crop_sem_h) // 2)
+        sem_for_overlay = sem_image[sy:sy+crop_sem_h, sx:sx+crop_sem_w]
+        sem_extent_w = float(crop_w)
+        sem_extent_h = float(crop_h)
+        print(f"  Case: CROP (SEM cropped to {crop_sem_w} x {crop_sem_h} px)")
 
-    # Build SEM as green in 8-bit range for display (tiled, native pixels)
-    sem_green_tiled = np.zeros((sem_tiled.shape[0], sem_tiled.shape[1], 3), dtype=np.uint8)
-    sem_green_tiled[:, :, 1] = sem_tiled
-    sem_green_tiled_disp = sem_green_tiled.astype(np.float32) / 255.0
+    # Build SEM green display arrays
+    sem_green_overlay = np.zeros((*sem_for_overlay.shape[:2], 3), dtype=np.uint8)
+    sem_green_overlay[:, :, 1] = sem_for_overlay
+    sem_green_overlay_disp = sem_green_overlay.astype(np.float32) / 255.0
 
     sem_green_native = np.zeros((h_sem, w_sem, 3), dtype=np.uint8)
     sem_green_native[:, :, 1] = sem_image
@@ -687,10 +664,10 @@ def create_scaled_single_trajectory_overlay(
     x_traj_spt = (traj['x'].values - x_min)
     y_traj_spt = (traj['y'].values - y_min)
 
-    # 1. SEM scaled (green)
+    # 1. SEM native (green) — no pixel grid
     ax1 = axes[0, 0]
     ax1.imshow(sem_green_native_disp)
-    add_scalebar(ax1, spt_mpp_um)
+    add_scalebar(ax1, sem_mpp_um)
     ax1.set_title(
         f'SEM native ({w_sem}x{h_sem} px, '
         f'{sem_physical_um_x:.2f} x {sem_physical_um_y:.2f} µm)'
@@ -729,10 +706,10 @@ def create_scaled_single_trajectory_overlay(
     # 3. Overlay without trajectory
     ax3 = axes[1, 0]
     ax3.imshow(
-        sem_green_tiled_disp,
+        sem_green_overlay_disp,
         alpha=alpha_sem,
         origin='upper',
-        extent=(0, sem_extent_px_w, sem_extent_px_h, 0),
+        extent=(0, sem_extent_w, sem_extent_h, 0),
     )
     ax3.imshow(
         spt_crop,
@@ -761,10 +738,10 @@ def create_scaled_single_trajectory_overlay(
     # 4. Overlay with trajectory
     ax4 = axes[1, 1]
     ax4.imshow(
-        sem_green_tiled_disp,
+        sem_green_overlay_disp,
         alpha=alpha_sem,
         origin='upper',
-        extent=(0, sem_extent_px_w, sem_extent_px_h, 0),
+        extent=(0, sem_extent_w, sem_extent_h, 0),
     )
     ax4.imshow(
         spt_crop,

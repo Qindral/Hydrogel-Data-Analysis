@@ -11,12 +11,43 @@ from __future__ import annotations
 
 from pathlib import Path
 import pickle
+import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, OptimizeWarning
 
 from core.io import get_dls_reference_maps
+import matplotlib as mpl
+
+mpl.rcParams.update({
+    "figure.figsize": (7.15, 5.00),
+    "figure.dpi": 150,
+    "savefig.dpi": 600,
+    "savefig.bbox": "tight",
+    "font.family": "sans-serif",
+    "font.size": 9,
+    "axes.titlesize": 12,
+    "axes.titleweight": "semibold",
+    "axes.labelsize": 10,
+    "axes.linewidth": 1.0,
+    "xtick.direction": "in",
+    "ytick.direction": "in",
+    "xtick.top": True,
+    "ytick.right": True,
+    "xtick.major.size": 4.0,
+    "ytick.major.size": 4.0,
+    "xtick.minor.size": 2.0,
+    "ytick.minor.size": 2.0,
+    "xtick.major.width": 1.0,
+    "ytick.major.width": 1.0,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "lines.linewidth": 1.8,
+    "lines.markersize": 4.5,
+    "legend.fontsize": 9,
+    "legend.frameon": False,
+})
 
 # -----------------------------
 # Configuration
@@ -35,10 +66,12 @@ OUTPUT_PNG_DLS = "msd_ratio_hydrogel_vs_dls.png"
 OUTPUT_PDF_DLS = "msd_ratio_hydrogel_vs_dls.pdf"
 RF_NM = 4.0
 X_LIM_MIN = 0.1  # log-scale cannot include 0
-X_LIM_MAX = 100.0
+X_LIM_MAX = 1000.0
 Y_LIM_MIN = 0.0
 Y_LIM_MAX = 1.0
 SHOW_INDIVIDUALS = False
+IMMOBILE_THRESHOLD_NM = 100.0
+PLOT_PARTICLE_SIZES_NM = [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
 
 
 def _load_cache(path: Path) -> dict:
@@ -99,6 +132,37 @@ def _size_err(size: float, size_err: dict[float, float] | None) -> float:
     return 0.0
 
 
+def _ensure_size_rows(
+    df: pd.DataFrame,
+    sizes: list[float],
+    ratio_col: str,
+    ratio_err_col: str,
+) -> pd.DataFrame:
+    """Ensure one row per nominal particle size exists."""
+    if df.empty:
+        return pd.DataFrame(
+            {
+                "particle_size_nm": sizes,
+                ratio_col: [np.nan] * len(sizes),
+                ratio_err_col: [np.nan] * len(sizes),
+            }
+        )
+
+    present = set(df["particle_size_nm"].astype(float).values.tolist())
+    missing = [s for s in sizes if s not in present]
+    if not missing:
+        return df
+
+    add = pd.DataFrame(
+        {
+            "particle_size_nm": missing,
+            ratio_col: [np.nan] * len(missing),
+            ratio_err_col: [np.nan] * len(missing),
+        }
+    )
+    return pd.concat([df, add], ignore_index=True)
+
+
 def plot_ratio_with_individuals(
     df_individual: pd.DataFrame,
     df_avg: pd.DataFrame,
@@ -111,12 +175,13 @@ def plot_ratio_with_individuals(
     out_pdf: Path | None,
     fit_line: dict | None = None,
     show_individuals: bool = True,
+    nominal_sizes: list[float] | None = None,
 ) -> None:
     if df_individual.empty and df_avg.empty:
         print(f"No data to plot: {title}")
         return
 
-    fig, ax = plt.subplots(figsize=(7.15, 5.00), constrained_layout=True)
+    fig, ax = plt.subplots(constrained_layout=True)
 
     # Individual file ratios
     if show_individuals and not df_individual.empty:
@@ -126,7 +191,12 @@ def plot_ratio_with_individuals(
             vals = subset[ratio_col].dropna().values
             if len(vals) == 0:
                 continue
-            ax.scatter([x] * len(vals), vals, s=40, alpha=0.5, color="#0000da", zorder=2)
+            ax.scatter(
+                [x] * len(vals), vals,
+                s=26, alpha=0.7, color="#0000da",
+                edgecolors="#000099", linewidths=0.8,
+                zorder=2,
+            )
 
     # Average ratios with error bars
     if not df_avg.empty:
@@ -141,35 +211,51 @@ def plot_ratio_with_individuals(
             yerr=yerr,
             xerr=xerr,
             fmt="o",
-            markersize=10,
+            markersize=np.sqrt(26),
             markerfacecolor="#0000da",
             markeredgecolor="#000099",
-            markeredgewidth=1.2,
+            markeredgewidth=0.8,
             ecolor="#000099",
-            elinewidth=1.6,
-            capsize=4.0,
+            elinewidth=1.2,
+            capsize=3.0,
             capthick=1.2,
-            zorder=5,
+            zorder=3,
             label="Mean ± SD",
         )
+
+    if fit_line is not None:
+        ax.plot(fit_line["x"], fit_line["y"], color="#000099", linewidth=2.2, label=fit_line["label"])
 
     ax.set_xscale("log")
     ax.set_xlim(X_LIM_MIN, X_LIM_MAX)
     ax.set_ylim(Y_LIM_MIN, Y_LIM_MAX)
-    ax.set_xlabel("Particle Size (nm)")
-    ax.set_ylabel("D_hydrogel / D_reference")
-    ax.set_title(title, fontsize=12, fontweight="semibold")
-    ax.grid(True, alpha=0.2)
-    if fit_line is not None:
-        ax.plot(fit_line["x"], fit_line["y"], color="black", linewidth=2.0, label=fit_line["label"])
-    ax.legend(loc="best", fontsize=9, frameon=False)
+    if nominal_sizes:
+        tick_pairs = [
+            (s, _map_size(float(s), size_override))
+            for s in nominal_sizes
+        ]
+        tick_pairs = [(s, x) for s, x in tick_pairs if X_LIM_MIN <= x <= X_LIM_MAX]
+        if tick_pairs:
+            ax.set_xticks([x for _, x in tick_pairs])
+            ax.set_xticklabels([f"{int(s)}" for s, _ in tick_pairs])
+    ax.set_xlabel("Particle size (nm)")
+    ax.set_ylabel(r"$D_\mathrm{hydrogel}$ / $D_\mathrm{reference}$")
+    ax.set_title(title)
+    ax.minorticks_on()
+    ax.legend(loc="best")
 
     plt.show()
 
     if out_png is not None:
         fig.savefig(out_png, dpi=600, bbox_inches="tight")
     if out_pdf is not None:
-        fig.savefig(out_pdf, bbox_inches="tight")
+        try:
+            fig.savefig(out_pdf, bbox_inches="tight")
+        except ModuleNotFoundError as e:
+            if getattr(e, "name", None) == "fontTools":
+                print("PDF export skipped: missing dependency 'fontTools'.")
+            else:
+                raise
     plt.close(fig)
 
 
@@ -255,6 +341,87 @@ def main() -> None:
     size_override = dls_maps["size_override_nm"]
     size_err = dls_maps["size_err_nm"]
 
+    # Use fixed nominal classes for plotting and zero-enforcement.
+    nominal_sizes = [s for s in PLOT_PARTICLE_SIZES_NM if s <= X_LIM_MAX]
+    if not nominal_sizes:
+        nominal_sizes = sorted(float(s) for s in dls_D.keys() if s <= X_LIM_MAX)
+
+    merged = _ensure_size_rows(
+        merged,
+        nominal_sizes,
+        "ratio_hydrogel_over_water",
+        "ratio_hydrogel_over_water_err",
+    )
+    dls_df = _ensure_size_rows(
+        dls_df,
+        nominal_sizes,
+        "ratio_hydrogel_over_dls",
+        "ratio_hydrogel_over_dls_err",
+    )
+
+    # Enforce immobile particles above threshold: ratio = 0.
+    immobile_sizes = [s for s in nominal_sizes if s > IMMOBILE_THRESHOLD_NM]
+
+    for sz in immobile_sizes:
+        if sz in merged["particle_size_nm"].values:
+            sel = merged["particle_size_nm"] == sz
+            merged.loc[sel, "ratio_hydrogel_over_water"] = 0.0
+            merged.loc[sel, "ratio_hydrogel_over_water_err"] = 0.0
+        else:
+            merged = pd.concat(
+                [
+                    merged,
+                    pd.DataFrame(
+                        [
+                            {
+                                "particle_size_nm": sz,
+                                "ratio_hydrogel_over_water": 0.0,
+                                "ratio_hydrogel_over_water_err": 0.0,
+                            }
+                        ]
+                    ),
+                ],
+                ignore_index=True,
+            )
+
+        if sz in dls_df["particle_size_nm"].values:
+            sel = dls_df["particle_size_nm"] == sz
+            dls_df.loc[sel, "ratio_hydrogel_over_dls"] = 0.0
+            dls_df.loc[sel, "ratio_hydrogel_over_dls_err"] = 0.0
+        else:
+            dls_df = pd.concat(
+                [
+                    dls_df,
+                    pd.DataFrame(
+                        [
+                            {
+                                "particle_size_nm": sz,
+                                "ratio_hydrogel_over_dls": 0.0,
+                                "ratio_hydrogel_over_dls_err": 0.0,
+                            }
+                        ]
+                    ),
+                ],
+                ignore_index=True,
+            )
+
+    if not df_h_ratio.empty:
+        df_h_ratio.loc[
+            df_h_ratio["particle_size_nm"] > IMMOBILE_THRESHOLD_NM,
+            "ratio_hydrogel_over_water",
+        ] = 0.0
+    if not df_h_ratio_dls.empty:
+        df_h_ratio_dls.loc[
+            df_h_ratio_dls["particle_size_nm"] > IMMOBILE_THRESHOLD_NM,
+            "ratio_hydrogel_over_dls",
+        ] = 0.0
+
+    # Keep nominal x-values for the 1000 nm class inside the requested axis range.
+    size_override_plot = dict(size_override)
+    for s in nominal_sizes:
+        if s <= X_LIM_MAX:
+            size_override_plot[s] = min(size_override_plot.get(s, s), X_LIM_MAX)
+
     # Fit Amsden model to hydrogel/water averages
     fit_line = None
     if not merged.empty:
@@ -278,16 +445,18 @@ def main() -> None:
             try:
                 p0 = [1.0, 50.0]
                 bounds = ([1e-6, 1e-6], [1e6, 1e6])
-                popt, _ = curve_fit(
-                    lambda r, k, phi: amsden_model(r, k, phi),
-                    x_fit,
-                    y_fit,
-                    p0=p0,
-                    sigma=y_sigma if y_sigma is not None and np.all(np.isfinite(y_sigma)) else None,
-                    absolute_sigma=False,
-                    bounds=bounds,
-                    maxfev=10000,
-                )
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", OptimizeWarning)
+                    popt, _ = curve_fit(
+                        lambda r, k, phi: amsden_model(r, k, phi),
+                        x_fit,
+                        y_fit,
+                        p0=p0,
+                        sigma=y_sigma if y_sigma is not None and np.all(np.isfinite(y_sigma)) else None,
+                        absolute_sigma=False,
+                        bounds=bounds,
+                        maxfev=10000,
+                    )
                 k_fit, phi_fit = popt
                 x_line = np.logspace(np.log10(max(X_LIM_MIN, 0.1)), np.log10(X_LIM_MAX), 200)
                 y_line = amsden_model(x_line / 2.0, k_fit, phi_fit)
@@ -307,13 +476,14 @@ def main() -> None:
         merged,
         "ratio_hydrogel_over_water",
         "ratio_hydrogel_over_water_err",
-        size_override,
+        size_override_plot,
         size_err,
         "Hydrogel / Water (MSD)",
         out_png,
         out_pdf,
         fit_line=fit_line,
         show_individuals=SHOW_INDIVIDUALS,
+        nominal_sizes=nominal_sizes,
     )
 
     # Plot hydrogel vs DLS
@@ -324,12 +494,13 @@ def main() -> None:
         dls_df,
         "ratio_hydrogel_over_dls",
         "ratio_hydrogel_over_dls_err",
-        size_override,
+        size_override_plot,
         size_err,
         "Hydrogel / DLS",
         out_png_dls,
         out_pdf_dls,
         show_individuals=SHOW_INDIVIDUALS,
+        nominal_sizes=nominal_sizes,
     )
 
 

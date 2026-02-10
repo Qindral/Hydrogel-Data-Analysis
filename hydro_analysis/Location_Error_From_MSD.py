@@ -22,7 +22,7 @@ from core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
 # -----------------------------
 
 # Folder to scan (recursively) for TrackMate XML files
-ROOT_FOLDER = Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.28 _ Immobilized\Tracks")
+ROOT_FOLDER = Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.31\Tracks")
 
 # Number of MSD points for the MSD power-law fit (core analysis)
 MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS
