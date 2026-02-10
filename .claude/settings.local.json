@@ -6,7 +6,16 @@
       "Bash(ls:*)",
       "Bash(python:*)",
       "Bash(pip install:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(.venvScriptspython.exe -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(\".venv/Scripts/python.exe\" -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(\".venv/Scripts/python.exe\" -c \"import pandas; print\\(pandas.__version__\\)\")",
+      "Bash(\".venv/Scripts/pip.exe\" show pandas)",
+      "Bash(pip show:*)",
+      "Bash(\".venv/Scripts/pip.exe\" install --force-reinstall pandas)",
+      "Bash(\".venv/Scripts/pip.exe\" install \"numpy>=1.26,<2.4\")",
+      "Bash(\".venv/Scripts/pip.exe\" show matplotlib scipy numba)",
+      "Bash(\".venv/Scripts/python.exe\" -c \"import numpy; print\\(numpy.__version__\\); print\\(numpy.__file__\\)\")"
     ]
   }
 }
