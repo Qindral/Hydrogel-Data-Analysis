@@ -37,14 +37,14 @@ SAVE_PATH = None
 SAVE_PATH = Path(f"E:\\PhD Data Analysis\\SPT 2025 II\\Hydrogel Messung\\20mg C16\\Plots_{pd.Timestamp.now().strftime('%Y%m%d')}")
 MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS
 VERBOSE = False
-MAX_IMSD_CURVES_PER_SIZE = 300  # None to plot all curves
+MAX_IMSD_CURVES_PER_SIZE = 3900  # None to plot all curves
 FPS_SMALL_TARGET = 60.0
 FPS_LARGE_TARGET = 20.0
 FPS_TOLERANCE = 3.0  # Allowed deviation in fps
 PRINT_FILE_SUMMARY = True
 
 # Pickle caching
-NEUBERECHNEN = False  # Set to True to force recomputation
+NEUBERECHNEN = True  # Set to True to force recomputation
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_results.pkl"
 
 
