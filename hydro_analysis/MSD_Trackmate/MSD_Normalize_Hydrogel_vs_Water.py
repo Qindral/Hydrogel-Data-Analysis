@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from scipy.optimize import curve_fit, OptimizeWarning
 
-from core.io import get_dls_reference_maps
+from hydro_analysis.core.io import get_dls_reference_maps
 
 # ── Style (Style_guide.txt) ───────────────────────────────────────
 mpl.rcParams.update({

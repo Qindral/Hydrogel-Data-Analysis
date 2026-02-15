@@ -22,27 +22,31 @@ import matplotlib.pyplot as plt
 # =============================================================================
 # Configuration
 # =============================================================================
-BASE_DIR = Path(r"D:\Diffusion in Hydrogel Data\2025_09_01_16_03_50--FRAP\FRAP 009")
-
+BASE_DIR = Path(r"H:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF\C16 _deep B1 _6_306 um")
 
 # =============================================================================
 # 1. Discover subfolders (Pre / Pb)
 # =============================================================================
 def find_series_folders(base_dir):
-    """Find the Pre-bleach and Post-bleach subfolders."""
-    pre_folder = None
-    pb_folder = None
+    """Find all Pre-bleach and Post-bleach (Pb) subfolders.
+
+    Returns (pre_folders, pb_folders) both as sorted lists of Paths.
+    """
+    pre_folders = []
+    pb_folders = []
     for entry in sorted(base_dir.iterdir()):
         if not entry.is_dir():
             continue
         name = entry.name
         if "Pre" in name:
-            pre_folder = entry
+            pre_folders.append(entry)
         elif "Pb" in name:
-            pb_folder = entry
-    if pre_folder is None or pb_folder is None:
-        raise FileNotFoundError(f"Could not find Pre/Pb folders in {base_dir}")
-    return pre_folder, pb_folder
+            pb_folders.append(entry)
+    if not pre_folders:
+        raise FileNotFoundError(f"Could not find any Pre folders in {base_dir}")
+    if not pb_folders:
+        raise FileNotFoundError(f"Could not find any Pb folders in {base_dir}")
+    return pre_folders, pb_folders
 
 
 # =============================================================================
@@ -149,6 +153,38 @@ def parse_properties_xml(xml_path):
     return params
 
 
+def parse_frame_timestamps(xml_path):
+    """Parse per-frame timestamps from _Properties.xml.
+
+    Reads <TimeStamp RelativeTime="..." Date="..." Time="..." MiliSeconds="..."/>
+    entries from Data > Image > TimeStampList.
+
+    Returns list of (relative_time_s, absolute_datetime) for each frame.
+    """
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+
+    timestamps = []
+    for ts in root.iter("TimeStamp"):
+        rel_time = float(ts.get("RelativeTime", 0))
+        date_str = ts.get("Date", "")
+        time_str = ts.get("Time", "")
+        ms_str = ts.get("MiliSeconds", "0")
+        ms = int(ms_str)
+
+        if date_str and time_str:
+            dt = datetime.datetime.strptime(
+                f"{date_str} {time_str}", "%m/%d/%Y %I:%M:%S %p"
+            )
+            dt = dt.replace(microsecond=ms * 1000)
+        else:
+            dt = None
+
+        timestamps.append((rel_time, dt))
+
+    return timestamps
+
+
 # =============================================================================
 # 3. Load TIF images
 # =============================================================================
@@ -158,20 +194,31 @@ def load_tif_series(folder, folder_name, channel=0, black_threshold=1.0):
     Returns (images, frame_indices) where images is (n_frames, h, w) float64
     and frame_indices lists the original t-index for each kept frame.
     Skips black frames (mean intensity <= black_threshold).
+
+    Handles two Leica naming conventions:
+      - With channel:    {name}_l{ch}_t{idx}.tif  (e.g. Pb folders)
+      - Without channel: {name}_t{idx}.tif         (e.g. Pre folders)
     """
-    pattern = re.compile(
-        re.escape(folder_name) + r"_l" + str(channel) + r"_t(\d+)\.tif$",
-        re.IGNORECASE,
-    )
+    escaped = re.escape(folder_name)
+    # Try pattern with channel index first
+    pattern_ch = re.compile(escaped + r"_l" + str(channel) + r"_t(\d+)\.tif$", re.IGNORECASE)
+    # Fallback: pattern without channel index
+    pattern_no_ch = re.compile(escaped + r"_t(\d+)\.tif$", re.IGNORECASE)
+
     files = []
     for f in folder.iterdir():
-        m = pattern.match(f.name)
+        m = pattern_ch.match(f.name)
         if m:
             files.append((int(m.group(1)), f))
+    if not files:
+        for f in folder.iterdir():
+            m = pattern_no_ch.match(f.name)
+            if m:
+                files.append((int(m.group(1)), f))
     files.sort(key=lambda x: x[0])
 
     if not files:
-        raise FileNotFoundError(f"No TIF files found for channel {channel} in {folder}")
+        raise FileNotFoundError(f"No TIF files found in {folder}")
 
     images = []
     frame_indices = []
@@ -179,7 +226,7 @@ def load_tif_series(folder, folder_name, channel=0, black_threshold=1.0):
     for t_idx, fpath in files:
         img = np.array(Image.open(fpath))
         if img.ndim == 3:
-            img = img[:, :, 1]  # green channel
+            img = img.sum(axis=2)  # sum RGB channels
         img_f = img.astype(np.float64)
         if img_f.mean() <= black_threshold:
             n_skipped += 1
@@ -220,7 +267,7 @@ def make_gaussian_2d_fixed_center(cy, cx):
     return gaussian_2d
 
 
-def fit_gaussian_2d(image, center, roi_radius=60):
+def fit_gaussian_2d(image, center, roi_radius=40):
     """
     Fit a 2D Gaussian dip to a fixed region around `center`.
     Center position is kept constant; only amplitude, sigma, offset are fitted.
@@ -308,21 +355,22 @@ def analyze_frap_recovery(times_s, intensities, pre_intensity):
 # 7. Main analysis
 # =============================================================================
 def main():
-    pre_folder, pb_folder = find_series_folders(BASE_DIR)
-    pre_name = pre_folder.name
-    pb_name = pb_folder.name
+    pre_folders, pb_folders = find_series_folders(BASE_DIR)
 
-    print(f"Pre-bleach folder: {pre_name}")
-    print(f"Post-bleach folder: {pb_name}")
+    print(f"Pre-bleach folders found: {len(pre_folders)}")
+    for pf in pre_folders:
+        print(f"  - {pf.name}")
+    print(f"Post-bleach folders found: {len(pb_folders)}")
+    for pf in pb_folders:
+        print(f"  - {pf.name}")
 
-    # ---- Metadata ----
-    pb_props_xml = pb_folder / "MetaData" / f"{pb_name}_Properties.xml"
-    pb_stamps_xml = pb_folder / "MetaData" / f"{pb_name}.xml"
-    pre_stamps_xml = pre_folder / "MetaData" / f"{pre_name}.xml"
+    # ---- Metadata (from first Pb folder, for general acquisition info) ----
+    pb0_name = pb_folders[0].name
+    pb_props_xml = pb_folders[0] / "MetaData" / f"{pb0_name}_Properties.xml"
+    pb_stamps_xml = pb_folders[0] / "MetaData" / f"{pb0_name}.xml"
 
     params = parse_properties_xml(pb_props_xml)
-    pb_timestamps, pb_dims = parse_series_xml(pb_stamps_xml)
-    pre_timestamps, _ = parse_series_xml(pre_stamps_xml)
+    _, pb_dims = parse_series_xml(pb_stamps_xml)
 
     # Pixel size from DimensionDescription (DimID 1 = X, 2 = Y)
     if 1 in pb_dims:
@@ -330,7 +378,7 @@ def main():
         params["mpp_um"] = pb_dims[1]["element_size"] * 1e6    # µm/pixel
         params["fov_um"] = pb_dims[1]["length"] * 1e6          # µm
 
-    print("\n=== Acquisition Parameters ===")
+    print("\n=== Acquisition Parameters (from first Pb folder) ===")
     print(f"  Objective:          {params.get('objective', '?')}")
     print(f"  Magnification:      {params.get('magnification', '?')}x")
     print(f"  NA:                 {params.get('na', '?')}")
@@ -340,59 +388,96 @@ def main():
     print(f"  Zoom:               {params.get('zoom', '?')}")
     print(f"  Pinhole:            {params.get('pinhole_um', '?')} µm ({params.get('pinhole_airy', '?')})")
     print(f"  Bit depth:          {params.get('bit_depth', '?')} bit")
-    print(f"  Frame time:         {params.get('frame_time_s', 0):.3f} s")
     print(f"  Scan mode:          {params.get('scan_mode', '?')}")
     print(f"  Bleach reps:        {params.get('bleach_repetitions', '?')}")
     print(f"  Bleach duration:    {params.get('bleach_duration_ms', '?')} ms")
     for k, v in params.items():
         if "laser" in k:
             print(f"  {k}: {v:.2f}%")
-    print(f"  Pre-bleach frames:  {len(pre_timestamps)}")
-    print(f"  Post-bleach frames: {params.get('cycle_count', '?')}")
 
     # Field of view
     fov_um = params.get("fov_um", params.get("mpp_um", 0) * params.get("image_width", 512))
     print(f"  Field of view:      {fov_um:.1f} µm")
 
-    # ---- Determine number of time points per channel from DimensionDescription ----
-    # DimID 4 = time dimension -> n_elements = frames per channel
-    n_timepoints_per_channel = None
-    if 4 in pb_dims:
-        n_timepoints_per_channel = pb_dims[4]["n_elements"]
-        print(f"  Time points per channel (from XML): {n_timepoints_per_channel}")
-
-    # ---- Load images (channel l0 = green/FITC) ----
+    # ---- Load pre-bleach images from ALL Pre folders ----
     print("\nLoading pre-bleach images...")
-    pre_images, pre_frame_idx = load_tif_series(pre_folder, pre_name, channel=0)
-    print(f"  Loaded {pre_images.shape[0]} frames, shape {pre_images.shape[1:]}")
+    all_pre_images = []
+    all_pre_timestamps = []
+    for pre_folder in pre_folders:
+        pre_name = pre_folder.name
+        print(f"  Reading {pre_name}...")
+        imgs, frame_idx = load_tif_series(pre_folder, pre_name, channel=0)
+        all_pre_images.append(imgs)
+        print(f"    {imgs.shape[0]} frames, shape {imgs.shape[1:]}")
 
-    print("Loading post-bleach images...")
-    pb_images, pb_frame_idx = load_tif_series(pb_folder, pb_name, channel=0)
-    print(f"  Loaded {pb_images.shape[0]} frames")
-
-    # ---- Timestamps -> relative times in seconds ----
-    # Timestamps in XML cover all channels sequentially.
-    # For channel l0 (first channel), use timestamps[0 : n_timepoints_per_channel].
-    if n_timepoints_per_channel is not None:
-        all_ch0_stamps = pb_timestamps[:n_timepoints_per_channel]
-    else:
-        all_ch0_stamps = pb_timestamps
-
-    # Map frame_indices to their timestamps (handles skipped black frames)
-    pb_times = []
-    for idx in pb_frame_idx:
-        if idx < len(all_ch0_stamps):
-            pb_times.append(all_ch0_stamps[idx])
+        pre_xml = pre_folder / "MetaData" / f"{pre_name}.xml"
+        if pre_xml.exists():
+            stamps, _ = parse_series_xml(pre_xml)
+            all_pre_timestamps.extend(stamps[:len(frame_idx)])
         else:
-            pb_times.append(all_ch0_stamps[-1])  # fallback
-    t0 = pb_times[0]
-    pb_times_s = np.array([(t - t0).total_seconds() for t in pb_times])
-    n_pb = len(pb_times_s)
+            print(f"    Warning: no XML found at {pre_xml}")
 
-    # Pre-bleach timestamps
-    pre_stamps_available = pre_timestamps[:len(pre_frame_idx)]
-    pre_times_s = np.array([(t - pre_stamps_available[0]).total_seconds()
-                            for t in pre_stamps_available]) if pre_stamps_available else np.zeros(len(pre_frame_idx))
+    pre_images = np.concatenate(all_pre_images, axis=0)
+    print(f"  Total pre-bleach frames: {pre_images.shape[0]}")
+
+    # ---- Load post-bleach images from ALL Pb folders ----
+    # Per-frame real timestamps from each folder's _Properties.xml
+    print("\nLoading post-bleach images...")
+    all_pb_images = []
+    all_pb_abs_times = []  # absolute datetime per frame (for stitching)
+    print("\n  === Per-folder timing ===")
+    for pb_folder in pb_folders:
+        pb_name = pb_folder.name
+        print(f"  Reading {pb_name}...")
+        imgs, frame_idx = load_tif_series(pb_folder, pb_name, channel=0)
+        all_pb_images.append(imgs)
+
+        # Parse per-frame timestamps from Properties XML
+        props_xml = pb_folder / "MetaData" / f"{pb_name}_Properties.xml"
+        frame_ts = parse_frame_timestamps(props_xml)
+
+        # Compute actual frame interval from RelativeTime
+        if len(frame_ts) >= 2:
+            dt_interval = frame_ts[1][0] - frame_ts[0][0]
+        elif len(frame_ts) == 1:
+            dt_interval = frame_ts[0][0]
+        else:
+            dt_interval = 0
+        total_dur = frame_ts[-1][0] if frame_ts else 0
+        fps = 1.0 / dt_interval if dt_interval > 0 else 0
+        print(f"    {imgs.shape[0]} frames, real interval = {dt_interval:.3f} s "
+              f"({fps:.2f} fps), duration = {total_dur:.1f} s")
+
+        # Map loaded frame indices to their absolute datetimes
+        for idx in frame_idx:
+            if idx < len(frame_ts) and frame_ts[idx][1] is not None:
+                all_pb_abs_times.append(frame_ts[idx][1])
+            elif frame_ts and frame_ts[-1][1] is not None:
+                all_pb_abs_times.append(frame_ts[-1][1])
+            else:
+                # Last resort: use last known time
+                if all_pb_abs_times:
+                    all_pb_abs_times.append(all_pb_abs_times[-1])
+                else:
+                    all_pb_abs_times.append(datetime.datetime(2000, 1, 1))
+
+    pb_images = np.concatenate(all_pb_images, axis=0)
+    n_pb = pb_images.shape[0]
+
+    # ---- Build continuous time axis from absolute timestamps ----
+    t0 = all_pb_abs_times[0]
+    pb_times_s = np.array([(t - t0).total_seconds() for t in all_pb_abs_times])
+
+    # Pre-bleach timestamps (relative)
+    if all_pre_timestamps:
+        pre_times_s = np.array([(t - all_pre_timestamps[0]).total_seconds()
+                                for t in all_pre_timestamps])
+    else:
+        pre_times_s = np.zeros(pre_images.shape[0])
+
+    print(f"\n  Total pre-bleach frames:  {pre_images.shape[0]}")
+    print(f"  Total post-bleach frames: {n_pb}")
+    print(f"  Post-bleach time range:   0 - {pb_times_s[-1]:.1f} s")
 
     # ---- Pre-bleach average ----
     pre_avg = pre_images.mean(axis=0)
@@ -405,7 +490,7 @@ def main():
 
     # ---- Define ROIs ----
     cy, cx = bleach_center
-    roi_r = 20  # radius in pixels for intensity measurement
+    roi_r = 60  # radius in pixels for intensity measurement
     h, w = pre_avg.shape
 
     # Bleach ROI (circular mask)
@@ -445,7 +530,7 @@ def main():
     gauss_offsets = []
 
     for i in range(n_pb):
-        result = fit_gaussian_2d(pb_images[i], bleach_center, roi_radius=60)
+        result = fit_gaussian_2d(pb_images[i], bleach_center, roi_radius=200)
         if result is not None:
             amp, sigma, offset = result
             gauss_amplitudes.append(amp)
