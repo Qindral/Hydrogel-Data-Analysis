@@ -15,8 +15,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from core.io import single_file_data
-from core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
+from hydro_analysis.core.io import single_file_data
+from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
 
 # -----------------------------
 # Configuration

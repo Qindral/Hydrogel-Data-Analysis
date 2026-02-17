@@ -17,11 +17,11 @@ import tifffile
 import random
 
 # Core imports
-from core.io import single_file_data
-from core.visualization import plot_trajectories
+from hydro_analysis.core.io import single_file_data
+from hydro_analysis.core.visualization import plot_trajectories
 
 # SEM metadata function
-from sem_particle_analysis_V2 import summarize_sem_metadata
+from hydro_analysis.SEM_Particles.sem_particle_analysis_V2 import summarize_sem_metadata
 
 # -----------------------------
 # Configuration

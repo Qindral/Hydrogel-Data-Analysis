@@ -437,8 +437,8 @@ def plot_comparison_summary(
 
 def main():
     """Analyze all particle sizes."""
-    path = Path(r"D:\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
-    output_dir = Path(r"D:\Lite Sizer Particle Measurements\analysis_output")
+    path = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
+    output_dir = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\analysis_output")
 
     print(f"Loading data from: {path}")
     data = load_litesizer_xlsx(path)

@@ -12,14 +12,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.io import single_file_data
-from core.analysis import (
+from hydro_analysis.core.io import single_file_data
+from hydro_analysis.core.analysis import (
     perform_msd_analysis,
     perform_stepsize_analysis,
     DEFAULT_MSD_FIT_POINTS,
     DEFAULT_STEP_INTERVAL,
 )
-from core.visualization import (
+from hydro_analysis.core.visualization import (
     plot_msd_results,
     plot_stepsize_results,
     plot_step_size_overlay,

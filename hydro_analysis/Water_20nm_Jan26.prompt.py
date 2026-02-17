@@ -14,11 +14,12 @@ from matplotlib.figure import Figure
 import trackpy as tp
 
 # Import analysis functions from core module
-from core.analysis import (
+from hydro_analysis.core.io import read_trackmate_xml as core_read_trackmate_xml
+from hydro_analysis.core.analysis import (
     fit_powerlaw_with_errors,
-    read_trackmate_xml as core_read_trackmate_xml,
     calculate_step_sizes,
-    calculate_diffusion_from_steps
+    fit_gaussian_diffusion_1d,
+    diffusion_2d_from_1d_fits,
 )
 
 
@@ -550,36 +551,37 @@ def compute_msd_analysis(tracks: pd.DataFrame, max_lagtime: Optional[int] = None
 def compute_step_size_analysis(tracks: pd.DataFrame) -> dict:
     """
     Compute diffusion from displacement distributions.
-    Uses core.analysis functions from Schrittweiten_methode_D0.py
-    
-    D = σ² / (2 * dt)
+    Uses fit_gaussian_diffusion_1d + diffusion_2d_from_1d_fits from core.analysis.
+
+    D = sigma^2 / (2 * dt)
     """
     if len(tracks) == 0:
         return {}
-    
+
     mpp = tracks.attrs['mpp']
     fps = tracks.attrs['fps']
-    
-    # Use core functions
+
     step_df = calculate_step_sizes(tracks, step_interval=1)
-    
+
     if step_df.empty:
         return {}
-    
-    results = calculate_diffusion_from_steps(step_df, mpp, fps)
-    
-    # Rename keys to match expected format
+
+    # Fit Gaussian to dx and dy separately, then combine for 2D diffusion
+    fit_x = fit_gaussian_diffusion_1d(step_df["dx"], mpp, fps, frame_interval=1, axis="x")
+    fit_y = fit_gaussian_diffusion_1d(step_df["dy"], mpp, fps, frame_interval=1, axis="y")
+    results = diffusion_2d_from_1d_fits(fit_x, fit_y)
+
     return {
-        'D_um2_per_s': results['D'],
-        'D_error': results['D_std'],
-        'sigma_x': results['sigma_x'],
-        'sigma_y': results['sigma_y'],
-        'mean_x': results['mu_x'],
-        'mean_y': results['mu_y'],
-        'n_steps': results['num_steps'],
+        'D_um2_per_s': results['D_um2_per_s'],
+        'D_error': results['D_dir_disagreement_um2_per_s'],
+        'sigma_x': results['sigma_x_nm'],
+        'sigma_y': results['sigma_y_nm'],
+        'mean_x': results['mu_x_nm'],
+        'mean_y': results['mu_y_nm'],
+        'n_steps': results['n_steps_x'],
         'quality_flag': results['quality_flag'],
         'is_isotropic': results['is_isotropic'],
-        'is_centered': results['is_centered']
+        'is_centered': results['is_centered'],
     }
 
 
@@ -1028,7 +1030,7 @@ def plot_diffusion_vs_fps(df: pd.DataFrame):
 
 
 if __name__ == "__main__":
-    test_folder = Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19")
+    test_folder = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\20 nm\20 nm 20 mg")
     
     datasets = scan_folder(test_folder)
     

@@ -15,7 +15,15 @@
       "Bash(\".venv/Scripts/pip.exe\" install --force-reinstall pandas)",
       "Bash(\".venv/Scripts/pip.exe\" install \"numpy>=1.26,<2.4\")",
       "Bash(\".venv/Scripts/pip.exe\" show matplotlib scipy numba)",
-      "Bash(\".venv/Scripts/python.exe\" -c \"import numpy; print\\(numpy.__version__\\); print\\(numpy.__file__\\)\")"
+      "Bash(\".venv/Scripts/python.exe\" -c \"import numpy; print\\(numpy.__version__\\); print\\(numpy.__file__\\)\")",
+      "Bash(c:UsersJonasDocumentsGitHubHydrogel-Data-Analysis.venvScriptspip.exe install fonttools --no-deps)",
+      "Bash(\"c:/Users/Jonas/Documents/GitHub/Hydrogel-Data-Analysis/.venv/Scripts/python.exe\" -c \"import matplotlib.font_manager as fm; fonts = sorted\\(set\\(f.name for f in fm.fontManager.ttflist\\)\\); [print\\(f\\) for f in fonts if ''open'' in f.lower\\(\\) or ''sans'' in f.lower\\(\\)]\")",
+      "WebFetch(domain:www.reddit.com)",
+      "Bash(test:*)",
+      "Bash(find:*)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(\"c:/Users/Jonas/Documents/GitHub/Hydrogel-Data-Analysis/diagnostic_cutout.py\":*)"
     ]
   }
 }

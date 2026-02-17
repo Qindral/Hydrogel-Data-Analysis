@@ -14,10 +14,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from core.io import single_file_data, get_dls_reference_maps
-from core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
-from core.visualization import plot_theory_comparison, plot_diffusion_comparison
-from core.physics import calculate_theoretical_diffusion
+from hydro_analysis.core.io import single_file_data, get_dls_reference_maps
+from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
+from hydro_analysis.core.visualization import plot_theory_comparison, plot_diffusion_comparison
+from hydro_analysis.core.physics import calculate_theoretical_diffusion
 
 # -----------------------------
 # Configuration

@@ -27,7 +27,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 # Import from core modules
-from core.io import parse_rec_file, extract_particle_size_from_path
+from hydro_analysis.core.io import parse_rec_file, extract_particle_size_from_path
 
 
 # ============================================================================

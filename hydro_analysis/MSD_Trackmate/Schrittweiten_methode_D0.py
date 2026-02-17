@@ -1,5 +1,5 @@
 """
-Step size diffusion analysis (20 mg Hydrogel) using core modules only.
+Step size diffusion analysis (water) using core modules only.
 
 Loads XML files from explicit folders per particle size, computes step size diffusion per file,
 and shows the final theory comparison plot.
@@ -12,26 +12,37 @@ from pathlib import Path
 import pickle
 import pandas as pd
 
-from core.io import single_file_data, get_dls_reference_maps
-from core.analysis import perform_stepsize_analysis, DEFAULT_STEP_INTERVAL
-from core.visualization import plot_step_size_overlay, plot_dx_dy_distributions, plot_theory_comparison
+from hydro_analysis.core.io import single_file_data, get_dls_reference_maps
+from hydro_analysis.core.analysis import perform_stepsize_analysis, DEFAULT_STEP_INTERVAL
+from hydro_analysis.core.visualization import plot_step_size_overlay, plot_dx_dy_distributions, plot_theory_comparison
 
 # -----------------------------
 # Configuration
 # -----------------------------
-ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
-
 XML_FOLDERS = {
-    20.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\20 nm\20 nm 20 mg\Tracks")],
-    50.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks_new")],
-    100.0: [ROOT_PATH / "100 nm" / "Tracks"],
-    200.0: [ROOT_PATH / "200 nm" / "Tracks"],
-    500.0: [ROOT_PATH / "500 nm" / "Tracks"],
-    1000.0: [ROOT_PATH / "1000 nm" / "Tracks"],
+    20.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks"),
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.16\Tracks_20"),
+    ],
+    50.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_50"),
+    ],
+    100.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks"),
+    ],
+    200.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\200 nm\Tracks"),
+    ],
+    500.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\500 nm\Tracks"),
+    ],
+    1000.0: [
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_1000"),
+    ],
 }
 
 SAVE_PATH = None
-SAVE_PATH = Path(f"E:\\PhD Data Analysis\\SPT 2025 II\\Hydrogel Messung\\20mg C16\\Plots_{pd.Timestamp.now().strftime('%Y%m%d')}")
+SAVE_PATH = Path(f"E:\\PhD Data Analysis\\SPT 2025 II\\D_0 Wassermessung\\Plots_{pd.Timestamp.now().strftime('%Y%m%d')}")
 STEP_INTERVAL = DEFAULT_STEP_INTERVAL
 VERBOSE = False
 PRINT_FILE_SUMMARY = True
@@ -40,7 +51,7 @@ PLOT_DX_DY_DISTS = False
 
 # Pickle caching
 NEUBERECHNEN = False  # Set to True to force recomputation
-CACHE_FILE = Path(__file__).parent / "cache" / "stepsize_20mg_results.pkl"
+CACHE_FILE = Path(__file__).parent / "cache" / "stepsize_d0_results.pkl"
 
 
 def load_cached_results() -> dict | None:

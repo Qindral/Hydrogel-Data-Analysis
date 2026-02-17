@@ -5,17 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hydro-analysis"
 version = "0.1.0"
-description = "Hydrogel data analysis napari plugin"
-authors = [{name = "Hydro Team"}]
-dependencies = [
-    "napari",
-    "numpy",
-    "tifffile",
-    "scipy",
-    "qtpy",
-    "Pillow",
-    "scikit-image",
-]
+description = "Hydrogel data analysis tools"
+authors = [{name = "Jonas"}]
 
-[project.entry-points."napari.manifest"]
-hydro-analysis = "napari.yaml"
+[tool.setuptools.packages.find]
+include = ["hydro_analysis", "hydro_analysis.*"]

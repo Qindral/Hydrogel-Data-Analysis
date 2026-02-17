@@ -16,7 +16,6 @@ Date: 2026-01-13
 # IMPORTS
 # ============================================================================
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -26,14 +25,14 @@ from scipy import stats
 import trackpy as tp
 
 # Import from core modules
-from core.io import extract_particle_size_from_path, single_file_data
-from core.analysis import (
+from hydro_analysis.core.io import extract_particle_size_from_path, single_file_data
+from hydro_analysis.core.analysis import (
     calculate_step_sizes,
     fit_gaussian_diffusion_1d,
     diffusion_2d_from_1d_fits,
     fit_powerlaw_with_errors,
 )
-from core.physics import calculate_theoretical_diffusion
+from hydro_analysis.core.physics import calculate_theoretical_diffusion
 
 
 # ============================================================================
