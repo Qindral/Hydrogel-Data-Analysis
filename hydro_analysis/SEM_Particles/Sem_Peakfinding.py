@@ -12,7 +12,8 @@ from skimage.feature import peak_local_max
 from skimage.measure import label, regionprops
 from scipy import ndimage as ndi
 import pandas as pd
-from core.io import extract_particle_size_from_path
+
+from hydro_analysis.core.io import extract_particle_size_from_path
 
 # falls du die Pixelgröße aus den FEI-Metadaten holen willst:
 # from read_fei_sem_metadata import summarize_sem_metadata

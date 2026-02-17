@@ -1,7 +1,8 @@
 from pathlib import Path
 import re
 import pandas as pd
-from core.io import extract_particle_size_from_path
+
+from hydro_analysis.core.io import extract_particle_size_from_path
 import matplotlib.pyplot as plt
 root = Path(r"E:\PhD Data Analysis\SPT 2025 II")
 
