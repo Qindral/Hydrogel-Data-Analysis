@@ -10,12 +10,13 @@ env/
 __pycache__/
 *.pyc
 *.pyo
-
-# IDE
-.idea/
-.vscode/
-*.swp
 *.png
-*.csv
+*.jpg
+*.jpeg
+*.log
+*.tmp
+.ipynb_checkpoints/
+.pytest_cache/
+
 particle_thresholds.json
 hist_partikel_template_um.txt
