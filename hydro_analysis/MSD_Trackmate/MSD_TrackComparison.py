@@ -30,6 +30,11 @@ TRACK_FOLDERS = {
     "Tracks_test": Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks_test"),
 }
 
+TRACK_FOLDERS = {
+    "Tracks_new" : Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.02.17\Tracks"),
+    "Tracks_old" : Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\500 nm\Tracks"),
+}
+
 PARTICLE_SIZE_NM = 50.0  # Nominal particle size
 
 SAVE_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\Comparison")
@@ -172,7 +177,7 @@ def plot_folder_d_comparison(all_results: dict, save_path: Path | None = None):
             labels.append(folder_name)
 
     if d_values:
-        bp = ax1.boxplot(d_values, labels=labels, patch_artist=True)
+        bp = ax1.boxplot(d_values, tick_labels=labels, patch_artist=True)
         colors = plt.cm.tab10(np.linspace(0, 1, len(labels)))
         for patch, color in zip(bp['boxes'], colors):
             patch.set_facecolor(color)
@@ -244,10 +249,11 @@ def plot_file_comparison(comparison_df: pd.DataFrame, save_path: Path | None = N
 
             # Identity line
             all_vals = np.concatenate([x[mask], y[mask]])
-            lim = [all_vals.min() * 0.9, all_vals.max() * 1.1]
-            ax_d.plot(lim, lim, 'k:', alpha=0.5)
-            ax_d.set_xlim(lim)
-            ax_d.set_ylim(lim)
+            if len(all_vals) > 0:
+                lim = [all_vals.min() * 0.9, all_vals.max() * 1.1]
+                ax_d.plot(lim, lim, 'k:', alpha=0.5)
+                ax_d.set_xlim(lim)
+                ax_d.set_ylim(lim)
 
             ax_d.set_xlabel(f"D [{folder1}] (µm²/s)")
             ax_d.set_ylabel(f"D [{folder2}] (µm²/s)")

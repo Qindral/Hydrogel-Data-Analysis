@@ -2,8 +2,9 @@
 Normalize MSD diffusion coefficients: D_hydrogel / D_water.
 
 Uses:
-  - Pickle cache from MSD_FromTrackmate_20mg.py (hydrogel)
-  - Pickle cache from MSD_FromTrackmate_D0.py (water)
+  - Pickle cache from MSD_FromTrackmate_20mg.py  (hydrogel 20 mg/mL)
+  - Pickle cache from MSD_FromTrackmate_13mg.py  (hydrogel 13 mg/mL, optional)
+  - Pickle cache from MSD_FromTrackmate_D0.py    (water)
   - DLS size measurements from core.io.get_dls_reference_maps (x-axis)
 """
 
@@ -52,7 +53,11 @@ mpl.rcParams.update({
 
 # ── Configuration ──────────────────────────────────────────────────
 CACHE_20MG = Path(__file__).parent / "cache" / "msd_20mg_results.pkl"
-CACHE_D0 = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
+CACHE_13MG = Path(__file__).parent / "cache" / "msd_13mg_results.pkl"
+CACHE_D0   = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
+
+# Set to False to exclude 13 mg/mL data from the plot
+INCLUDE_13MG = True
 
 SAVE_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
 
@@ -61,6 +66,18 @@ PARTICLE_SIZES_NM = [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
 IMMOBILE_THRESHOLD_NM = 99
 X_LIM = (0.1, 1000.0)
 Y_LIM = (0.0, 1.0)
+
+# Colours per series  (style guide: blue family for 20 mg, orange for 13 mg)
+STYLE_20MG = dict(
+    face="#0000da", edge="#000099",
+    ecolor="#000099", fit_color="#000099",
+    label="20 mg/mL",
+)
+STYLE_13MG = dict(
+    face="#da6000", edge="#994500",
+    ecolor="#994500", fit_color="#994500",
+    label="13 mg/mL",
+)
 
 
 
@@ -71,13 +88,24 @@ def _load_cache(path: Path) -> dict:
         return pickle.load(f)
 
 
-def _extract_D_by_size(results: dict) -> pd.DataFrame:
-    """Extract (particle_size_nm, D_MSD) pairs from cache results."""
-    rows = [
-        {"particle_size_nm": float(r["particle_size_nm"]), "D_MSD": float(r["D_MSD"])}
-        for r in results.values()
-        if r.get("particle_size_nm") is not None and r.get("D_MSD") is not None
-    ]
+def _extract_D_by_size(results: dict,
+                       size_override: dict[float, float] | None = None) -> pd.DataFrame:
+    """Extract (particle_size_nm, D_MSD) pairs from cache results.
+
+    size_override maps nominal sizes → DLS-measured sizes (e.g. 20.0 → 34.8).
+    When provided, particle_size_nm is remapped so all downstream operations
+    (aggregation, ratio building, plotting) use the real physical sizes.
+    """
+    rows = []
+    for r in results.values():
+        size_nm = r.get("particle_size_nm")
+        d_msd   = r.get("D_MSD")
+        if size_nm is None or d_msd is None:
+            continue
+        size_nm = float(size_nm)
+        if size_override:
+            size_nm = float(size_override.get(size_nm, size_nm))
+        rows.append({"particle_size_nm": size_nm, "D_MSD": float(d_msd)})
     return pd.DataFrame(rows, columns=["particle_size_nm", "D_MSD"])
 
 
@@ -123,85 +151,116 @@ def _fit_amsden(sizes_nm, ratios, errors):
     return x_line, y_line, rf"Amsden fit ($\xi$={psi_fit:.3g} nm)"
 
 
-# ── Main ───────────────────────────────────────────────────────────
+# ── Helpers (continued) ────────────────────────────────────────────
 
-def main() -> None:
-    # Load data
-    df_h = _extract_D_by_size(_load_cache(CACHE_20MG))
-    df_w = _extract_D_by_size(_load_cache(CACHE_D0))
+def _build_ratios(agg_h: pd.DataFrame, agg_w: pd.DataFrame,
+                  dls_sizes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return (ratios, errors) arrays aligned to dls_sizes.
 
-    agg_h = _aggregate(df_h)
-    agg_w = _aggregate(df_w)
+    dls_sizes: DLS-mapped sizes in nm (same order as PARTICLE_SIZES_NM).
+    The immobile threshold is applied against the nominal sizes (PARTICLE_SIZES_NM)
+    so that particles ≥ 100 nm nominal are always forced to 0.
+    """
+    nominal = np.array(PARTICLE_SIZES_NM)
+    h_map   = agg_h.set_index("particle_size_nm")
+    w_map   = agg_w.set_index("particle_size_nm")
 
-    # DLS measured sizes for x-axis mapping
-    dls = get_dls_reference_maps()
-    size_map = dls["size_override_nm"]
-    size_errs = dls["size_err_nm"]
+    ratios = np.full(len(dls_sizes), np.nan)
+    errors = np.full(len(dls_sizes), np.nan)
 
-    # Build ratio table for all nominal sizes
-    all_sizes = np.array(PARTICLE_SIZES_NM)
-    h_map = agg_h.set_index("particle_size_nm")
-    w_map = agg_w.set_index("particle_size_nm")
-
-    ratios = np.full_like(all_sizes, np.nan)
-    errors = np.full_like(all_sizes, np.nan)
-
-    for i, s in enumerate(all_sizes):
-        if s > IMMOBILE_THRESHOLD_NM:
+    for i, (s_dls, s_nom) in enumerate(zip(dls_sizes, nominal)):
+        if s_nom > IMMOBILE_THRESHOLD_NM:
             ratios[i], errors[i] = 0.0, 0.0
-        elif s in h_map.index and s in w_map.index:
-            d_h, d_h_err = h_map.loc[s, "mean"], h_map.loc[s, "std"]
-            d_w, d_w_err = w_map.loc[s, "mean"], w_map.loc[s, "std"]
+        elif s_dls in h_map.index and s_dls in w_map.index:
+            d_h, d_h_err = h_map.loc[s_dls, "mean"], h_map.loc[s_dls, "std"]
+            d_w, d_w_err = w_map.loc[s_dls, "mean"], w_map.loc[s_dls, "std"]
             ratios[i], errors[i] = _ratio_with_error(d_h, d_w, d_h_err, d_w_err)
 
-    # Print summary
-    summary = pd.DataFrame({
-        "size_nm": all_sizes,
-        "D_h/D_water": ratios,
-        "err": errors,
-    })
-    print(summary.to_string(index=False))
+    return ratios, errors
 
-    # Save CSV
-    out_dir = Path(SAVE_PATH)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(out_dir / "msd_ratio_hydrogel_vs_water.csv", index=False)
 
-    # Amsden fit (only mobile particles)
-    fit = _fit_amsden(
-        np.array([size_map.get(s, s) for s in all_sizes]),
-        ratios, errors,
-    )
-
-    # ── Plot ───────────────────────────────────────────────────────
-    fig, ax = plt.subplots(constrained_layout=True)
-
-    xs = np.array([size_map.get(s, s) for s in all_sizes])
-    xerr = np.array([size_errs.get(s, 0.0) for s in all_sizes])
-
+def _plot_series(ax, xs, xerr, ratios, errors, style: dict,
+                 fit=None, show_fit_label: bool = True) -> None:
+    """Plot one hydrogel series (data + optional Amsden fit)."""
     ax.errorbar(
         xs, ratios, yerr=errors, xerr=xerr,
         fmt="o",
         markersize=np.sqrt(26),
-        markerfacecolor="#0000da",
-        markeredgecolor="#000099",
+        markerfacecolor=style["face"],
+        markeredgecolor=style["edge"],
         markeredgewidth=0.8,
-        ecolor="#000099",
+        ecolor=style["ecolor"],
         elinewidth=1.2,
         capsize=3.0,
         capthick=1.2,
         zorder=3,
-        label="Mean \u00b1 SD",
+        label=style["label"],
     )
-
     if fit is not None:
-        ax.plot(fit[0], fit[1], color="#000000", linewidth=1.2, label=fit[2])
+        fit_label = f"{style['label']} {fit[2]}" if show_fit_label else None
+        ax.plot(fit[0], fit[1], color=style["fit_color"], linewidth=1.2,
+                label=fit_label)
 
-    #ax.set_xscale("log")
+
+# ── Main ───────────────────────────────────────────────────────────
+
+def main() -> None:
+    # DLS measured sizes: map nominal → real physical size (e.g. 20 nm → 34.8 nm)
+    dls = get_dls_reference_maps()
+    size_map  = dls["size_override_nm"]   # {nominal_nm: dls_nm}
+    size_errs = dls["size_err_nm"]
+
+    nominal_sizes = np.array(PARTICLE_SIZES_NM)
+    xs   = np.array([float(size_map.get(float(s), float(s)))   for s in nominal_sizes])  # DLS positions
+    xerr = np.array([float(size_errs.get(float(s), 0.0)) for s in nominal_sizes])
+
+    out_dir = Path(SAVE_PATH)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 20 mg/mL series ────────────────────────────────────────────
+    agg_w  = _aggregate(_extract_D_by_size(_load_cache(CACHE_D0),   size_map))
+    agg_20 = _aggregate(_extract_D_by_size(_load_cache(CACHE_20MG), size_map))
+    ratios_20, errors_20 = _build_ratios(agg_20, agg_w, xs)
+
+    fit_20 = _fit_amsden(xs, ratios_20, errors_20)
+
+    summary_20 = pd.DataFrame({
+        "size_nm": nominal_sizes,
+        "D_20mg/D_water": ratios_20,
+        "err_20mg": errors_20,
+    })
+    print("── 20 mg/mL ──")
+    print(summary_20.to_string(index=False))
+    summary_20.to_csv(out_dir / "msd_ratio_20mg_vs_water.csv", index=False)
+
+    # ── 13 mg/mL series (optional) ─────────────────────────────────
+    ratios_13 = errors_13 = fit_13 = None
+    if INCLUDE_13MG:
+        agg_13 = _aggregate(_extract_D_by_size(_load_cache(CACHE_13MG), size_map))
+        ratios_13, errors_13 = _build_ratios(agg_13, agg_w, xs)
+        fit_13 = _fit_amsden(xs, ratios_13, errors_13)
+
+        summary_13 = pd.DataFrame({
+            "size_nm": nominal_sizes,
+            "D_13mg/D_water": ratios_13,
+            "err_13mg": errors_13,
+        })
+        print("\n── 13 mg/mL ──")
+        print(summary_13.to_string(index=False))
+        summary_13.to_csv(out_dir / "msd_ratio_13mg_vs_water.csv", index=False)
+
+    # ── Plot ───────────────────────────────────────────────────────
+    fig, ax = plt.subplots(constrained_layout=True)
+
+    _plot_series(ax, xs, xerr, ratios_20, errors_20, STYLE_20MG, fit_20)
+
+    if INCLUDE_13MG and ratios_13 is not None:
+        _plot_series(ax, xs, xerr, ratios_13, errors_13, STYLE_13MG, fit_13)
+
     ax.set_xlim(*X_LIM)
     ax.set_ylim(*Y_LIM)
 
-    tick_x = [min(size_map.get(s, s), X_LIM[1]) for s in PARTICLE_SIZES_NM]
+    tick_x = [min(size_map.get(float(s), float(s)), X_LIM[1]) for s in PARTICLE_SIZES_NM]
     ax.set_xticks(tick_x)
     ax.set_xticklabels([f"{int(s)}" for s in PARTICLE_SIZES_NM])
 
@@ -211,10 +270,91 @@ def main() -> None:
     ax.minorticks_on()
     ax.legend(loc="best")
 
-    plt.show()
-
     fig.savefig(out_dir / "msd_ratio_hydrogel_vs_water.png", dpi=600, bbox_inches="tight")
-    plt.close(fig)
+    fig.savefig(out_dir / "msd_ratio_hydrogel_vs_water.pdf")
+
+    # ── Weitere Grafiken ──────────────────────────────────────────────
+
+    # Filter auf nominale Größen ≤ 100 nm (DLS: ~35, 50.5, 102.5 nm)
+    mask_100  = np.array(PARTICLE_SIZES_NM) <= 100.0
+    nom_100   = [s for s in PARTICLE_SIZES_NM if s <= 100.0]
+    xs_100    = xs[mask_100];    xerr_100  = xerr[mask_100]
+    r20_100   = ratios_20[mask_100]; e20_100 = errors_20[mask_100]
+    fit_20_100 = _fit_amsden(xs_100, r20_100, e20_100)
+
+    r13_100 = e13_100 = fit_13_100 = None
+    if INCLUDE_13MG and ratios_13 is not None:
+        r13_100    = ratios_13[mask_100]; e13_100  = errors_13[mask_100]
+        fit_13_100 = _fit_amsden(xs_100, r13_100, e13_100)
+
+    X_ALL = (25.0, 1300.0)   # alle Partikel (35–1266 nm DLS)
+    X_100 = (25.0, 115.0)    # nur 35–100 nm
+
+    def _decorate(ax, nom_sizes, xlim, legend=True):
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*Y_LIM)
+        tick_x = [min(size_map.get(float(s), float(s)), xlim[1]) for s in nom_sizes]
+        ax.set_xticks(tick_x)
+        ax.set_xticklabels([f"{int(s)}" for s in nom_sizes])
+        ax.set_xlabel("Particle size (nm)")
+        ax.set_ylabel(r"$D_\mathrm{hydrogel}\,/\,D_\mathrm{water}$")
+        ax.minorticks_on()
+        if legend:
+            ax.legend(loc="best")
+
+    # ── A: 20 mg – alle Partikel, kein Fit ───────────────────────────
+    fig_a, ax = plt.subplots(constrained_layout=True)
+    _plot_series(ax, xs, xerr, ratios_20, errors_20, STYLE_20MG)
+    _decorate(ax, PARTICLE_SIZES_NM, X_ALL)
+    fig_a.savefig(out_dir / "msd_ratio_20mg_all.png",  dpi=600, bbox_inches="tight")
+    fig_a.savefig(out_dir / "msd_ratio_20mg_all.pdf")
+
+    # ── B: 13 mg – alle Partikel, kein Fit ───────────────────────────
+    fig_b = None
+    if INCLUDE_13MG and ratios_13 is not None:
+        fig_b, ax = plt.subplots(constrained_layout=True)
+        _plot_series(ax, xs, xerr, ratios_13, errors_13, STYLE_13MG)
+        _decorate(ax, PARTICLE_SIZES_NM, X_ALL)
+        fig_b.savefig(out_dir / "msd_ratio_13mg_all.png",  dpi=600, bbox_inches="tight")
+        fig_b.savefig(out_dir / "msd_ratio_13mg_all.pdf")
+
+    # ── C: 20 mg – 35–100 nm, mit Fit ────────────────────────────────
+    fig_c, ax = plt.subplots(constrained_layout=True)
+    _plot_series(ax, xs_100, xerr_100, r20_100, e20_100, STYLE_20MG, fit=fit_20_100)
+    _decorate(ax, nom_100, X_100)
+    fig_c.savefig(out_dir / "msd_ratio_20mg_fit.png",  dpi=600, bbox_inches="tight")
+    fig_c.savefig(out_dir / "msd_ratio_20mg_fit.pdf")
+
+    # ── D: 13 mg – 35–100 nm, mit Fit ────────────────────────────────
+    fig_d = None
+    if INCLUDE_13MG and r13_100 is not None:
+        fig_d, ax = plt.subplots(constrained_layout=True)
+        _plot_series(ax, xs_100, xerr_100, r13_100, e13_100, STYLE_13MG, fit=fit_13_100)
+        _decorate(ax, nom_100, X_100)
+        fig_d.savefig(out_dir / "msd_ratio_13mg_fit.png",  dpi=600, bbox_inches="tight")
+        fig_d.savefig(out_dir / "msd_ratio_13mg_fit.pdf")
+
+    # ── E: 13 + 20 mg – 35–100 nm, Datenpunkte ───────────────────────
+    fig_e, ax = plt.subplots(constrained_layout=True)
+    _plot_series(ax, xs_100, xerr_100, r20_100, e20_100, STYLE_20MG)
+    if INCLUDE_13MG and r13_100 is not None:
+        _plot_series(ax, xs_100, xerr_100, r13_100, e13_100, STYLE_13MG)
+    _decorate(ax, nom_100, X_100)
+    fig_e.savefig(out_dir / "msd_ratio_comparison.png",  dpi=600, bbox_inches="tight")
+    fig_e.savefig(out_dir / "msd_ratio_comparison.pdf")
+
+    # ── F: 13 + 20 mg – 35–100 nm, mit Fits (keine Parameter) ────────
+    fig_f, ax = plt.subplots(constrained_layout=True)
+    _plot_series(ax, xs_100, xerr_100, r20_100, e20_100, STYLE_20MG,
+                 fit=fit_20_100, show_fit_label=False)
+    if INCLUDE_13MG and r13_100 is not None:
+        _plot_series(ax, xs_100, xerr_100, r13_100, e13_100, STYLE_13MG,
+                     fit=fit_13_100, show_fit_label=False)
+    _decorate(ax, nom_100, X_100)
+    fig_f.savefig(out_dir / "msd_ratio_comparison_fit.png",  dpi=600, bbox_inches="tight")
+    fig_f.savefig(out_dir / "msd_ratio_comparison_fit.pdf")
+
+    plt.show()
 
 
 if __name__ == "__main__":

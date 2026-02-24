@@ -35,6 +35,7 @@ from hydro_analysis.core.visualization import (
 DATA_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\20 nm\20 nm 20 mg\Tracks")
 DATA_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks")
 DATA_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_1000")
+DATA_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.02.17\Tracks")
 OUTPUT_DIR = DATA_DIR.parent / "analysis_results"
 
 MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS

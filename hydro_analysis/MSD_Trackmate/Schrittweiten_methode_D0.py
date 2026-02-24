@@ -35,6 +35,7 @@ XML_FOLDERS = {
     ],
     500.0: [
         Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\500 nm\Tracks"),
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.02.17\Tracks"),
     ],
     1000.0: [
         Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_1000"),
@@ -50,7 +51,7 @@ PLOT_STEP_OVERLAY = True
 PLOT_DX_DY_DISTS = False
 
 # Pickle caching
-NEUBERECHNEN = False  # Set to True to force recomputation
+NEUBERECHNEN =True  # Set to True to force recomputation
 CACHE_FILE = Path(__file__).parent / "cache" / "stepsize_d0_results.pkl"
 
 

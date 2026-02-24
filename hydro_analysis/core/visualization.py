@@ -683,9 +683,12 @@ def plot_diffusion_comparison(
     ax.set_yscale('log')
     ax.set_xlim(x_min, x_max)
 
-    # Custom x-axis ticks at particle sizes
-    ax.xaxis.set_major_locator(FixedLocator([20, 50, 100, 200, 500, 1000]))
-    ax.xaxis.set_major_formatter(FixedFormatter(['20', '50', '100', '200', '500', '1000']))
+    # Custom x-axis ticks at DLS-mapped positions, labelled with nominal sizes
+    _tick_nominal = [20, 50, 100, 200, 500, 1000]
+    _tick_pos     = [_map_size(float(s)) for s in _tick_nominal]
+    _tick_labels  = [str(s) for s in _tick_nominal]
+    ax.xaxis.set_major_locator(FixedLocator(_tick_pos))
+    ax.xaxis.set_major_formatter(FixedFormatter(_tick_labels))
     ax.xaxis.set_minor_locator(FixedLocator([]))  # No minor ticks
 
     # Axis labels (larger: 12pt)
@@ -880,8 +883,8 @@ def plot_theory_comparison(
 
     # Plot DLS reference values for ALL standard sizes
     standard_sizes = [20, 50, 100, 200, 500, 1000]
-    dls_sizes = [s for s in standard_sizes if s in dls_values]
-    dls_D = [dls_values[s] for s in dls_sizes]
+    dls_sizes = [s for s in standard_sizes if s in DLS_MEASUREMENTS]
+    dls_D = [DLS_MEASUREMENTS[s] for s in dls_sizes]
     if dls_sizes:
         dls_x = [_map_size(float(s)) for s in dls_sizes]
         dls_xerr = [(_size_err(float(s)) if _size_err(float(s)) > 0.1 else 0.0) for s in dls_sizes]
@@ -927,9 +930,12 @@ def plot_theory_comparison(
     ax.set_yscale('log')
     ax.set_xlim(x_min, x_max)
 
-    # Custom x-axis ticks at particle sizes
-    ax.xaxis.set_major_locator(FixedLocator([20, 50, 100, 200, 500, 1000]))
-    ax.xaxis.set_major_formatter(FixedFormatter(['20', '50', '100', '200', '500', '1000']))
+    # Custom x-axis ticks at DLS-mapped positions, labelled with nominal sizes
+    _tick_nominal = [20, 50, 100, 200, 500, 1000]
+    _tick_pos     = [_map_size(float(s)) for s in _tick_nominal]
+    _tick_labels  = [str(s) for s in _tick_nominal]
+    ax.xaxis.set_major_locator(FixedLocator(_tick_pos))
+    ax.xaxis.set_major_formatter(FixedFormatter(_tick_labels))
     ax.xaxis.set_minor_locator(FixedLocator([]))  # No minor ticks
 
     # Axis labels (larger: 12pt)

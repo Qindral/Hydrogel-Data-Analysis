@@ -20,7 +20,7 @@ def calculate_theoretical_diffusion(
 
     Returns diffusion coefficient in um^2/s.
     """
-    radius_m = (particle_size_nm / 2) * 1e-9
+    radius_m = ((particle_size_nm * 1e-9)/ 2) 
     D_m2_per_s = BOLTZMANN_CONSTANT * temperature / (6 * np.pi * viscosity * radius_m)
     D_um2_per_s = D_m2_per_s * 1e12
     return D_um2_per_s

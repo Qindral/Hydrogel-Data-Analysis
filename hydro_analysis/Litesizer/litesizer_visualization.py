@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from .litesizer_parser import LiteSizerData, MeasurementData, load_litesizer_xlsx
+from hydro_analysis.Litesizer.litesizer_parser import LiteSizerData, MeasurementData, load_litesizer_xlsx
 
 # Style guide colors (Jet-based palette)
 COLORS = {

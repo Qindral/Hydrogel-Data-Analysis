@@ -185,6 +185,92 @@ def parse_frame_timestamps(xml_path):
     return timestamps
 
 
+def parse_frap_roi(xml_path):
+    """Extract bleach ROI geometry, pixel size, phase timing and laser power
+    from a Leica _Properties.xml file.
+
+    Returns a dict (all keys optional, present only when found in the XML):
+      mpp_m, mpp_um        – pixel size in m/px and µm/px
+      roi_cx_px, roi_cy_px – bleach ROI centre in image pixels (col, row)
+      roi_rx_um, roi_ry_um – bleach ROI half-axes in µm
+      roi_rx_px, roi_ry_px – bleach ROI half-axes in pixels
+      roi_area_um2         – ellipse area  π·rx·ry  in µm²
+      phases               – list of {name, time_s, frame_count}
+      bleach_laser_pct     – 488 nm bleach laser power (%)
+    """
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    result = {}
+
+    # --- Pixel size ---
+    mpp_m = None
+    # Try DimID="X" format (Properties XML)
+    dd_x = root.find(".//DimensionDescription[@DimID='X']")
+    if dd_x is not None:
+        voxel = dd_x.get("Voxel")
+        if voxel:
+            mpp_m = float(voxel)
+        else:
+            n = int(dd_x.get("NumberOfElements", 1))
+            L = float(dd_x.get("Length", 0))
+            mpp_m = L / n if n > 0 else None
+    # Fall back to integer DimID="1" (series XML format)
+    if not mpp_m:
+        for dd in root.iter("DimensionDescription"):
+            if dd.get("DimID") == "1":
+                n = int(dd.get("NumberOfElements", 1))
+                L = float(dd.get("Length", 0))
+                mpp_m = L / n if n > 0 else None
+                break
+    if mpp_m and mpp_m > 0:
+        result["mpp_m"]  = mpp_m
+        result["mpp_um"] = mpp_m * 1e6
+
+    # --- Bleach ROI geometry ---
+    roi_elem = root.find(".//ROIDATA")
+    if roi_elem is not None:
+        scaling = roi_elem.find("REALWORLD_SCALING")
+        if scaling is not None:
+            size_x_m = float(scaling.get("SizeX", 0))
+            size_y_m = float(scaling.get("SizeY", 0))
+            pos_x_m  = float(scaling.get("PositionX", 0))
+            pos_y_m  = float(scaling.get("PositionY", 0))
+            mpp = result.get("mpp_m")
+            if mpp and mpp > 0:
+                # PositionX/Y = top-left corner of bounding box → convert to centre
+                cx_px = (pos_x_m + size_x_m / 2) / mpp
+                cy_px = (pos_y_m + size_y_m / 2) / mpp
+                result["roi_cx_px"] = int(round(cx_px))
+                result["roi_cy_px"] = int(round(cy_px))
+                rx_m = size_x_m / 2
+                ry_m = size_y_m / 2
+                result["roi_rx_um"]   = rx_m * 1e6
+                result["roi_ry_um"]   = ry_m * 1e6
+                result["roi_rx_px"]   = rx_m / mpp
+                result["roi_ry_px"]   = ry_m / mpp
+                result["roi_area_um2"] = np.pi * result["roi_rx_um"] * result["roi_ry_um"]
+
+    # --- Phase timing ---
+    phases = []
+    phase_names = ["Pre-Bleach", "Bleach", "Post-Bleach 1", "Post-Bleach 2"]
+    for i, info in enumerate(root.iter("Block_FRAP_Time_Info")):
+        name = phase_names[i] if i < len(phase_names) else f"Phase {i+1}"
+        phases.append({
+            "name":        name,
+            "time_s":      float(info.get("Time", 0)),
+            "frame_count": int(info.get("FrameCount", 0)),
+        })
+    if phases:
+        result["phases"] = phases
+
+    # --- Bleach laser power (488 nm) ---
+    ll = root.find(".//Block_FRAP_Bleach_Info//LaserLineSetting[@LaserLine='488']")
+    if ll is not None:
+        result["bleach_laser_pct"] = float(ll.get("IntensityDev", 0))
+
+    return result
+
+
 # =============================================================================
 # 3. Load TIF images
 # =============================================================================
@@ -315,8 +401,8 @@ def analyze_frap_recovery(times_s, intensities, pre_intensity):
     I_norm = intensities / pre_intensity
 
     # Initial guesses
-    I_0_guess = I_norm[0]
-    I_inf_guess = I_norm[-1]
+    I_0_guess = float(np.clip(I_norm[0],  0.0, 2.0))
+    I_inf_guess = float(np.clip(I_norm[-1], 0.0, 2.0))
     tau_guess = t[-1] / 4
 
     try:

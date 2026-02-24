@@ -767,7 +767,7 @@ def load_litesizer_xlsx(path: str | Path) -> LiteSizerData:
 
 def main():
     """Example usage."""
-    path = Path(r"D:\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
+    path = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
 
     print(f"Loading: {path}")
     data = load_litesizer_xlsx(path)
