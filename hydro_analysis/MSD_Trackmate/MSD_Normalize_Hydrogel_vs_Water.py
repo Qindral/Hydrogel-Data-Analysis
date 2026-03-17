@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+from matplotlib.ticker import MultipleLocator
 from scipy.optimize import curve_fit, OptimizeWarning
 
 from hydro_analysis.core.io import get_dls_reference_maps
@@ -57,14 +58,14 @@ CACHE_13MG = Path(__file__).parent / "cache" / "msd_13mg_results.pkl"
 CACHE_D0   = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
 
 # Set to False to exclude 13 mg/mL data from the plot
-INCLUDE_13MG = True
+INCLUDE_13MG =False
 
 SAVE_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
 
-RF_NM = 8.0
+RF_NM = 4.0
 PARTICLE_SIZES_NM = [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
 IMMOBILE_THRESHOLD_NM = 99
-X_LIM = (0.1, 1000.0)
+X_LIM = (0.1, 150)
 Y_LIM = (0.0, 1.0)
 
 # Colours per series  (style guide: blue family for 20 mg, orange for 13 mg)
@@ -133,11 +134,11 @@ def _fit_amsden(sizes_nm, ratios, errors):
         return None
 
     def model(rs, psi):
-        return np.exp(-np.pi * ((rs + RF_NM) / (psi + 2.0 * RF_NM)) ** 2)
+        return np.exp(-np.pi * ((rs + RF_NM) / (psi +RF_NM)) ** 2)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", OptimizeWarning)
-        popt, _ = curve_fit(
+        popt, pcov = curve_fit(
             model, rs_fit, y_fit,
             p0=[50.0],
             sigma=sigma,
@@ -146,9 +147,13 @@ def _fit_amsden(sizes_nm, ratios, errors):
             maxfev=10000,
         )
     psi_fit = popt[0]
-    x_line = np.logspace(np.log10(X_LIM[0]), np.log10(X_LIM[1]), 200)
-    y_line = model(x_line / 2.0, psi_fit)
-    return x_line, y_line, rf"Amsden fit ($\xi$={psi_fit:.3g} nm)"
+    psi_err = float(np.sqrt(pcov[0, 0])) if np.isfinite(pcov[0, 0]) else 0.0
+    print(f"  Amsden fit:  ξ = {psi_fit:.3g} ± {psi_err:.3g} nm")
+    x_line  = np.logspace(np.log10(X_LIM[0]), np.log10(X_LIM[1]), 200)
+    y_line  = model(x_line / 2.0, psi_fit)
+    y_upper = model(x_line / 2.0, psi_fit + psi_err)
+    y_lower = model(x_line / 2.0, max(psi_fit - psi_err, 1e-6))
+    return x_line, y_line, "Amsden fit", y_lower, y_upper
 
 
 # ── Helpers (continued) ────────────────────────────────────────────
@@ -200,6 +205,13 @@ def _plot_series(ax, xs, xerr, ratios, errors, style: dict,
         fit_label = f"{style['label']} {fit[2]}" if show_fit_label else None
         ax.plot(fit[0], fit[1], color=style["fit_color"], linewidth=1.2,
                 label=fit_label)
+        if len(fit) > 3:
+            ax.fill_between(fit[0], fit[3], fit[4],
+                            color=style["fit_color"], alpha=0.15, linewidth=0)
+            ax.plot(fit[0], fit[3], color=style["fit_color"], linewidth=0.7,
+                    linestyle="--", alpha=0.5)
+            ax.plot(fit[0], fit[4], color=style["fit_color"], linewidth=0.7,
+                    linestyle="--", alpha=0.5)
 
 
 # ── Main ───────────────────────────────────────────────────────────
@@ -260,9 +272,7 @@ def main() -> None:
     ax.set_xlim(*X_LIM)
     ax.set_ylim(*Y_LIM)
 
-    tick_x = [min(size_map.get(float(s), float(s)), X_LIM[1]) for s in PARTICLE_SIZES_NM]
-    ax.set_xticks(tick_x)
-    ax.set_xticklabels([f"{int(s)}" for s in PARTICLE_SIZES_NM])
+    ax.xaxis.set_major_locator(MultipleLocator(10))
 
     ax.set_xlabel("Particle size (nm)")
     ax.set_ylabel(r"$D_\mathrm{hydrogel}\,/\,D_\mathrm{water}$")
@@ -277,7 +287,6 @@ def main() -> None:
 
     # Filter auf nominale Größen ≤ 100 nm (DLS: ~35, 50.5, 102.5 nm)
     mask_100  = np.array(PARTICLE_SIZES_NM) <= 100.0
-    nom_100   = [s for s in PARTICLE_SIZES_NM if s <= 100.0]
     xs_100    = xs[mask_100];    xerr_100  = xerr[mask_100]
     r20_100   = ratios_20[mask_100]; e20_100 = errors_20[mask_100]
     fit_20_100 = _fit_amsden(xs_100, r20_100, e20_100)
@@ -290,12 +299,10 @@ def main() -> None:
     X_ALL = (25.0, 1300.0)   # alle Partikel (35–1266 nm DLS)
     X_100 = (25.0, 115.0)    # nur 35–100 nm
 
-    def _decorate(ax, nom_sizes, xlim, legend=True):
+    def _decorate(ax, xlim, legend=True):
         ax.set_xlim(*xlim)
         ax.set_ylim(*Y_LIM)
-        tick_x = [min(size_map.get(float(s), float(s)), xlim[1]) for s in nom_sizes]
-        ax.set_xticks(tick_x)
-        ax.set_xticklabels([f"{int(s)}" for s in nom_sizes])
+        ax.xaxis.set_major_locator(MultipleLocator(10))
         ax.set_xlabel("Particle size (nm)")
         ax.set_ylabel(r"$D_\mathrm{hydrogel}\,/\,D_\mathrm{water}$")
         ax.minorticks_on()
@@ -305,7 +312,7 @@ def main() -> None:
     # ── A: 20 mg – alle Partikel, kein Fit ───────────────────────────
     fig_a, ax = plt.subplots(constrained_layout=True)
     _plot_series(ax, xs, xerr, ratios_20, errors_20, STYLE_20MG)
-    _decorate(ax, PARTICLE_SIZES_NM, X_ALL)
+    _decorate(ax, X_ALL)
     fig_a.savefig(out_dir / "msd_ratio_20mg_all.png",  dpi=600, bbox_inches="tight")
     fig_a.savefig(out_dir / "msd_ratio_20mg_all.pdf")
 
@@ -314,14 +321,14 @@ def main() -> None:
     if INCLUDE_13MG and ratios_13 is not None:
         fig_b, ax = plt.subplots(constrained_layout=True)
         _plot_series(ax, xs, xerr, ratios_13, errors_13, STYLE_13MG)
-        _decorate(ax, PARTICLE_SIZES_NM, X_ALL)
+        _decorate(ax, X_ALL)
         fig_b.savefig(out_dir / "msd_ratio_13mg_all.png",  dpi=600, bbox_inches="tight")
         fig_b.savefig(out_dir / "msd_ratio_13mg_all.pdf")
 
     # ── C: 20 mg – 35–100 nm, mit Fit ────────────────────────────────
     fig_c, ax = plt.subplots(constrained_layout=True)
     _plot_series(ax, xs_100, xerr_100, r20_100, e20_100, STYLE_20MG, fit=fit_20_100)
-    _decorate(ax, nom_100, X_100)
+    _decorate(ax, X_100)
     fig_c.savefig(out_dir / "msd_ratio_20mg_fit.png",  dpi=600, bbox_inches="tight")
     fig_c.savefig(out_dir / "msd_ratio_20mg_fit.pdf")
 
@@ -330,7 +337,7 @@ def main() -> None:
     if INCLUDE_13MG and r13_100 is not None:
         fig_d, ax = plt.subplots(constrained_layout=True)
         _plot_series(ax, xs_100, xerr_100, r13_100, e13_100, STYLE_13MG, fit=fit_13_100)
-        _decorate(ax, nom_100, X_100)
+        _decorate(ax, X_100)
         fig_d.savefig(out_dir / "msd_ratio_13mg_fit.png",  dpi=600, bbox_inches="tight")
         fig_d.savefig(out_dir / "msd_ratio_13mg_fit.pdf")
 
@@ -339,7 +346,7 @@ def main() -> None:
     _plot_series(ax, xs_100, xerr_100, r20_100, e20_100, STYLE_20MG)
     if INCLUDE_13MG and r13_100 is not None:
         _plot_series(ax, xs_100, xerr_100, r13_100, e13_100, STYLE_13MG)
-    _decorate(ax, nom_100, X_100)
+    _decorate(ax, X_100)
     fig_e.savefig(out_dir / "msd_ratio_comparison.png",  dpi=600, bbox_inches="tight")
     fig_e.savefig(out_dir / "msd_ratio_comparison.pdf")
 
@@ -350,7 +357,7 @@ def main() -> None:
     if INCLUDE_13MG and r13_100 is not None:
         _plot_series(ax, xs_100, xerr_100, r13_100, e13_100, STYLE_13MG,
                      fit=fit_13_100, show_fit_label=False)
-    _decorate(ax, nom_100, X_100)
+    _decorate(ax, X_100)
     fig_f.savefig(out_dir / "msd_ratio_comparison_fit.png",  dpi=600, bbox_inches="tight")
     fig_f.savefig(out_dir / "msd_ratio_comparison_fit.pdf")
 

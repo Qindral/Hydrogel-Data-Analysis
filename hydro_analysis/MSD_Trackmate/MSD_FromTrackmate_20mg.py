@@ -171,10 +171,10 @@ def plot_imsd_overlays_by_size(
                 label=f"Ensemble MSD (N={imsd_all.shape[1]})",
             )
 
+        mapped_size = size_override.get(size_nm, size_nm) if size_override else size_nm
         lags = np.asarray(imsd_all.index.values, dtype=float)
         lags = lags[np.isfinite(lags) & (lags > 0)]
         if lags.size > 0:
-            mapped_size = size_override.get(size_nm, size_nm) if size_override else size_nm
             D_theory = calculate_theoretical_diffusion(particle_size_nm=mapped_size)
             x_line = np.logspace(np.log10(lags.min()), np.log10(lags.max()), 100)
             ax.loglog(
@@ -188,7 +188,7 @@ def plot_imsd_overlays_by_size(
 
         ax.set_xlabel("Lag Time (s)", fontsize=10)
         ax.set_ylabel("MSD (µm²)", fontsize=10)
-        ax.set_title(f"iMSD Overlay ({size_nm:.0f} nm)", fontsize=12, fontweight="semibold")
+        ax.set_title(f"iMSD Overlay ({mapped_size:.0f} nm)", fontsize=12, fontweight="semibold")
         ax.legend(loc="best", fontsize=9, frameon=False)
 
         plt.show()
@@ -221,17 +221,17 @@ def main() -> None:
         fit = r.get("fit_results_MSD")
         if fit is None:
             continue
-        # Count unique particles from tracks_df
+        # Count data points (rows in tracks_df = individual particle positions)
         tracks_df = r.get('tracks_df')
-        if tracks_df is not None and 'particle' in tracks_df.columns:
-            n_particles = len(tracks_df['particle'].unique())
-        else:
-            n_particles = r.get('number_of_tracks', 0) or 0
+        n_particles = len(tracks_df) if tracks_df is not None else 0
         rows.append({
             "xml_path": r["xml_path"],
             "base_name": r["base_name"],
             "particle_size_nm": r.get("particle_size_nm"),
             "D_MSD_um2_per_s": r.get("D_MSD"),
+            "D_error": fit.get("D_error"),
+            "exponent": fit.get("exponent"),
+            "exponent_error": fit.get("exponent_error"),
             "fps": r.get("fps"),
             "mpp_um_per_px": r.get("mpp"),
             "n_particles": n_particles,
@@ -247,6 +247,24 @@ def main() -> None:
         file_df = summary_df[cols].sort_values(["particle_size_nm", "base_name"])
         print("\nPro Datei (MSD):")
         print(file_df.to_string(index=False))
+
+    # ── Tabelle: aggregiert nach Partikelgröße ────────────────────────
+    print("\n── Ensemble MSD – Zusammenfassung nach Partikelgröße ──")
+    agg_rows = []
+    for size, grp in summary_df.groupby("particle_size_nm"):
+        D_vals = grp["D_MSD_um2_per_s"].dropna()
+        n_vals = grp["exponent"].dropna()
+        agg_rows.append({
+            "Größe (nm)":    int(size),
+            "D (µm²/s)":    f"{D_vals.mean():.4f}",
+            "± D":           f"{D_vals.std():.4f}" if len(D_vals) > 1 else f"{grp['D_error'].dropna().mean():.4f}",
+            "n":             f"{n_vals.mean():.3f}",
+            "± n":           f"{n_vals.std():.3f}"  if len(n_vals)  > 1 else f"{grp['exponent_error'].dropna().mean():.3f}",
+            "N Datenpunkte": int(grp["n_particles"].sum()),
+            "N Dateien":     len(grp),
+        })
+    agg_df = pd.DataFrame(agg_rows).set_index("Größe (nm)")
+    print(agg_df.to_string())
 
     dls_maps = get_dls_reference_maps()
     size_override = dls_maps["size_override_nm"]
