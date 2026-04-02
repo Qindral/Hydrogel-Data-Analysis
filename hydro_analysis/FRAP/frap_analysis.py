@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 # =============================================================================
 # Configuration
 # =============================================================================
-BASE_DIR = Path(r"H:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF\Water")
+BASE_DIR = Path(r"H:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF\Water 2")
 
 # =============================================================================
 # 1. Discover subfolders (Pre / Pb)
