@@ -1,71 +1,89 @@
 from pathlib import Path
 import re
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from hydro_analysis.core.io import extract_particle_size_from_path
-import matplotlib.pyplot as plt
+
+root = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung")
+# root = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
 root = Path(r"E:\PhD Data Analysis\SPT 2025 II")
+# Matches e.g. "0.4 mW", "50 µW", "23µW", "3.6mW", "3.6MW"
+# IGNORECASE covers mw/MW/mW; character class covers µ variants and uW
+POWER_RE = re.compile(r'(\d+[.,]\d+|\d+)\s*([µ\xb5\u03bcuU]W|mW)', re.IGNORECASE)
+
+ENCODINGS = ["utf-16", "utf-8-sig", "utf-8", "latin-1", "cp1252"]
+
+
+def _read_rec(path: Path) -> str | None:
+    """Try multiple encodings; return file content or None on failure."""
+    for enc in ENCODINGS:
+        try:
+            return path.read_text(encoding=enc)
+        except (UnicodeDecodeError, ValueError):
+            continue
+    return None
+
 
 results = []
-print(len(list(root.rglob("*.rec"))))
+n_skipped = 0
+print("Anzahl der .rec Dateien:", len(list(root.rglob("*.rec"))))
+
 for rec_file in root.rglob("*.rec"):
-    # Extract particle size from filename using existing pattern
-    match = re.search(r'(\d+)nm', rec_file.stem, re.IGNORECASE)
-    particle_size_nm = extract_particle_size_from_path(rec_file) 
-    
-    # Read file and find power line
-    power_value = None
-    power_unit = None
-    power_match = False
-    try:
-        with open(rec_file, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                # Search for lines containing power units
-                if 'µW' in line or 'mW' in line or 'MW' in line:
-                    # Extract unit
-                    unit_match = re.search(r'([µu]W|mW|MW)', line, re.IGNORECASE)
-                    if unit_match:
-                        power_unit = unit_match.group(1)
-                        
-                        # Remove all letters and whitespace to extract number
-                        cleaned = re.sub(r'[a-zA-Zµ\s]', '', line)
-                        print(cleaned)
-                        # Find first number (with optional decimal point)
-                        number_match = float(cleaned)
-                        if number_match:
-                            power_value = float(number_match.group(0))
-                            power_match = True
-                            break
-                if power_match:
-                    power_value = power_value
-                    power_unit = power_unit
-                    break
-    except Exception as e:
-        print(f"Error reading {rec_file.name}: {e}")
+    content = _read_rec(rec_file)
+    if content is None:
+        print(f"  [FEHLER] Konnte nicht lesen: {rec_file.name}")
+        n_skipped += 1
         continue
-    
+
+    # Only search within the Comment section
+    comment_idx = content.find("Comment:")
+    if comment_idx == -1:
+        print(f"  [SKIP kein Comment] {rec_file.name}")
+        n_skipped += 1
+        continue
+
+    comment_section = content[comment_idx + len("Comment:"):]
+
+    m = POWER_RE.search(comment_section)
+    if m is None:
+        print(f"  [SKIP kein mW/µW]  {rec_file.name}  | Comment: {comment_section[:60].strip()!r}")
+        n_skipped += 1
+        continue
+
+    raw_value  = m.group(1).replace(",", ".")
+    power_value = float(raw_value)
+    raw_unit    = m.group(2)
+    is_micro    = raw_unit[0].lower() in ("µ", "\xb5", "\u03bc", "u")
+    power_unit  = "µW" if is_micro else "mW"
+    power_mw    = power_value * 1e-3 if is_micro else power_value
+
     results.append({
-        'file': rec_file.name,
-        'particle_size_nm': particle_size_nm,
-        'power_value': power_value,
-        'power_unit': power_unit,
-        'path': str(rec_file),
-        "row": line.strip() if power_value is not None else None
+        "file":             rec_file.name,
+        "particle_size_nm": extract_particle_size_from_path(rec_file),
+        "power_value":      power_value,
+        "power_unit":       power_unit,
+        "power_mW":         power_mw,
+        "comment_line":     m.group(0),
+        "path":             str(rec_file),
     })
 
 df = pd.DataFrame(results)
-plt.figure(figsize=(10,6))
-for particle_size in [20,50,100,200,500,1000]:
-    subset = df[df['particle_size_nm'] == particle_size]
-    for row in subset.itertuples():
-        if row.power_value is not None:
-            if row.power_unit == 'µW':
-                power_mw = row.power_value * 1e-3
-            elif row.power_unit == 'mW' or row.power_unit == 'MW'   :
-                power_mw = row.power_value
-            if row.file == "100 nm TriSpuffer_3.tif.rec":
-                print(row.file, row.power_value, row.power_unit, row.row)
-            plt.scatter(particle_size, power_mw)
-plt.show()           
-# print(df)
-#df.to_csv(root / 'rec_file_analysis.csv', index=False)
+print(f"Gefunden: {len(df)} Dateien mit Leistungsangabe, {n_skipped} übersprungen")
+print(df[["file", "particle_size_nm", "power_value", "power_unit", "power_mW"]].to_string(index=False))
+
+# ── Plot ─────────────────────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(8, 5))
+for particle_size in [20, 50, 100, 200, 500, 1000]:
+    subset = df[df["particle_size_nm"] == particle_size]
+    if subset.empty:
+        continue
+    ax.scatter([particle_size] * len(subset), subset["power_mW"],
+               label=f"{particle_size} nm", zorder=3)
+
+ax.set_xlabel("Particle size (nm)")
+ax.set_ylabel("Laser power (mW)")
+ax.set_title("Laser power per particle size")
+ax.legend(loc="best")
+plt.tight_layout()
+plt.show()
