@@ -160,6 +160,21 @@ def plot_particle_analysis(
     if not measurements:
         raise ValueError(f"No measurements found for {size_nm} nm particles")
 
+    # Exclude high-PDI measurements
+    MAX_PDI = 42.0
+    filtered, n_excluded = [], 0
+    for m in measurements:
+        if m.polydispersity_pct is not None and m.polydispersity_pct > MAX_PDI:
+            print(f"  [EXCLUDED PDI={m.polydispersity_pct:.1f}%] {m.name}")
+            n_excluded += 1
+        else:
+            filtered.append(m)
+    if n_excluded:
+        print(f"  → {n_excluded} measurement(s) excluded (PDI > {MAX_PDI:.0f}%)")
+    measurements = filtered
+    if not measurements:
+        raise ValueError(f"No measurements remain for {size_nm} nm after PDI filter")
+
     # Calculate statistics
     diameters = [m.hydrodynamic_diameter_nm for m in measurements if m.hydrodynamic_diameter_nm]
     diffusions = [m.diffusion_coefficient_um2s for m in measurements if m.diffusion_coefficient_um2s]
@@ -351,7 +366,7 @@ def plot_comparison_summary(
         markeredgewidth=0.8,
     )
     # Add 1:1 line
-    max_size = summary_df["nominal_size_nm"].max() * 1.1
+    max_size = summary_df["measured_diameter_nm"].max() * 1.1
     ax.plot([0, max_size], [0, max_size], "--", color="#888888", linewidth=1.5, label="1:1")
     ax.set_xlabel("Nominal diameter (nm)")
     ax.set_ylabel("Measured diameter (nm)")
@@ -359,6 +374,8 @@ def plot_comparison_summary(
     ax.legend(loc="upper left")
     ax.set_xlim(0, max_size)
     ax.set_ylim(0, max_size)
+    # ax.set_xscale("log")
+    # ax.set_yscale("log")
 
     # 2. Diffusion coefficient vs size
     ax = axes[0, 1]

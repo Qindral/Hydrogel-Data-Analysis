@@ -162,10 +162,15 @@ class LiteSizerData:
                 return m
         return None
 
-    def to_summary_dataframe(self) -> pd.DataFrame:
-        """Convert all measurements to a summary DataFrame."""
+    def to_summary_dataframe(self, max_polydispersity_pct: float = 42.0) -> pd.DataFrame:
+        """Convert all measurements to a summary DataFrame, excluding high-PDI entries."""
         records = []
+        n_excluded = 0
         for m in self.measurements:
+            if m.polydispersity_pct is not None and m.polydispersity_pct > max_polydispersity_pct:
+                print(f"  [EXCLUDED PDI={m.polydispersity_pct:.1f}%] {m.name}")
+                n_excluded += 1
+                continue
             record = {
                 "name": m.name,
                 "hydrodynamic_diameter_nm": m.hydrodynamic_diameter_nm,
@@ -192,6 +197,8 @@ class LiteSizerData:
             record["d50_volume"] = m.d_values.d50_volume
             record["d90_volume"] = m.d_values.d90_volume
             records.append(record)
+        if n_excluded:
+            print(f"  → {n_excluded} measurement(s) excluded (PDI > {max_polydispersity_pct:.0f}%)")
         return pd.DataFrame(records)
 
 
