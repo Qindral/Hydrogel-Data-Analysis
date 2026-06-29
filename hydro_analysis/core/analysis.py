@@ -236,6 +236,18 @@ def perform_msd_analysis(result_dict: Dict[str, Any], fit_points: int = DEFAULT_
     n = fit_result["n"][0]
     n_err = fit_result["n_err"][0]
 
+    # Linear fit MSD = 4D*t + 4*sigma^2 to extract localization error
+    xs_lin = emsd.iloc[0:fit_points].index.values.astype(float)
+    ys_lin = emsd.iloc[0:fit_points].values.astype(float)
+    mask = np.isfinite(xs_lin) & np.isfinite(ys_lin)
+    xs_lin, ys_lin = xs_lin[mask], ys_lin[mask]
+    if len(xs_lin) >= 2:
+        lin_coeffs = np.polyfit(xs_lin, ys_lin, 1)
+        sigma_um2 = float(lin_coeffs[1]) / 4.0
+        sigma_loc_nm = float(np.sqrt(sigma_um2) * 1000.0) if sigma_um2 > 0 else np.nan
+    else:
+        sigma_loc_nm = np.nan
+
     fit_payload = {
         "D_um2_per_s": D,
         "D_error": D_err,
@@ -246,6 +258,7 @@ def perform_msd_analysis(result_dict: Dict[str, Any], fit_points: int = DEFAULT_
         "logA": fit_result["logA"][0],
         "logA_err": fit_result["logA_err"][0],
         "cov": fit_result["cov"],
+        "sigma_loc_nm": sigma_loc_nm,
         "imsd": imsd,
         "emsd": emsd,
         "fit_points": fit_points,

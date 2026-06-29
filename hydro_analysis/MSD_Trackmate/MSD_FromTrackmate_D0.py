@@ -243,6 +243,7 @@ def main() -> None:
             "D_error": fit.get("D_error"),
             "exponent": fit.get("exponent"),
             "exponent_error": fit.get("exponent_error"),
+            "sigma_loc_nm": fit.get("sigma_loc_nm"),
             "fps": r.get("fps"),
             "mpp_um_per_px": r.get("mpp"),
             "n_particles": n_particles,
@@ -265,12 +266,14 @@ def main() -> None:
     for size, grp in summary_df.groupby("particle_size_nm"):
         D_vals  = grp["D_MSD_um2_per_s"].dropna()
         n_vals  = grp["exponent"].dropna()
+        s_vals  = grp["sigma_loc_nm"].dropna()
         agg_rows.append({
             "Größe (nm)":  int(size),
             "D (µm²/s)":  f"{D_vals.mean():.4f}",
             "± D":         f"{D_vals.std():.4f}" if len(D_vals) > 1 else f"{grp['D_error'].dropna().mean():.4f}",
             "n":           f"{n_vals.mean():.3f}",
             "± n":         f"{n_vals.std():.3f}"  if len(n_vals)  > 1 else f"{grp['exponent_error'].dropna().mean():.3f}",
+            "σ_lok (nm)":  f"{s_vals.mean():.1f}" if not s_vals.empty else "n/a",
             "N Datenpunkte": int(grp["n_particles"].sum()),
             "N Dateien":   len(grp),
         })
