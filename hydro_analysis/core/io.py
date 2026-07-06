@@ -2,6 +2,7 @@
 Here wont be stored any further analysis methods or visualization methods.'''
 from __future__ import annotations
 
+import pickle
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -222,6 +223,33 @@ def get_dls_reference_maps() -> Dict[str, Dict[float, float]]:
         "pdi_err_percent": pdi_err_percent,
         "n": n,
     }
+
+_DLS_CACHE_FILE = Path(__file__).parent.parent / "Litesizer" / "cache" / "dls_reference.pkl"
+
+_PARTICLE_LABELS: dict[int, int] = {
+    20: 35, 50: 50, 100: 100, 200: 240, 500: 560, 1000: 1370
+}
+
+
+def load_dls_cache() -> dict:
+    """Load raw DLS reference cache from PKL. Raises FileNotFoundError if missing."""
+    if not _DLS_CACHE_FILE.exists():
+        raise FileNotFoundError(f"DLS cache not found: {_DLS_CACHE_FILE}")
+    with open(_DLS_CACHE_FILE, "rb") as f:
+        return pickle.load(f)
+
+
+def get_dls_sizes() -> dict[float, float]:
+    """Return {nominal_nm: z_mean_nm} from DLS cache."""
+    cache = load_dls_cache()
+    return {float(k): float(v["z_mean_nm"]) for k, v in cache.items()}
+
+
+def get_dls_labels() -> dict[float, int]:
+    """Return {nominal_nm: label_nm} from DLS cache keys via PARTICLE_LABELS mapping."""
+    cache = load_dls_cache()
+    return {float(k): _PARTICLE_LABELS[int(k)] for k in cache.keys()}
+
 
 def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
     """

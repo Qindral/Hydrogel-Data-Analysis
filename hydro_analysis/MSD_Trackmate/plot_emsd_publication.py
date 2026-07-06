@@ -36,14 +36,14 @@ import pandas as pd
 
 
 # ── colour / style constants ──────────────────────────────────────────────────
-_COL_IMSD    = "#888888"
+_COL_IMSD    = "black"
 _COL_EMSD    = "#1a1aee"
 _COL_THEORY  = "black"
 _COL_FIT     = "#cc2200"
 _COL_SPAN    = "#bbbbbb"
 
-_ALPHA_IMSD  = 0.10
-_LW_IMSD     = 0.40
+_ALPHA_IMSD  = 0.01
+_LW_IMSD     = 0.65
 _LW_EMSD     = 0.8
 _MS_EMSD     = 3
 _LW_THEORY   = 1.2
@@ -91,6 +91,8 @@ def plot_emsd_publication(
     save_path: Optional[Path | str] = None,
     filename: str = "emsd_publication",
     particle_size_nm: Optional[float] = None,
+    sample_label: Optional[str] = None,
+    xlim: tuple = (1e-2, 2.0),
 ) -> Tuple[plt.Figure, plt.Axes]:
     """
     Create a publication-quality log-log MSD plot with a normalized inset.
@@ -106,14 +108,17 @@ def plot_emsd_publication(
     n_fit : int
         Number of early lag-time points used for the power-law eMSD fit.
     fit_result : dict, optional
-        Keys ``'A'`` (µm²/s^n) and ``'exponent'``.  Drawn as red line in both
-        the main plot and the normalized inset.
+        Keys ``'A'`` (µm²/s^n) and ``'exponent'``.
     save_path : Path or str, optional
         Output directory.  Saves <filename>.pdf and <filename>.png (300 dpi).
     filename : str
         Base filename without extension.
     particle_size_nm : float, optional
-        DLS-corrected particle diameter (nm).  Shown as annotation in the plot.
+        DLS-corrected particle diameter (nm) — shown in the legend labels.
+    sample_label : str, optional
+        Short sample description shown inside the figure (e.g. "20 mg/mL C16").
+    xlim : tuple
+        (x_min, x_max) lag-time axis limits in seconds.
 
     Returns
     -------
@@ -156,9 +161,10 @@ def plot_emsd_publication(
                 color=_COL_EMSD, linewidth=_LW_EMSD, zorder=5,
                 marker="o", markersize=_MS_EMSD, markeredgewidth=0)
 
-        # ── axis scales + fixed y range ──────────────────────────────────
+        # ── axis scales + fixed ranges for cross-sample comparability ────
         ax.set_xscale("log")
         ax.set_yscale("log")
+        ax.set_xlim(*xlim)
         ax.set_ylim(1e-2, 1e2)
         _add_log_minor_ticks(ax)
 
@@ -166,15 +172,23 @@ def plot_emsd_publication(
         ax.set_ylabel(r"MSD ($\mu\mathrm{m}^2$)")
 
         # ── legend upper left ────────────────────────────────────────────
+        if particle_size_nm is not None:
+            s = f"{particle_size_nm:.0f}"
+            imsd_label = f"iMSD ({s} nm)"
+            emsd_label = f"eMSD ({s} nm)"
+            se_label   = rf"Stokes–Einstein $4D_{{0}}^{{{s}\,\mathrm{{nm}}}}\tau$"
+        else:
+            imsd_label = "individual MSD"
+            emsd_label = "ensemble MSD"
+            se_label   = r"Stokes–Einstein ($4D_0\tau$)"
         handles = [
             Line2D([0], [0], color=_COL_IMSD, linewidth=0.9, alpha=0.5,
-                   label="individual MSD"),
+                   label=imsd_label),
             Line2D([0], [0], color=_COL_EMSD, linewidth=_LW_EMSD,
                    marker="o", markersize=_MS_EMSD, markeredgewidth=0,
-                   label="ensemble MSD"),
+                   label=emsd_label),
             Line2D([0], [0], color=_COL_THEORY, linewidth=_LW_THEORY,
-                   linestyle=_DASH_THEORY,
-                   label=r"Stokes–Einstein ($4D_0\tau$)"),
+                   linestyle=_DASH_THEORY, label=se_label),
         ]
         if A_fit is not None and n_exp is not None:
             handles.append(
@@ -183,10 +197,9 @@ def plot_emsd_publication(
             )
         ax.legend(handles=handles, loc="upper left", frameon=False)
 
-        if particle_size_nm is not None:
-            ax.text(0.97, 0.05, f"d = {particle_size_nm:.0f} nm",
-                    transform=ax.transAxes, ha="right", va="bottom",
-                    fontsize=9)
+        if sample_label:
+            ax.text(0.03, 0.03, sample_label, transform=ax.transAxes,
+                    ha="left", va="bottom", fontsize=8, fontstyle="italic")
 
         # ── inset lower right: normalized MSD = MSD(τ) / (4 D_0 τ) ──────
         # Square panel, no zoom connector.
@@ -234,8 +247,15 @@ def plot_emsd_publication(
         if finite_y:
             axin.set_ylim(min(finite_y) * 0.5, max(finite_y) * 2.0)
 
-        axin.set_xlabel(r"$\tau$ (s)", fontsize=7, labelpad=2)
-        axin.set_ylabel(r"MSD / $(4D_0\tau)$", fontsize=7, labelpad=2)
+        if particle_size_nm is not None:
+            _s = f"{particle_size_nm:.0f}"
+            _inset_ylabel = rf"MSD $/ 4D_0^{{{_s}\,\mathrm{{nm}}}}\tau$"
+        else:
+            _inset_ylabel = r"MSD $/ 4D_0\tau$"
+        axin.text(0.97, 0.04, r"$\tau$ (s)", transform=axin.transAxes,
+                  ha="right", va="bottom", fontsize=7)
+        axin.text(0.04, 0.96, _inset_ylabel, transform=axin.transAxes,
+                  ha="left", va="top", fontsize=7)
 
         # ── layout + output ───────────────────────────────────────────────
         fig.tight_layout(pad=0.4)
@@ -244,7 +264,7 @@ def plot_emsd_publication(
             out = Path(save_path)
             out.mkdir(parents=True, exist_ok=True)
             fig.savefig(out / f"{filename}.pdf", bbox_inches="tight")
-            fig.savefig(out / f"{filename}.png", dpi=300, bbox_inches="tight")
+            fig.savefig(out / f"{filename}.png", dpi=600, bbox_inches="tight")
 
         plt.show()
         return fig, ax

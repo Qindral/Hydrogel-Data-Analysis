@@ -14,6 +14,7 @@ from .physics import calculate_theoretical_diffusion
 
 # Standard analysis settings for canonical keys in result_dict
 DEFAULT_MSD_FIT_POINTS = 6
+MIN_TRACK_LENGTH = 10
 DEFAULT_STEP_INTERVAL = 3
 
 
@@ -225,6 +226,12 @@ def perform_msd_analysis(result_dict: Dict[str, Any], fit_points: int = DEFAULT_
         tracks_driftless = tp.subtract_drift(tracks)
     else:
         tracks_driftless = tracks.copy()
+
+    tracks_driftless = tp.filter_stubs(tracks_driftless, threshold=MIN_TRACK_LENGTH)
+    if tracks_driftless.empty:
+        result_dict["D_MSD"] = None
+        result_dict["fit_results_MSD"] = None
+        return result_dict
 
     imsd = tp.imsd(tracks_driftless, mpp=mpp, fps=fps)
     emsd = tp.emsd(tracks_driftless, mpp=mpp, fps=fps)

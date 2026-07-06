@@ -14,9 +14,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from hydro_analysis.core.io import single_file_data, get_dls_reference_maps
-from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
+from hydro_analysis.core.io import single_file_data, get_dls_reference_maps, get_dls_sizes, get_dls_labels
+from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS, fit_powerlaw_with_errors
 from hydro_analysis.core.visualization import plot_theory_comparison, plot_diffusion_comparison
+from hydro_analysis.MSD_Trackmate.plot_emsd_publication import plot_emsd_publication
 from hydro_analysis.core.physics import calculate_theoretical_diffusion
 
 # -----------------------------
@@ -41,11 +42,38 @@ MAX_IMSD_CURVES_PER_SIZE = 3900  # None to plot all curves
 FPS_SMALL_TARGET = 60.0
 FPS_LARGE_TARGET = 20.0
 FPS_TOLERANCE = 3.0  # Allowed deviation in fps
+FPS_SIZE_EXACT: dict[float, float] = {50.0: 60.0}  # exact fps required for these sizes (±0.5)
 PRINT_FILE_SUMMARY = False
 
 # Pickle caching
 NEUBERECHNEN = False  # Set to True to force recomputation
-CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_results.pkl"
+CACHE_FILE     = Path(__file__).parent / "cache" / "msd_20mg_results.pkl"
+PUB_CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_publication.pkl"
+DLS_CACHE_FILE = Path(__file__).parent.parent / "Litesizer" / "cache" / "dls_reference.pkl"
+
+
+def load_pub_cache() -> dict | None:
+    """Load publication data cache; returns None if NEUBERECHNEN=True or cache missing."""
+    if NEUBERECHNEN:
+        return None
+    if not PUB_CACHE_FILE.exists():
+        return None
+    try:
+        with open(PUB_CACHE_FILE, "rb") as f:
+            data = pickle.load(f)
+        print(f"Pub cache geladen: {PUB_CACHE_FILE} ({len(data)} Größen)")
+        return data
+    except Exception as e:
+        print(f"Pub cache load failed: {e}")
+        return None
+
+
+def save_pub_cache(pub_data: dict) -> None:
+    """Save per-size publication data to pickle."""
+    PUB_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(PUB_CACHE_FILE, "wb") as f:
+        pickle.dump(pub_data, f)
+    print(f"Pub cache gespeichert: {PUB_CACHE_FILE} ({len(pub_data)} Größen)")
 
 
 def load_cached_results() -> dict | None:
@@ -81,6 +109,11 @@ def compute_results() -> dict:
     processed = 0
 
     for size_nm, folders in XML_FOLDERS.items():
+        if size_nm in FPS_SIZE_EXACT:
+            target_fps, tol = FPS_SIZE_EXACT[size_nm], 0.5
+        else:
+            target_fps = FPS_SMALL_TARGET if size_nm < 200 else FPS_LARGE_TARGET
+            tol = FPS_TOLERANCE
         for folder in folders:
             if not folder.exists():
                 print(f"WARNING: folder not found: {folder}")
@@ -90,6 +123,10 @@ def compute_results() -> dict:
             for xml_path in sorted(xml_files):
                 rd = single_file_data(xml_path)
                 if rd is None:
+                    continue
+                fps = rd.get("fps")
+                if fps is None or abs(float(fps) - target_fps) > tol:
+                    print(f"  [SKIP fps={fps}] {xml_path.name}")
                     continue
                 rd["particle_size_nm"] = size_nm if rd.get("particle_size_nm") is None else rd["particle_size_nm"]
                 perform_msd_analysis(rd, fit_points=MSD_FIT_POINTS)
@@ -109,8 +146,13 @@ def _collect_imsd_by_size(results: dict) -> dict[float, list[pd.DataFrame]]:
         fit = r.get("fit_results_MSD")
         imsd = fit.get("imsd") if fit else None
         fps = r.get("fps")
-        target_fps = FPS_SMALL_TARGET if size_nm is not None and size_nm < 200 else FPS_LARGE_TARGET
-        if fps is None or abs(float(fps) - target_fps) > FPS_TOLERANCE:
+        if size_nm in FPS_SIZE_EXACT:
+            target_fps = FPS_SIZE_EXACT[size_nm]
+            tol = 0.5
+        else:
+            target_fps = FPS_SMALL_TARGET if size_nm is not None and size_nm < 200 else FPS_LARGE_TARGET
+            tol = FPS_TOLERANCE
+        if fps is None or abs(float(fps) - target_fps) > tol:
             continue
         if size_nm is None or imsd is None or imsd.empty:
             continue
@@ -232,6 +274,7 @@ def main() -> None:
             "D_error": fit.get("D_error"),
             "exponent": fit.get("exponent"),
             "exponent_error": fit.get("exponent_error"),
+            "sigma_loc_nm": fit.get("sigma_loc_nm"),
             "fps": r.get("fps"),
             "mpp_um_per_px": r.get("mpp"),
             "n_particles": n_particles,
@@ -254,12 +297,14 @@ def main() -> None:
     for size, grp in summary_df.groupby("particle_size_nm"):
         D_vals = grp["D_MSD_um2_per_s"].dropna()
         n_vals = grp["exponent"].dropna()
+        s_vals = grp["sigma_loc_nm"].dropna()
         agg_rows.append({
             "Größe (nm)":    int(size),
             "D (µm²/s)":    f"{D_vals.mean():.4f}",
             "± D":           f"{D_vals.std():.4f}" if len(D_vals) > 1 else f"{grp['D_error'].dropna().mean():.4f}",
             "n":             f"{n_vals.mean():.3f}",
             "± n":           f"{n_vals.std():.3f}"  if len(n_vals)  > 1 else f"{grp['exponent_error'].dropna().mean():.3f}",
+            "σ_lok (nm)":   f"{s_vals.mean():.1f}" if not s_vals.empty else "n/a",
             "N Datenpunkte": int(grp["n_particles"].sum()),
             "N Dateien":     len(grp),
         })
@@ -273,12 +318,12 @@ def main() -> None:
     dls_err = dls_maps["dls_D_err_um2_per_s"]
 
     #plot_theory_comparison(summary_df, SAVE_PATH)
-    plot_imsd_overlays_by_size(
-        results,
-        SAVE_PATH,
-        max_curves_per_size=MAX_IMSD_CURVES_PER_SIZE,
-        size_override=size_override,
-    )
+    # plot_imsd_overlays_by_size(
+    #     results,
+    #     SAVE_PATH,
+    #     max_curves_per_size=MAX_IMSD_CURVES_PER_SIZE,
+    #     size_override=size_override,
+    # )
     plot_diffusion_comparison(
         summary_df,
         SAVE_PATH,
@@ -287,6 +332,70 @@ def main() -> None:
         dls_override=dls_override,
         dls_err=dls_err,
     )
+
+    # ── Publication plots (with cache) ────────────────────────────────────────
+    dls_sizes  = get_dls_sizes()
+    dls_labels = get_dls_labels()
+    pub_data   = load_pub_cache()
+
+    if pub_data is not None:
+        # Always refresh D_theo and refit from stored emsd_agg (cache may be stale)
+        for size_nm, entry in pub_data.items():
+            mapped_size = dls_sizes.get(size_nm, size_override.get(size_nm, size_nm))
+            entry["D_theo"] = calculate_theoretical_diffusion(particle_size_nm=mapped_size)
+            fr = fit_powerlaw_with_errors(entry["emsd_agg"], points=MSD_FIT_POINTS)
+            entry["fit_agg"] = {"A": float(fr["A"][0]), "exponent": float(fr["n"][0])}
+
+    if pub_data is None:
+        pub_data = {}
+        size_map = _collect_imsd_by_size(results)
+        for size_nm in sorted(size_map.keys()):
+            imsd_list = size_map[size_nm]
+            if not imsd_list:
+                continue
+
+            imsd_frames = []
+            for idx, imsd in enumerate(imsd_list, 1):
+                im = imsd.copy()
+                im.columns = [f"{idx}_{col}" for col in im.columns]
+                imsd_frames.append(im)
+            imsd_all = pd.concat(imsd_frames, axis=1, join="outer").sort_index()
+
+            emsd_agg = imsd_all.mean(axis=1, skipna=True)
+            emsd_agg = emsd_agg[emsd_agg > 0]
+            if emsd_agg.empty:
+                continue
+
+            fr = fit_powerlaw_with_errors(emsd_agg, points=MSD_FIT_POINTS)
+            fit_agg = {"A": float(fr["A"][0]), "exponent": float(fr["n"][0])}
+
+            mapped_size = dls_sizes.get(size_nm, size_override.get(size_nm, size_nm))
+            D_th = calculate_theoretical_diffusion(particle_size_nm=mapped_size)
+
+            pub_data[size_nm] = {
+                "imsd_all": imsd_all,
+                "emsd_agg": emsd_agg,
+                "fit_agg":  fit_agg,
+                "D_theo":   D_th,
+            }
+
+        save_pub_cache(pub_data)
+
+    for size_nm, entry in sorted(pub_data.items()):
+        label_nm = dls_labels.get(size_nm, int(size_nm))
+        xlim = (0.01, 6.0) if size_nm < 200 else (0.04, 3.0)
+        plot_emsd_publication(
+            imsd=entry["imsd_all"],
+            emsd=entry["emsd_agg"],
+            D_theo=entry["D_theo"],
+            n_fit=MSD_FIT_POINTS,
+            fit_result=entry["fit_agg"],
+            save_path=SAVE_PATH,
+            filename=f"emsd_{int(size_nm)}nm",
+            particle_size_nm=label_nm,
+            xlim=xlim,
+            sample_label="20 mg/mL C16",
+        )
 
 
 if __name__ == "__main__":

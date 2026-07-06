@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from hydro_analysis.core.io import single_file_data, get_dls_reference_maps
+from hydro_analysis.core.io import single_file_data, get_dls_reference_maps, get_dls_sizes, get_dls_labels  # noqa: F401
 from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS, fit_powerlaw_with_errors
 from hydro_analysis.core.visualization import plot_theory_comparison, plot_diffusion_comparison
 from hydro_analysis.MSD_Trackmate.plot_emsd_publication import plot_emsd_publication
@@ -53,45 +53,13 @@ MAX_IMSD_CURVES_PER_SIZE = 300  # None to plot all curves
 FPS_SMALL_TARGET = 60.0
 FPS_LARGE_TARGET = 20.0
 FPS_TOLERANCE = 3.0  # Allowed deviation in fps
+FPS_SIZE_EXACT: dict[float, float] = {50.0: 60.0}  # exact fps required for these sizes (±0.5)
 PRINT_FILE_SUMMARY = True
 
 # Pickle caching
 NEUBERECHNEN = False  # Set to True to force recomputation
 CACHE_FILE     = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
 PUB_CACHE_FILE = Path(__file__).parent / "cache" / "msd_d0_publication.pkl"
-DLS_CACHE_FILE = Path(__file__).parent.parent / "Litesizer" / "cache" / "dls_reference.pkl"
-
-
-def load_dls_sizes() -> dict[float, float]:
-    """Return {nominal_nm: z_mean_nm} from litesizer cache, or hardcoded fallback."""
-    if DLS_CACHE_FILE.exists():
-        try:
-            with open(DLS_CACHE_FILE, "rb") as f:
-                cache = pickle.load(f)
-            sizes = {float(k): float(v["z_mean_nm"]) for k, v in cache.items()}
-            print(f"DLS sizes from litesizer cache: {sizes}")
-            return sizes
-        except Exception as e:
-            print(f"  DLS cache load failed ({e}), using hardcoded fallback")
-    dls_maps = get_dls_reference_maps()
-    return {float(k): float(v) for k, v in dls_maps["size_override_nm"].items()}
-
-
-def load_dls_labels() -> dict[float, int]:
-    """Return {nominal_nm: label_nm} from litesizer cache, or hardcoded fallback."""
-    _FALLBACK = {20.0: 35, 50.0: 50, 100.0: 100, 200.0: 240, 500.0: 560, 1000.0: 1370}
-    if DLS_CACHE_FILE.exists():
-        try:
-            with open(DLS_CACHE_FILE, "rb") as f:
-                cache = pickle.load(f)
-            labels = {float(k): int(v["label_nm"]) for k, v in cache.items()
-                      if "label_nm" in v}
-            if labels:
-                return labels
-        except Exception as e:
-            print(f"  DLS label load failed ({e}), using fallback")
-    return _FALLBACK
-
 
 def load_pub_cache() -> dict | None:
     """Load publication data cache; returns None if NEUBERECHNEN=True or cache missing."""
@@ -150,6 +118,11 @@ def compute_results() -> dict:
     processed = 0
 
     for size_nm, folders in XML_FOLDERS.items():
+        if size_nm in FPS_SIZE_EXACT:
+            target_fps, tol = FPS_SIZE_EXACT[size_nm], 0.5
+        else:
+            target_fps = FPS_SMALL_TARGET if size_nm < 200 else FPS_LARGE_TARGET
+            tol = FPS_TOLERANCE
         for folder in folders:
             if not folder.exists():
                 print(f"WARNING: folder not found: {folder}")
@@ -159,6 +132,10 @@ def compute_results() -> dict:
             for xml_path in sorted(xml_files):
                 rd = single_file_data(xml_path)
                 if rd is None:
+                    continue
+                fps = rd.get("fps")
+                if fps is None or abs(float(fps) - target_fps) > tol:
+                    print(f"  [SKIP fps={fps}] {xml_path.name}")
                     continue
                 rd["particle_size_nm"] = size_nm if rd.get("particle_size_nm") is None else rd["particle_size_nm"]
                 perform_msd_analysis(rd, fit_points=MSD_FIT_POINTS)
@@ -178,8 +155,13 @@ def _collect_imsd_by_size(results: dict) -> dict[float, list[pd.DataFrame]]:
         fit = r.get("fit_results_MSD")
         imsd = fit.get("imsd") if fit else None
         fps = r.get("fps")
-        target_fps = FPS_SMALL_TARGET if size_nm is not None and size_nm < 200 else FPS_LARGE_TARGET
-        if fps is None or abs(float(fps) - target_fps) > FPS_TOLERANCE:
+        if size_nm in FPS_SIZE_EXACT:
+            target_fps = FPS_SIZE_EXACT[size_nm]
+            tol = 0.5
+        else:
+            target_fps = FPS_SMALL_TARGET if size_nm is not None and size_nm < 200 else FPS_LARGE_TARGET
+            tol = FPS_TOLERANCE
+        if fps is None or abs(float(fps) - target_fps) > tol:
             continue
         if size_nm is None or imsd is None or imsd.empty:
             continue
@@ -345,12 +327,12 @@ def main() -> None:
     dls_err = dls_maps["dls_D_err_um2_per_s"]
 
     # plot_theory_comparison(summary_df, SAVE_PATH)
-    plot_imsd_overlays_by_size(
-        results,
-        SAVE_PATH,
-        max_curves_per_size=MAX_IMSD_CURVES_PER_SIZE,
-        size_override=size_override,
-    )
+    # plot_imsd_overlays_by_size(
+    #     results,
+    #     SAVE_PATH,
+    #     max_curves_per_size=MAX_IMSD_CURVES_PER_SIZE,
+    #     size_override=size_override,
+    # )
     plot_diffusion_comparison(
         summary_df,
         SAVE_PATH,
@@ -361,8 +343,8 @@ def main() -> None:
     )
 
     # ── Publication plots (with cache) ────────────────────────────────────────
-    dls_sizes  = load_dls_sizes()   # {nominal_nm: z_mean_nm}
-    dls_labels = load_dls_labels()  # {nominal_nm: label_nm}
+    dls_sizes  = get_dls_sizes()    # {nominal_nm: z_mean_nm}
+    dls_labels = get_dls_labels()   # {nominal_nm: label_nm}
     pub_data   = load_pub_cache()   # {size_nm: {imsd_all, emsd_agg, fit_agg, D_theo}}
 
     if pub_data is not None:
@@ -410,6 +392,7 @@ def main() -> None:
 
     for size_nm, entry in sorted(pub_data.items()):
         label_nm = dls_labels.get(size_nm, int(size_nm))
+        xlim = (0.01, 6.0) if size_nm < 200 else (0.04, 3.0)
         plot_emsd_publication(
             imsd=entry["imsd_all"],
             emsd=entry["emsd_agg"],
@@ -419,6 +402,7 @@ def main() -> None:
             save_path=SAVE_PATH,
             filename=f"emsd_{int(size_nm)}nm",
             particle_size_nm=label_nm,
+            xlim=xlim,
         )
 
 
