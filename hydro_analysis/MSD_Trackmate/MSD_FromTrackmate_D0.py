@@ -15,8 +15,9 @@ import numpy as np
 import pandas as pd
 
 from hydro_analysis.core.io import single_file_data, get_dls_reference_maps
-from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
+from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS, fit_powerlaw_with_errors
 from hydro_analysis.core.visualization import plot_theory_comparison, plot_diffusion_comparison
+from hydro_analysis.MSD_Trackmate.plot_emsd_publication import plot_emsd_publication
 from hydro_analysis.core.physics import calculate_theoretical_diffusion
 
 # -----------------------------
@@ -56,7 +57,64 @@ PRINT_FILE_SUMMARY = True
 
 # Pickle caching
 NEUBERECHNEN = False  # Set to True to force recomputation
-CACHE_FILE = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
+CACHE_FILE     = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
+PUB_CACHE_FILE = Path(__file__).parent / "cache" / "msd_d0_publication.pkl"
+DLS_CACHE_FILE = Path(__file__).parent.parent / "Litesizer" / "cache" / "dls_reference.pkl"
+
+
+def load_dls_sizes() -> dict[float, float]:
+    """Return {nominal_nm: z_mean_nm} from litesizer cache, or hardcoded fallback."""
+    if DLS_CACHE_FILE.exists():
+        try:
+            with open(DLS_CACHE_FILE, "rb") as f:
+                cache = pickle.load(f)
+            sizes = {float(k): float(v["z_mean_nm"]) for k, v in cache.items()}
+            print(f"DLS sizes from litesizer cache: {sizes}")
+            return sizes
+        except Exception as e:
+            print(f"  DLS cache load failed ({e}), using hardcoded fallback")
+    dls_maps = get_dls_reference_maps()
+    return {float(k): float(v) for k, v in dls_maps["size_override_nm"].items()}
+
+
+def load_dls_labels() -> dict[float, int]:
+    """Return {nominal_nm: label_nm} from litesizer cache, or hardcoded fallback."""
+    _FALLBACK = {20.0: 35, 50.0: 50, 100.0: 100, 200.0: 240, 500.0: 560, 1000.0: 1370}
+    if DLS_CACHE_FILE.exists():
+        try:
+            with open(DLS_CACHE_FILE, "rb") as f:
+                cache = pickle.load(f)
+            labels = {float(k): int(v["label_nm"]) for k, v in cache.items()
+                      if "label_nm" in v}
+            if labels:
+                return labels
+        except Exception as e:
+            print(f"  DLS label load failed ({e}), using fallback")
+    return _FALLBACK
+
+
+def load_pub_cache() -> dict | None:
+    """Load publication data cache; returns None if NEUBERECHNEN=True or cache missing."""
+    if NEUBERECHNEN:
+        return None
+    if not PUB_CACHE_FILE.exists():
+        return None
+    try:
+        with open(PUB_CACHE_FILE, "rb") as f:
+            data = pickle.load(f)
+        print(f"Pub cache geladen: {PUB_CACHE_FILE} ({len(data)} Größen)")
+        return data
+    except Exception as e:
+        print(f"Pub cache load failed: {e}")
+        return None
+
+
+def save_pub_cache(pub_data: dict) -> None:
+    """Save per-size publication data to pickle."""
+    PUB_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(PUB_CACHE_FILE, "wb") as f:
+        pickle.dump(pub_data, f)
+    print(f"Pub cache gespeichert: {PUB_CACHE_FILE} ({len(pub_data)} Größen)")
 
 
 def load_cached_results() -> dict | None:
@@ -301,6 +359,67 @@ def main() -> None:
         dls_override=dls_override,
         dls_err=dls_err,
     )
+
+    # ── Publication plots (with cache) ────────────────────────────────────────
+    dls_sizes  = load_dls_sizes()   # {nominal_nm: z_mean_nm}
+    dls_labels = load_dls_labels()  # {nominal_nm: label_nm}
+    pub_data   = load_pub_cache()   # {size_nm: {imsd_all, emsd_agg, fit_agg, D_theo}}
+
+    if pub_data is not None:
+        # Always refresh D_theo and refit from stored emsd_agg (cache may be stale)
+        for size_nm, entry in pub_data.items():
+            mapped_size = dls_sizes.get(size_nm, size_override.get(size_nm, size_nm))
+            entry["D_theo"] = calculate_theoretical_diffusion(particle_size_nm=mapped_size)
+            fr = fit_powerlaw_with_errors(entry["emsd_agg"], points=MSD_FIT_POINTS)
+            entry["fit_agg"] = {"A": float(fr["A"][0]), "exponent": float(fr["n"][0])}
+
+    if pub_data is None:
+        pub_data = {}
+        size_map = _collect_imsd_by_size(results)
+        for size_nm in sorted(size_map.keys()):
+            imsd_list = size_map[size_nm]
+            if not imsd_list:
+                continue
+
+            imsd_frames = []
+            for idx, imsd in enumerate(imsd_list, 1):
+                im = imsd.copy()
+                im.columns = [f"{idx}_{col}" for col in im.columns]
+                imsd_frames.append(im)
+            imsd_all = pd.concat(imsd_frames, axis=1, join="outer").sort_index()
+
+            emsd_agg = imsd_all.mean(axis=1, skipna=True)
+            emsd_agg = emsd_agg[emsd_agg > 0]
+            if emsd_agg.empty:
+                continue
+
+            fr = fit_powerlaw_with_errors(emsd_agg, points=MSD_FIT_POINTS)
+            fit_agg = {"A": float(fr["A"][0]), "exponent": float(fr["n"][0])}
+
+            mapped_size = dls_sizes.get(size_nm, size_override.get(size_nm, size_nm))
+            D_th = calculate_theoretical_diffusion(particle_size_nm=mapped_size)
+
+            pub_data[size_nm] = {
+                "imsd_all": imsd_all,
+                "emsd_agg": emsd_agg,
+                "fit_agg":  fit_agg,
+                "D_theo":   D_th,
+            }
+
+        save_pub_cache(pub_data)
+
+    for size_nm, entry in sorted(pub_data.items()):
+        label_nm = dls_labels.get(size_nm, int(size_nm))
+        plot_emsd_publication(
+            imsd=entry["imsd_all"],
+            emsd=entry["emsd_agg"],
+            D_theo=entry["D_theo"],
+            n_fit=MSD_FIT_POINTS,
+            fit_result=entry["fit_agg"],
+            save_path=SAVE_PATH,
+            filename=f"emsd_{int(size_nm)}nm",
+            particle_size_nm=label_nm,
+        )
 
 
 if __name__ == "__main__":

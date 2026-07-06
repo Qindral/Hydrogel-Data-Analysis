@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tlmgr install *)",
+      "PowerShell(Get-Command tlmgr -ErrorAction SilentlyContinue)",
+      "Read(//c//**)",
+      "PowerShell(Get-Command latex -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command pdflatex -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command mpm -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-ChildItem \"$env:LOCALAPPDATA\\\\Programs\" -ErrorAction SilentlyContinue | Select-Object Name; Get-ChildItem \"C:\\\\Program Files\" -ErrorAction SilentlyContinue | Select-Object Name | Where-Object {$_.Name -match \"tex|latex|mik\"})",
+      "PowerShell(python -c \"import matplotlib.font_manager as fm; fonts = [f.name for f in fm.fontManager.ttflist]; print\\([f for f in fonts if 'Open' in f]\\)\")",
+      "PowerShell(python -c \"import matplotlib; print\\(matplotlib.get_data_path\\(\\)\\)\")"
+    ]
+  }
+}

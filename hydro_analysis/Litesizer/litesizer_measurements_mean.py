@@ -14,6 +14,7 @@ Default XLSX_PATH is used when no argument is given.
 """
 from __future__ import annotations
 
+import pickle
 import sys
 from pathlib import Path
 
@@ -27,10 +28,14 @@ from scipy.optimize import curve_fit
 from hydro_analysis.Litesizer.litesizer_parser import load_litesizer_xlsx
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-XLSX_PATH = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
-SAVE_PATH = None           # Set to Path to export figures; None → plt.show()
-SIZES     = [20, 50, 100, 200, 500, 1000]
-MAX_PDI   = 42.0
+XLSX_PATH      = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
+SAVE_PATH      = None           # Set to Path to export figures; None → plt.show()
+SIZES          = [20, 50, 100, 200, 500, 1000]
+MAX_PDI        = 42.0
+DLS_CACHE_FILE = Path(__file__).parent / "cache" / "dls_reference.pkl"
+
+# Renamed labels for figures: nominal (nm) → label (nm)
+PARTICLE_LABELS = {20: 35, 50: 50, 100: 100, 200: 240, 500: 560, 1000: 1370}
 
 COLORS = {
     "base": ["#0000da", "#004cff", "#00c4ff", "#49ffad", "#adff49", "#ffd700", "#ff6800", "#da0000"],
@@ -901,6 +906,27 @@ def plot_cumulant_overlay(
     return fig
 
 
+# ── DLS cache ──────────────────────────────────────────────────────────────────
+
+def save_dls_cache(agg: dict, path: Path = DLS_CACHE_FILE) -> None:
+    """Persist DLS z_mean and D per nominal size for use by SPT scripts."""
+    cache = {
+        int(nom): {
+            "z_mean_nm":     g["z_mean"],
+            "sigma_dist_nm": g["sigma_dist_mean"],
+            "D_mean_um2s":   g["D_mean"],
+            "sigma_D_um2s":  g["sigma_D_mean"],
+            "nominal_nm":    int(nom),
+            "label_nm":      PARTICLE_LABELS.get(int(nom), int(nom)),
+        }
+        for nom, g in agg.items()
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        pickle.dump(cache, f)
+    print(f"  DLS cache saved: {path}  ({len(cache)} sizes)")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -912,6 +938,7 @@ def main() -> None:
     print(f"  Parsed {len(measurements)} measurements\n")
 
     agg = aggregate(measurements)
+    save_dls_cache(agg)
 
     print("── Per-size summary ──────────────────────────────────────────────────")
     for size_nm, g in sorted(agg.items()):
