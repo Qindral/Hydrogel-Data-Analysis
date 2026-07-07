@@ -28,6 +28,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Tuple
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from matplotlib.lines import Line2D
@@ -73,6 +74,11 @@ _RC = {
     "axes.labelsize":     10,
     "legend.fontsize":    8,
 }
+
+
+def _darken(hex_col: str, factor: float = 0.60) -> str:
+    r, g, b = mcolors.to_rgb(hex_col)
+    return mcolors.to_hex((r * factor, g * factor, b * factor))
 
 
 def _add_log_minor_ticks(ax: plt.Axes) -> None:
@@ -258,6 +264,231 @@ def plot_emsd_publication(
                   ha="left", va="top", fontsize=7)
 
         # ── layout + output ───────────────────────────────────────────────
+        fig.tight_layout(pad=0.4)
+
+        if save_path is not None:
+            out = Path(save_path)
+            out.mkdir(parents=True, exist_ok=True)
+            fig.savefig(out / f"{filename}.pdf", bbox_inches="tight")
+            fig.savefig(out / f"{filename}.png", dpi=600, bbox_inches="tight")
+
+        plt.show()
+        return fig, ax
+
+
+def plot_fit_lines_overview(
+    fits_by_size: dict[float, list[dict]],
+    theory_by_size: dict[float, float],
+    dls_labels: dict[float, int],
+    fits_hydrogel_by_size: Optional[dict[float, list[dict]]] = None,
+    hydrogel_label: str = "20 mg/mL C16",
+    save_path: Optional[Path | str] = None,
+    filename: str = "emsd_fits_overview",
+    sample_label: Optional[str] = None,
+) -> Tuple[plt.Figure, plt.Axes]:
+    """
+    Overview chart: per-file D₀ fit lines plus optional hydrogel fit lines,
+    all colour-coded by particle size.
+
+    Parameters
+    ----------
+    fits_by_size          {nominal_nm: [{"A", "n", "tau_min", "tau_max"}, ...]}
+                          D₀ water — thin, semi-transparent lines.
+    theory_by_size        {nominal_nm: D_theo (µm²/s)}
+    dls_labels            {nominal_nm: label_nm}
+    fits_hydrogel_by_size Same structure as fits_by_size — drawn thicker and
+                          darker to show the hydrogel slowing.
+    hydrogel_label        Legend text for the hydrogel layer.
+    """
+    _LW_D0  = 0.7    # D₀ fit lines
+    _LW_HG  = 1.6    # hydrogel fit lines — thicker
+    _A_D0   = 0.45   # D₀ alpha
+    _A_HG   = 0.75   # hydrogel alpha
+
+    all_sizes = sorted(set(fits_by_size) | set(fits_hydrogel_by_size or {}))
+
+    with plt.rc_context(_RC):
+        fig, ax = plt.subplots(figsize=(5.5, 4.0))
+        handles = []
+
+        for size_nm in all_sizes:
+            d0_fits = fits_by_size.get(size_nm, [])
+            D_theo  = theory_by_size.get(size_nm, 0.0)
+            label_nm = dls_labels.get(size_nm, int(size_nm))
+            col      = _SIZE_COLORS.get(size_nm, "#333333")
+            col_dark = _darken(col, 0.60)
+
+            # Stokes-Einstein theory line
+            t_th = np.logspace(-2, np.log10(6.0), 400)
+            ax.plot(t_th, 4.0 * D_theo * t_th,
+                    color=col, linewidth=_LW_THEORY,
+                    linestyle=_DASH_THEORY, zorder=3, alpha=0.9)
+
+            # D₀ individual fit lines (thin, semi-transparent, lighter colour)
+            for fit in d0_fits:
+                A, n = fit["A"], fit["n"]
+                t = np.logspace(np.log10(fit["tau_min"]),
+                                np.log10(fit["tau_max"]), 200)
+                ax.plot(t, A * t ** n,
+                        color=col, linewidth=_LW_D0, alpha=_A_D0, zorder=2)
+
+            # hydrogel fit lines (thicker, darker)
+            if fits_hydrogel_by_size:
+                for fit in fits_hydrogel_by_size.get(size_nm, []):
+                    A, n = fit["A"], fit["n"]
+                    t = np.logspace(np.log10(fit["tau_min"]),
+                                    np.log10(fit["tau_max"]), 200)
+                    ax.plot(t, A * t ** n,
+                            color=col_dark, linewidth=_LW_HG,
+                            alpha=_A_HG, zorder=4)
+
+            handles.append(
+                Line2D([0], [0], color=col, linewidth=1.5,
+                       label=f"{label_nm} nm")
+            )
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(1e-2, 6.0)
+        ax.set_ylim(1e-2, 1e3)
+        _add_log_minor_ticks(ax)
+        ax.set_xlabel(r"Lag time $\tau$ (s)")
+        ax.set_ylabel(r"MSD ($\mu\mathrm{m}^2$)")
+
+        style_handles = [
+            Line2D([0], [0], color="gray", linewidth=_LW_D0, alpha=_A_D0,
+                   label=r"$D_0$ fit (per file)"),
+        ]
+        if fits_hydrogel_by_size:
+            style_handles.append(
+                Line2D([0], [0], color="#444444", linewidth=_LW_HG,
+                       alpha=_A_HG, label=f"{hydrogel_label} fit"),
+            )
+        style_handles.append(
+            Line2D([0], [0], color="gray", linewidth=_LW_THEORY,
+                   linestyle=_DASH_THEORY, label=r"Stokes–Einstein $4D_0\tau$"),
+        )
+        ax.legend(handles=handles + style_handles, loc="upper left",
+                  frameon=False, fontsize=7)
+
+        if sample_label:
+            ax.text(0.03, 0.03, sample_label, transform=ax.transAxes,
+                    ha="left", va="bottom", fontsize=8, fontstyle="italic")
+
+        fig.tight_layout(pad=0.4)
+
+        if save_path is not None:
+            out = Path(save_path)
+            out.mkdir(parents=True, exist_ok=True)
+            fig.savefig(out / f"{filename}.pdf", bbox_inches="tight")
+            fig.savefig(out / f"{filename}.png", dpi=600, bbox_inches="tight")
+
+        plt.show()
+        return fig, ax
+
+
+# ── 6-colour palette (one per nominal size, light → dark) ────────────────────
+_SIZE_COLORS: dict[float, str] = {
+    20.0:   "#0072B2",   # blue
+    50.0:   "#009E73",   # green
+    100.0:  "#E69F00",   # amber
+    200.0:  "#D55E00",   # vermillion
+    500.0:  "#CC79A7",   # pink
+    1000.0: "#56B4E9",   # sky blue
+}
+
+
+def plot_emsd_overview(
+    pub_data: dict,
+    dls_labels: dict[float, int],
+    save_path: Optional[Path | str] = None,
+    filename: str = "emsd_overview",
+    sample_label: Optional[str] = None,
+) -> Tuple[plt.Figure, plt.Axes]:
+    """
+    Single log-log chart with all particle sizes overlaid.
+
+    For each size one colour is used for:
+      • eMSD data points (markers + thin line)
+      • power-law fit line (solid)
+      • Stokes-Einstein theory line (dashed, same colour, lighter)
+
+    Parameters
+    ----------
+    pub_data   dict keyed by nominal_nm → {emsd_agg, fit_agg, D_theo}
+    dls_labels {nominal_nm: label_nm}
+    save_path  output directory
+    filename   base name without extension
+    sample_label  optional annotation (e.g. "D₀ water")
+    """
+    with plt.rc_context(_RC):
+        fig, ax = plt.subplots(figsize=(5.5, 4.0))
+        handles = []
+
+        for size_nm in sorted(pub_data.keys()):
+            entry    = pub_data[size_nm]
+            emsd     = entry["emsd_agg"]
+            fit      = entry["fit_agg"]
+            D_theo   = entry["D_theo"]
+            label_nm = dls_labels.get(size_nm, int(size_nm))
+            col      = _SIZE_COLORS.get(size_nm, "#333333")
+            col_th   = col   # theory same colour, distinguished by linestyle
+
+            lag   = emsd.index.values.astype(float)
+            ev    = emsd.values.astype(float)
+            valid = ev > 0
+
+            t_th = np.logspace(np.log10(lag[valid].min()),
+                               np.log10(lag[valid].max()), 300)
+
+            # Stokes-Einstein theory (dashed)
+            ax.plot(t_th, 4.0 * D_theo * t_th,
+                    color=col_th, linewidth=_LW_THEORY,
+                    linestyle=_DASH_THEORY, alpha=0.7, zorder=2)
+
+            # power-law fit (solid)
+            A_fit = fit.get("A")
+            n_exp = fit.get("exponent", fit.get("n"))
+            if A_fit is not None and n_exp is not None:
+                ax.plot(t_th, float(A_fit) * t_th ** float(n_exp),
+                        color=col, linewidth=_LW_FIT, zorder=4)
+
+            # eMSD data points
+            ax.plot(lag[valid], ev[valid],
+                    color=col, linewidth=_LW_EMSD * 0.7, zorder=5,
+                    marker="o", markersize=_MS_EMSD, markeredgewidth=0, alpha=0.85)
+
+            handles.append(
+                Line2D([0], [0], color=col, linewidth=_LW_FIT,
+                       marker="o", markersize=_MS_EMSD, markeredgewidth=0,
+                       label=f"{label_nm} nm")
+            )
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(1e-2, 6.0)
+        ax.set_ylim(1e-2, 1e3)
+        _add_log_minor_ticks(ax)
+        ax.set_xlabel(r"Lag time $\tau$ (s)")
+        ax.set_ylabel(r"MSD ($\mu\mathrm{m}^2$)")
+        ax.legend(handles=handles, loc="upper left", frameon=False, title="particle size")
+
+        if sample_label:
+            ax.text(0.03, 0.03, sample_label, transform=ax.transAxes,
+                    ha="left", va="bottom", fontsize=8, fontstyle="italic")
+
+        # legend entry for line styles
+        style_handles = [
+            Line2D([0], [0], color="gray", linewidth=_LW_FIT, label="power-law fit"),
+            Line2D([0], [0], color="gray", linewidth=_LW_THEORY,
+                   linestyle=_DASH_THEORY, alpha=0.7, label=r"Stokes–Einstein $4D_0\tau$"),
+        ]
+        ax.legend(
+            handles=handles + style_handles,
+            loc="upper left", frameon=False,
+            ncol=1, fontsize=7,
+        )
+
         fig.tight_layout(pad=0.4)
 
         if save_path is not None:
