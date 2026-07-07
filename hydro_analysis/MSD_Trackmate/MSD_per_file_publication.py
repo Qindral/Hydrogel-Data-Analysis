@@ -13,6 +13,10 @@ Figure layout
   Upper-right    normalised-MSD inset  MSD / (4 D₀ τ)
   Lower-right    raw-trajectory inset  (plain, scale bar only, no text)
   Annotation     d = <label> nm  — lower-right corner of main axes
+
+Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
+detections within 3% of the frame border are dropped and trajectories split at
+the gap, to correct spurious TrackMate linking of near-edge detections.
 """
 from __future__ import annotations
 
@@ -63,7 +67,7 @@ SAVE_PATH = Path(
 MSD_FIT_POINTS    = DEFAULT_MSD_FIT_POINTS
 FPS_SMALL_TARGET  = 60.0
 FPS_LARGE_TARGET  = 20.0
-FPS_TOLERANCE     = 3.0
+FPS_TOLERANCE     = 40.0
 MAX_TRACKS_DISPLAY = 300  # max particle tracks drawn in trajectory inset
 
 # ── Style ───────────────────────────────────────────────────────────────────────
@@ -71,9 +75,9 @@ _COL_IMSD    = "black"
 _COL_EMSD    = "#1a1aee"
 _COL_THEORY  = "black"
 _COL_FIT     = "#cc2200"
-_COL_TRK     = "#666666"
+_COL_TRK     = "#000000"
 
-_ALPHA_IMSD  = 0.10
+_ALPHA_IMSD  = 0.01
 _LW_IMSD     = 0.65
 _LW_EMSD     = 0.8
 _MS_EMSD     = 3
@@ -418,6 +422,7 @@ def main() -> None:
                     "D_error":          fit.get("D_error",      np.nan),
                     "exponent":         fit.get("exponent",     np.nan),
                     "exponent_error":   fit.get("exponent_error", np.nan),
+                    "r_squared":        fit.get("r_squared",    np.nan),
                     "sigma_loc_nm":     fit.get("sigma_loc_nm", np.nan),
                     "D_theo_um2_per_s": D_theo,
                 })
@@ -442,6 +447,17 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(summary_rows)
         print(f"\nSummary saved: {csv_path}")
+
+    if summary_rows:
+        print("\nPower-law fit quality (R²):")
+        header = f"{'file':<40} {'size_nm':>7} {'exponent':>9} {'R²':>8}"
+        print(header)
+        print("-" * len(header))
+        for row in summary_rows:
+            r2 = row["r_squared"]
+            r2_str = f"{r2:.4f}" if np.isfinite(r2) else "n/a"
+            exp_str = f"{row['exponent']:.3f}" if np.isfinite(row["exponent"]) else "n/a"
+            print(f"{row['file']:<40} {row['size_nm']:>7} {exp_str:>9} {r2_str:>8}")
 
     print(f"\nDone — {n_processed} files processed, {n_skipped} skipped.")
 

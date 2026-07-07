@@ -3,6 +3,10 @@ Interactive Method Comparison — Step Size (Gaussian) vs MSD (power-law).
 
 tp.imsd() is cached per track-length filter so adjusting exponent or
 fit-point sliders does not trigger a full recomputation.
+
+Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
+detections within 3% of the frame border are dropped and trajectories split at
+the gap, to correct spurious TrackMate linking of near-edge detections.
 """
 
 from __future__ import annotations

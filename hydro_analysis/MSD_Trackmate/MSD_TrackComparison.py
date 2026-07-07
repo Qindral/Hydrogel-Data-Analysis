@@ -7,6 +7,10 @@ different tracking results for the same source files.
 Compares:
 1. Diffusion coefficient D across folders
 2. Per-file comparison: D, particle count, track length
+
+Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
+detections within 3% of the frame border are dropped and trajectories split at
+the gap, to correct spurious TrackMate linking of near-edge detections.
 """
 
 from pathlib import Path

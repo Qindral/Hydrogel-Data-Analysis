@@ -196,6 +196,11 @@ def fit_powerlaw_with_errors(
     A_fit = float(np.exp(logA_fit))
     se_A = A_fit * se_logA
 
+    ly_pred = n_fit * lx + logA_fit
+    ss_res = float(np.sum((ly - ly_pred) ** 2))
+    ss_tot = float(np.sum((ly - np.mean(ly)) ** 2))
+    r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+
     return {
         "A": np.array([A_fit]),
         "n": np.array([n_fit]),
@@ -204,6 +209,7 @@ def fit_powerlaw_with_errors(
         "logA": np.array([logA_fit]),
         "logA_err": np.array([se_logA]),
         "cov": cov,
+        "r_squared": np.array([r_squared]),
     }
 
 
@@ -265,6 +271,7 @@ def perform_msd_analysis(result_dict: Dict[str, Any], fit_points: int = DEFAULT_
         "logA": fit_result["logA"][0],
         "logA_err": fit_result["logA_err"][0],
         "cov": fit_result["cov"],
+        "r_squared": fit_result["r_squared"][0],
         "sigma_loc_nm": sigma_loc_nm,
         "imsd": imsd,
         "emsd": emsd,

@@ -4,6 +4,10 @@ D₀ overview — individual per-file power-law fits + 20 mg/mL C16 eMSD overlay
 D₀ (water) XML files: all fps allowed, per-file fit lines (thin, colour).
 20 mg/mL C16 XML files: all fps allowed, per-file eMSD (thicker, darker).
 Stokes-Einstein theory line per size (dashed).
+
+Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
+detections within 3% of the frame border are dropped and trajectories split at
+the gap, to correct spurious TrackMate linking of near-edge detections.
 """
 from __future__ import annotations
 

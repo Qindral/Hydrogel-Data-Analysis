@@ -6,6 +6,10 @@ and shows the final theory comparison plot.
 
 Supports pickle caching to speed up repeated runs.
 Set NEUBERECHNEN = True to force recomputation.
+
+Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
+detections within 3% of the frame border are dropped and trajectories split at
+the gap, to correct spurious TrackMate linking of near-edge detections.
 """
 
 from pathlib import Path

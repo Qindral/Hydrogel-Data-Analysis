@@ -9,6 +9,10 @@ Same figure layout as MSD_per_file_publication.py (D₀ reference):
 
 Each TrackMate XML file is processed individually; outputs are named
 after the source file.
+
+Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
+detections within 3% of the frame border are dropped and trajectories split at
+the gap, to correct spurious TrackMate linking of near-edge detections.
 """
 from __future__ import annotations
 

@@ -1,5 +1,11 @@
 '''This Script provides experiment data extraction and parsing. It is solely for the SPT experiment conducted in the keylab microscopy.
-Here wont be stored any further analysis methods or visualization methods.'''
+Here wont be stored any further analysis methods or visualization methods.
+
+single_file_data() applies remove_edge_artifacts() to every loaded track set: detections within
+3% of the frame border (200x150 or 400x300 px) are dropped and trajectories are split at the gap,
+since TrackMate occasionally mis-links spurious near-edge detections onto real tracks. This runs
+automatically for every script that loads tracks via single_file_data() (D0, 20mg, 13mg,
+per-file publication, step-size, track comparison, etc.) — no per-script changes needed.'''
 from __future__ import annotations
 
 import pickle
@@ -49,28 +55,32 @@ def find_rec_tif_files(xml_path: Path) -> Dict[str, Any]:
     result = {
         'fps': None,
         'mpp': None,
+        'size_x': None,
+        'size_y': None,
         'tiff_file':    None,
         'rec_file': None,
     }
-    
 
-    
+
+
 
     # Try to parse .rec file for FPS
-    
+
     rec_info = parse_rec_file(rec_path)
     fps = rec_info.get('fps')
     mpp = rec_info.get('mpp')
-    
 
-    
+
+
     # Determine calibration
-    
+
     result['mpp'] = mpp
     result['fps'] = fps
+    result['size_x'] = rec_info.get('size_x')
+    result['size_y'] = rec_info.get('size_y')
     result['tiff_file'] = tif_path if tif_path.exists() else None
     result['rec_file'] = rec_path if rec_path.exists() else None
-    
+
     return result
 
 
@@ -304,6 +314,59 @@ def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
         print(f"Error parsing {xml_file_path}: {e}")
         return None
 
+
+EDGE_MARGIN_FRAC = 0.03
+
+
+def remove_edge_artifacts(
+    tracks_df: pd.DataFrame,
+    frame_width_px: float,
+    frame_height_px: float,
+    margin_frac: float = EDGE_MARGIN_FRAC,
+) -> tuple[pd.DataFrame, Dict[str, int]]:
+    """
+    Drop detections within `margin_frac` of the frame border and split each
+    affected trajectory at the removed gap.
+
+    TrackMate sometimes mis-links spurious near-edge detections onto real
+    tracks. A detection inside the border margin is dropped outright; if a
+    particle has detections on both sides of a dropped gap, those are two
+    unrelated track segments (the particle left the field of view and a
+    different detection was linked back in), so they are relabelled as
+    separate particles rather than kept as one trajectory spanning the gap.
+
+    Returns (cleaned_df, stats) where stats has 'n_removed' (dropped
+    detections) and 'n_splits' (extra trajectories created by the split).
+    """
+    if tracks_df is None or tracks_df.empty:
+        return tracks_df, {'n_removed': 0, 'n_splits': 0}
+
+    n_particles_before = tracks_df['particle'].nunique()
+
+    margin_x = margin_frac * frame_width_px
+    margin_y = margin_frac * frame_height_px
+
+    df = tracks_df.sort_values(by=['particle', 'frame']).reset_index(drop=True)
+    near_edge = (
+        (df['x'] < margin_x) | (df['x'] > frame_width_px - margin_x) |
+        (df['y'] < margin_y) | (df['y'] > frame_height_px - margin_y)
+    )
+    n_removed = int(near_edge.sum())
+
+    kept = df[~near_edge].copy()
+    if kept.empty:
+        return kept, {'n_removed': n_removed, 'n_splits': -n_particles_before}
+
+    orig_idx = kept.index.to_series()
+    same_particle = kept['particle'] == kept['particle'].shift()
+    contiguous = orig_idx.diff() == 1
+    new_segment = ~(same_particle & contiguous)
+    kept['particle'] = new_segment.cumsum().to_numpy()
+
+    n_splits = int(kept['particle'].nunique()) - n_particles_before
+    return kept.reset_index(drop=True), {'n_removed': n_removed, 'n_splits': n_splits}
+
+
 def check_text_encoding(path: Path) -> str:
     """Utility to check text encoding of a file."""
     import chardet
@@ -380,6 +443,7 @@ def _build_result_dict(
     particle_size_nm: Optional[float],
     tif_path: Optional[Path],
     rec_path: Optional[Path],
+    edge_filter_stats: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     num_tracks = tracks_df['particle'].nunique() if tracks_df is not None else 0
     num_frames = tracks_df['frame'].max() + 1 if tracks_df is not None and not tracks_df.empty else 0
@@ -395,6 +459,8 @@ def _build_result_dict(
         'particle_size_nm': particle_size_nm,
         'num_tracks': num_tracks,
         'num_frames': num_frames,
+        'edge_filter_removed': edge_filter_stats.get('n_removed', 0) if edge_filter_stats else 0,
+        'edge_filter_splits': edge_filter_stats.get('n_splits', 0) if edge_filter_stats else 0,
         'D_MSD': None,
         'D_step': None,
         'fit_results_MSD': None,
@@ -416,13 +482,23 @@ def single_file_data(xml_path: Path) -> Optional[Dict[str, Any]]:
     tracks_df = read_trackmate_xml(xml_path)
     fps = calib_info['fps']
     mpp = calib_info['mpp']
-    
+    size_x = calib_info['size_x']
+    size_y = calib_info['size_y']
+
     # Validate required parameters
     if fps is None or mpp is None:
         print(f"     ERROR: Missing calibration for {xml_path.name} (fps={fps}, mpp={mpp})")
         print(f"     Skipping {xml_path.name}")
         return None
-    
+
+    edge_filter_stats = None
+    if tracks_df is not None and not tracks_df.empty and size_x and size_y:
+        tracks_df, edge_filter_stats = remove_edge_artifacts(tracks_df, size_x, size_y)
+        if edge_filter_stats['n_removed']:
+            print(f"     [EDGE FILTER] {xml_path.name}: removed {edge_filter_stats['n_removed']} "
+                  f"detections near border ({size_x}x{size_y} px), "
+                  f"+{edge_filter_stats['n_splits']} tracks from splits")
+
     return _build_result_dict(
         xml_path=xml_path,
         tracks_df=tracks_df,
@@ -431,6 +507,7 @@ def single_file_data(xml_path: Path) -> Optional[Dict[str, Any]]:
         particle_size_nm=particle_size,
         tif_path=calib_info['tiff_file'],
         rec_path=calib_info['rec_file'],
+        edge_filter_stats=edge_filter_stats,
     )
 
 # -----------------------------
