@@ -53,7 +53,7 @@ mpl.rcParams.update({
 })
 
 # ── Configuration ──────────────────────────────────────────────────
-CACHE_20MG = Path(__file__).parent / "cache" / "msd_20mg_results.pkl"
+CACHE_20MG = Path(__file__).parent / "cache" / "msd_20mg_files.pkl"
 CACHE_13MG = Path(__file__).parent / "cache" / "msd_13mg_results.pkl"
 CACHE_D0   = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
 
