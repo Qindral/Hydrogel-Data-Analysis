@@ -1,0 +1,14 @@
+detector_name,detector_signal,HV_kV,spot_size,dwell_time_us,line_integration,vacuum_mode,n_files,magnification_min_x,magnification_max_x,folders,example_files
+ETD,SE,1.5,5.0,5.0,4.0,High vacuum,17,1874.9977376957797,12500.0,Lyophilisation,"20mg_50nm_bulk_10kx_002.tif, 20mg_50nm_bulk_10kx_010.tif, 20mg_50nm_bulk_1500kx_001.tif, ..."
+T2,SE,2.0,5.0,5.0,4.0,High vacuum,14,188.57621318577307,625000.0,CPT\2026_02-02,"20mg_100nm_50kx_014.tif, 20mg_100nm_80kx_004.tif, 20mg_100nm_80kx_006.tif, ..."
+T1,BSE,2.0,5.0,5.0,4.0,High vacuum,14,188.57621318577307,625000.0,CPT\2026_02-02,"20mg_100nm_50kx_013.tif, 20mg_100nm_80kx_003.tif, 20mg_100nm_80kx_005.tif, ..."
+ETD,SE,2.0,5.0,5.0,4.0,High vacuum,9,312.5,125000.00000000001,"CPT\2026_02-02, CPT\2026_02-26","20_0_250x_01.tif, 20_0_250x_02.tif, 20mg_100nm_50kx_001.tif, ..."
+T1,BSE,2.0,5.0,1.0,1.0,High vacuum,5,125000.00000000001,250000.00000000003,CPT\2026_02-02,"42mg_100nm_100kx_003.tif, 42mg_50nm_100kx_001.tif, 42mg_50nm_100kx_007.tif, ..."
+T2,SE,2.0,5.0,1.0,1.0,High vacuum,5,125000.00000000001,250000.00000000003,CPT\2026_02-02,"42mg_100nm_100kx_004.tif, 42mg_50nm_100kx_002.tif, 42mg_50nm_100kx_008.tif, ..."
+T1,BSE,2.0,5.0,3.0,1.0,High vacuum,2,437500.0,437500.0,CPT\2026_02-02,"20mg_100nm_80kx_009.tif, 20mg_100nm_80kx_011.tif"
+T2,SE,2.0,5.0,3.0,1.0,High vacuum,2,437500.0,437500.0,CPT\2026_02-02,"20mg_100nm_80kx_010.tif, 20mg_100nm_80kx_012.tif"
+ETD,SE,1.5,5.0,0.5,4.0,High vacuum,1,12500.0,12500.0,Lyophilisation,20mg_50nm_bulk_10kx_006.tif
+T1,BSE,2.0,5.0,0.5,1.0,High vacuum,1,250000.00000000003,250000.00000000003,CPT\2026_02-02,42mg_100nm_200kx_005.tif
+T1,BSE,2.0,5.0,3.0,4.0,High vacuum,1,437500.0,437500.0,CPT\2026_02-02,20mg_100nm_80kx_007.tif
+T2,SE,2.0,5.0,0.5,1.0,High vacuum,1,250000.00000000003,250000.00000000003,CPT\2026_02-02,42mg_100nm_200kx_006.tif
+T2,SE,2.0,5.0,3.0,4.0,High vacuum,1,437500.0,437500.0,CPT\2026_02-02,20mg_100nm_80kx_008.tif
