@@ -1,14 +1,14 @@
 """
 Anomalous diffusion exponent n vs. particle size — quadratic obstruction fit.
 
-Loads the overall (pooled-trajectory) ensemble cached by
-MSD_FromTrackmate_20mg.py's compute_pooled_ensemble() (cache/msd_20mg_result.pkl).
-For each particle size, every trajectory from every file of that size was
-already pooled into one combined track set there and the power-law
-exponent n fit once on it -- "the eMSD n" -- rather than averaging
-per-file exponents, so individual noisy files don't each get an equal
-vote. This script only reads that result; it does not repeat the pooling
-or refit anything itself.
+Loads the per-size, trajectory-count-weighted average cached by
+MSD_FromTrackmate_20mg.py's compute_weighted_average_per_size() (cache/msd_20mg_result.pkl).
+Each file's own D/n fit (from msd_20mg_files.pkl) stays completely
+independent -- nothing here pools raw trajectories or refits anything -- but
+a plain per-file average would give a noisy low-trajectory file the same
+vote as a solid high-trajectory one, so files are weighted by their
+trajectory count instead. This script only reads that already-averaged
+result; it does not repeat the averaging or refit anything itself.
 
 A quadratic small-obstruction model is fit to n(r) (r = particle radius,
 nm):
@@ -129,9 +129,10 @@ def _load_cache(path: Path) -> dict:
 
 
 def _extract_pooled_exponents(pooled: dict) -> pd.DataFrame:
-    """Read n/n_err straight out of the pooled-ensemble cache (one entry per
-    particle size, each already fit once on that size's combined trajectory
-    pool by MSD_FromTrackmate_20mg.py's compute_pooled_ensemble()).
+    """Read n/n_err straight out of the trajectory-weighted-average cache (one
+    entry per particle size, each a weighted average of that size's
+    independent per-file fits from MSD_FromTrackmate_20mg.py's
+    compute_weighted_average_per_size()).
     """
     rows = []
     for size_nm, entry in pooled.items():

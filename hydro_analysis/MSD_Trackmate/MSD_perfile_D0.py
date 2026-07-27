@@ -1,16 +1,20 @@
 """
-Per-file publication MSD figures — 20 mg/mL C16 hydrogel.
+Per-file publication MSD figures — water (D0) reference measurements.
 
-Same figure layout as MSD_per_file_publication.py (D₀ reference):
+Same figure layout as MSD_per_file_publication.py / MSD_per_file_20mg.py:
   Main   iMSD · eMSD · Stokes-Einstein D₀ · power-law fit
   Inset (upper-right)  normalised MSD
   Inset (lower-right)  raw trajectories, plain, scale bar only
   Annotation  d = <label> nm
 
-Reads the per-file results already computed by MSD_FromTrackmate_20mg.py
-(msd_20mg_files.pkl) instead of reprocessing the raw TrackMate XML files —
+Reads the per-file results already computed by MSD_FromTrackmate_D0.py
+(msd_d0_results.pkl) instead of reprocessing the raw TrackMate XML files —
 that script always recomputes fresh and overwrites the pickle on every run,
 so run it first (or after any change to the raw data) to refresh this input.
+
+Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
+detections within 3% of the frame border are dropped and trajectories split at
+the gap, to correct spurious TrackMate linking of near-edge detections.
 """
 from __future__ import annotations
 
@@ -29,11 +33,11 @@ from hydro_analysis.core.physics import calculate_theoretical_diffusion
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import plot_msd_single_file
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_files.pkl"
+CACHE_FILE = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
 
-SAVE_PATH = None# Path(
-   # rf"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16"
-   # rf"\PerFile_{pd.Timestamp.now().strftime('%Y%m%d')}")
+SAVE_PATH =  Path(
+    rf"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung"
+    rf"\PerFile_{pd.Timestamp.now().strftime('%Y%m%d')}")
 MSD_FIT_POINTS   = DEFAULT_MSD_FIT_POINTS
 FPS_SMALL_TARGET = 60.0
 FPS_LARGE_TARGET = 20.0
@@ -44,7 +48,7 @@ FPS_LARGE_TARGET = 20.0
 def main() -> None:
     if not CACHE_FILE.exists():
         print(f"Kein Cache gefunden: {CACHE_FILE}")
-        print("Bitte zuerst MSD_FromTrackmate_20mg.py ausführen.")
+        print("Bitte zuerst MSD_FromTrackmate_D0.py ausführen.")
         return
     with open(CACHE_FILE, "rb") as f:
         results = pickle.load(f)
@@ -133,7 +137,7 @@ def main() -> None:
             save_path=SAVE_PATH,
             filename=f"{base}_{int(size_nm)}nm",
             xlim=xlim,
-            sample_label="20 mg/mL C16",
+            sample_label="Wasser (D0)",
         )
         n_processed += 1
 
@@ -142,7 +146,7 @@ def main() -> None:
     # columns already split and numbers recognized, instead of dumping everything
     # into one column. utf-8-sig BOM so Excel auto-detects the encoding.
     if summary_rows and SAVE_PATH is not None:
-        csv_path = SAVE_PATH / "per_file_summary_20mg.csv"
+        csv_path = SAVE_PATH / "per_file_summary_d0.csv"
         summary_df = pd.DataFrame(summary_rows)
         summary_df.to_csv(csv_path, index=False, sep=";", decimal=",", encoding="utf-8-sig")
         print(f"\nSummary saved: {csv_path}")

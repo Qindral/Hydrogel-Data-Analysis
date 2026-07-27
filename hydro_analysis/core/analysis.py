@@ -287,6 +287,77 @@ def perform_msd_analysis(result_dict: Dict[str, Any], fit_points: int = DEFAULT_
     return result_dict
 
 
+def weighted_mean_and_err(entries: list[Dict[str, Any]], key: str, weights: np.ndarray) -> tuple[float, float]:
+    """
+    Weighted mean of a fit_results_MSD field across several entries (e.g.
+    per-file MSD results for one particle size), plus the weighted standard
+    error of that mean.
+
+    With only one usable entry, there is no spread across entries to
+    estimate an error from, so that entry's own fit error is used instead
+    (D_error / exponent_error), when the field being averaged has one.
+    """
+    vals = np.array([e["fit_results_MSD"].get(key, np.nan) for e in entries], dtype=float)
+    mask = np.isfinite(vals)
+    if not mask.any():
+        return float("nan"), float("nan")
+
+    w, v = weights[mask], vals[mask]
+    w_sum = w.sum()
+    mean = float(np.sum(w * v) / w_sum)
+
+    if mask.sum() > 1:
+        n_eff = (w_sum ** 2) / np.sum(w ** 2)  # Kish effective sample size
+        variance = np.sum(w * (v - mean) ** 2) / w_sum
+        err = float(np.sqrt(variance / n_eff))
+    else:
+        err_key = {"D_um2_per_s": "D_error", "exponent": "exponent_error"}.get(key)
+        idx = int(np.flatnonzero(mask)[0])
+        err = float(entries[idx]["fit_results_MSD"].get(err_key, np.nan)) if err_key else float("nan")
+
+    return mean, err
+
+
+def weighted_average_per_size(results: Dict[str, Any], weight_key: str = "num_tracks") -> Dict[float, Dict[str, Any]]:
+    """
+    Trajectory-count-weighted average of independent per-file D/n fits,
+    grouped by particle_size_nm. Never pools raw trajectories or refits
+    anything -- only averages already-independent per-file fit_results_MSD
+    values, so files with more trajectories (usually the more reliable
+    estimate) get proportionally more weight than a low-N file.
+    """
+    size_groups: Dict[float, list] = {}
+    for r in results.values():
+        size_nm = r.get("particle_size_nm")
+        fit = r.get("fit_results_MSD")
+        w = r.get(weight_key)
+        if size_nm is None or fit is None or not w:
+            continue
+        size_groups.setdefault(float(size_nm), []).append(r)
+
+    averaged: Dict[float, Dict[str, Any]] = {}
+    for size_nm, entries in sorted(size_groups.items()):
+        weights = np.array([e[weight_key] for e in entries], dtype=float)
+
+        D_mean, D_err = weighted_mean_and_err(entries, "D_um2_per_s", weights)
+        n_mean, n_err = weighted_mean_and_err(entries, "exponent", weights)
+        sigma_mean, _ = weighted_mean_and_err(entries, "sigma_loc_nm", weights)
+
+        averaged[size_nm] = {
+            "fit_results_MSD": {
+                "D_um2_per_s":    D_mean,
+                "D_error":        D_err,
+                "exponent":       n_mean,
+                "exponent_error": n_err,
+                "sigma_loc_nm":   sigma_mean,
+            },
+            "n_files":            len(entries),
+            "n_particles_pooled": int(weights.sum()),
+        }
+
+    return averaged
+
+
 def perform_stepsize_analysis(
     result_dict: Dict[str, Any],
     step_interval: int = DEFAULT_STEP_INTERVAL,

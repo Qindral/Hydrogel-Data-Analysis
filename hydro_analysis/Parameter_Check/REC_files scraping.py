@@ -8,6 +8,8 @@ For every TrackMate XML found under `root`, one row is written with:
   - fps, mpp, num_frames, duration_s
   - condition ("Surface loading" for an "A<n>" token in the filename,
     "Injection" for a "B<n>" token, e.g. "...A3.tif" vs "...B3_Crack.tif")
+  - chamber ("A1".."B4"), day (0 if no "<n>d" token), repeat (run index, or
+    None if the filename has no trailing "_<nn>")
   - laser_power_mW, depth_um (both parsed from the .rec Comment section)
   - recorded_at (Record Date/Time header of the .rec file)
   - xml_path, tif_path, rec_path (storage locations)
@@ -18,7 +20,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from hydro_analysis.core.io import single_file_data, scan_xml_folder, condition_label_from_filename, parse_rec_comment_metadata
+from hydro_analysis.core.io import (
+    single_file_data, scan_xml_folder,
+    condition_label_from_filename, parse_rec_comment_metadata, parse_chamber_day_repeat,
+)
 from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
 
 root = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung")
@@ -52,11 +57,15 @@ def build_row(xml_path: Path) -> dict | None:
     duration_s = rd["num_frames"] / fps if fps else np.nan
 
     rec_meta = parse_rec_comment_metadata(rd.get("rec_path"))
+    chamber_meta = parse_chamber_day_repeat(rd["base_name"])
 
     return {
         "file":                          rd["base_name"],
         "particle_size_nm":              rd["particle_size_nm"],
         "condition":                     condition_label_from_filename(rd["base_name"]),
+        "chamber":                       chamber_meta["chamber"],
+        "day":                           chamber_meta["day"],
+        "repeat":                        chamber_meta["repeat"],
         "D_um2_per_s":                   fit.get("D_um2_per_s", np.nan),
         "D_error":                       fit.get("D_error", np.nan),
         "exponent":                      fit.get("exponent", np.nan),

@@ -218,6 +218,46 @@ def parse_rec_comment_metadata(rec_path: Optional[Path]) -> Dict[str, Any]:
 
     return meta
 
+
+# Chamber code on a 2x4 well plate, e.g. "A3", "B2" (not followed by another digit,
+# so "B12" doesn't get misread as chamber "B1").
+CHAMBER_RE = re.compile(r'([AB][1-4])(?!\d)')
+# Day-of-measurement token, isolated by separators so it isn't confused with sizes/
+# concentrations elsewhere in the name, e.g. "..._2d_00" -> day 2. Absent -> day 0.
+DAY_RE = re.compile(r'(?:^|[_\s])(\d+)d(?:[_\s.]|$)', re.IGNORECASE)
+# Trailing repeat/run index, e.g. "..._2d_02" -> repeat 2. Requires a separator right
+# before the digits so a chamber's own digit ("...A3") is never misread as a repeat.
+REPEAT_RE = re.compile(r'[_\s](\d{1,3})$')
+
+# Suffixes appended by the analysis pipeline (see find_rec_tif_files) that should be
+# stripped before looking for a trailing repeat index.
+_PIPELINE_SUFFIXES = ('_Tracks', '_processed', 'filtered_', 'Resultof', '_var')
+
+
+def parse_chamber_day_repeat(filename: str) -> Dict[str, Any]:
+    """
+    Parse well-plate chamber, measurement day, and repeat/run index from a filename.
+
+    Chamber and day are independent columns so that e.g. "B4_02" (day 0, repeat 2)
+    and "B4_1d_02" (day 1, repeat 2) come out as distinct rows once grouped by
+    (chamber, day, repeat) — never conflated as "the same repeat #2".
+
+    Returns keys: chamber (str or None), day (int, 0 if no day token), repeat (int or None).
+    """
+    stem = re.sub(r'(\.\w+)+$', '', filename)
+    for suffix in _PIPELINE_SUFFIXES:
+        stem = stem.replace(suffix, '')
+
+    chamber_match = CHAMBER_RE.search(stem)
+    day_match = DAY_RE.search(stem)
+    repeat_match = REPEAT_RE.search(stem)
+
+    return {
+        "chamber": chamber_match.group(1) if chamber_match else None,
+        "day": int(day_match.group(1)) if day_match else 0,
+        "repeat": int(repeat_match.group(1)) if repeat_match else None,
+    }
+
 # -----------------------------
 # XML parsing
 # -----------------------------

@@ -265,3 +265,71 @@ mpl.rcParams.update({
 Pfeile wie “stealth”:
 
 arrow_kw = dict(arrowstyle='-|>', mutation_scale=14, lw=1.6)
+
+12) Dataset-Vergleichsplots (Messgröße vs. Partikelgröße, log-log)
+
+Referenzimplementierung: MSD_Diffusion_vs_Size_20mg.py / MSD_Diffusion_vs_Size_D0.py
+(hydro_analysis/MSD_Trackmate/). Für Plots, die einen Messwert (z. B. D) über die
+Partikelgröße für einen ganzen Datensatz zusammenfassen — kein Titel, ruhige
+Typografie, Daten im Vordergrund.
+
+rcParams (identisch mit MSD_per_file_publication._RC):
+
+_RC = {
+    "text.usetex":       False,
+    "mathtext.fontset":  "dejavusans",
+    "font.family":       "sans-serif",
+    "font.sans-serif":   ["Open Sans", "Arial", "DejaVu Sans"],
+    "axes.linewidth":    0.8,
+    "xtick.direction":   "in",
+    "ytick.direction":   "in",
+    "xtick.top":         True,
+    "ytick.right":       True,
+    "xtick.major.size":  5.0,
+    "ytick.major.size":  5.0,
+    "xtick.minor.size":  3.0,
+    "ytick.minor.size":  3.0,
+    "xtick.major.width": 0.8,
+    "ytick.major.width": 0.8,
+    "xtick.minor.width": 0.8,
+    "ytick.minor.width": 0.8,
+    "xtick.labelsize":   9,
+    "ytick.labelsize":   9,
+    "axes.labelsize":    10,
+    "legend.fontsize":   8,
+}
+
+Figure: figsize=(7.15, 5.00), constrained_layout=True. Kein ax.set_title() —
+Achsenbeschriftungen + Legende genügen.
+
+Partikelgröße auf der x-Achse: immer die reale DLS-Größe (get_dls_sizes(),
+z-Average, Fallback size_override_nm), nie der nominale Ordnername. Ticks als
+FixedLocator/FixedFormatter an diesen realen Positionen, beschriftet mit dem
+DLS-Label (get_dls_labels()), z. B. 35/50/100/240/560/1370 statt 20/50/100/
+200/500/1000. Log-log-Achsen, Minor-Ticks via _add_log_minor_ticks() (aus
+MSD_per_file_publication.py importierbar).
+
+Messpunkte: exakt auf dem realen x-Wert (kein Jitter/Offset), mit
+alpha≈0.5, damit sich überlappende Punkte an derselben Größe als
+sichtbar dichtere/dunklere Fläche zeigen (Häufungen erkennbar). Dünne
+Fehlerbalken (elinewidth 0.8, capsize 2.0, markeredgewidth 0.6).
+
+Theorie-Linie (z. B. Stokes-Einstein D0): schwarz, linewidth 1.2,
+_DASH_THEORY = (0, (4, 3)) (aus MSD_per_file_publication.py importierbar).
+
+DLS-Referenzpunkte: Stern-Marker (fmt="*", markersize 10), Farbe
+#da00bd / dunkel #9b5191, mit x- und y-Fehlerbalken (DLS-Größen- bzw.
+D-Unsicherheit).
+
+Entsättigte Vergleichsfarben für 2 Kategorien (z. B. Surface loading vs.
+Injection) — bewusst gedämpfter als die knalligen Jet-Akzentfarben aus
+Abschnitt 9, damit Kategorievergleiche ruhiger wirken:
+
+Kategorie A (Grünblau/Teal):   base #3B8C8C   dark #2A6666
+Kategorie B (Orange):          base #D98C3D   dark #A6672D
+Einzelserie (z. B. D0 pur):    base #3B6E8C   dark #2A4F66
+
+Marker: o für Kategorie A, s für Kategorie B (Kreis/Quadrat wie in
+Abschnitt 4). Legende ohne Rahmen, Position so wählen, dass sie keine
+Datenpunkte/Theorie-Linie verdeckt (bei fallender Theoriekurve i. d. R.
+"upper right", nicht "upper left").
