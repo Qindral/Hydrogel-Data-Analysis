@@ -192,7 +192,6 @@ def _plot_size_histograms(
         tag = style["label"].replace("/", "-").replace(" ", "_").replace("\u2080", "0")
         base = f"imsd_track_D_hist_{tag}"
         fig.savefig(save_dir / f"{base}.png", dpi=600, bbox_inches="tight")
-        fig.savefig(save_dir / f"{base}.pdf", bbox_inches="tight")
         plt.close(fig)
         print(f"  Gespeichert: {save_dir / base}.png")
 

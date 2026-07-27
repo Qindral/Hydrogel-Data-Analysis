@@ -14,6 +14,11 @@ Two distinct ensembles are cached, per particle size:
                         once on that pool, giving a single D/exponent/R^2
                         for the whole dataset rather than per-file stats.
 
+msd_20mg_files.pkl is also loaded (as CACHE_20MG) by:
+  - Hydrogel_Water_Analysis.py
+  - MSD_Normalize_Hydrogel_vs_Water.py
+  - Auswertung_von_iMSD.py
+
 Supports pickle caching to speed up repeated runs.
 Set NEUBERECHNEN = True to force recomputation.
 
@@ -342,9 +347,7 @@ def plot_imsd_overlays_by_size(
         if out_dir is not None:
             base = f"imsd_overlay_{int(round(size_nm))}nm"
             png_path = out_dir / f"{base}.png"
-            pdf_path = out_dir / f"{base}.pdf"
             fig.savefig(png_path, dpi=600, bbox_inches="tight")
-            fig.savefig(pdf_path, bbox_inches="tight")
             plt.close(fig)
             print(f"  iMSD plot saved: {png_path}")
 

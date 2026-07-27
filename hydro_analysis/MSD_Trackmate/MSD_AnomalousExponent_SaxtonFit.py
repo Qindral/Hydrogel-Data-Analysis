@@ -355,7 +355,6 @@ def plot_exponent_vs_size(
         if save_path is not None:
             save_path.mkdir(parents=True, exist_ok=True)
             fig.savefig(save_path / "anomalous_exponent_vs_size.png", dpi=600, bbox_inches="tight")
-            fig.savefig(save_path / "anomalous_exponent_vs_size.pdf")
             print(f"Saved: {save_path / 'anomalous_exponent_vs_size.png'}")
 
         plt.show()

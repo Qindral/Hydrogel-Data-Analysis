@@ -146,7 +146,6 @@ def plot_timeline(df: pd.DataFrame, save_path: Path | None) -> None:
         if save_path is not None:
             save_path.mkdir(parents=True, exist_ok=True)
             fig.savefig(save_path / "jpg_metadaten_timeline.png", dpi=600, bbox_inches="tight")
-            fig.savefig(save_path / "jpg_metadaten_timeline.pdf")
             print(f"Saved: {save_path / 'jpg_metadaten_timeline.png'}")
 
         plt.show()

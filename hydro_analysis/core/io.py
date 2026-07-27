@@ -147,11 +147,79 @@ def parse_rec_file(rec_path: Path) -> Dict[str, Any]:
     
     except Exception as e:
         print(f"    Warning: Could not parse {rec_path.name}: {e}")
-    
+
     return result
 
+
+# Matches e.g. "0.4 mW", "50 µW", "23µW", "3.6mW", "3.6MW"
+# IGNORECASE covers mw/MW/mW; character class covers µ variants and uW
+POWER_RE = re.compile(r'(\d+[.,]\d+|\d+)\s*([µμuU]W|mW)', re.IGNORECASE)
+DEPTH_RE = re.compile(r'Tiefe\s*:?\s*(\d+(?:[.,]\d+)?)\s*(mm|[µμuU]m)', re.IGNORECASE)
+DATETIME_RE = re.compile(r'Record\s*Date\s*:\s*([\d.]+)\s*Time\s*:\s*([\d:]+)', re.IGNORECASE)
+
+# Well-plate style sample codes embedded in filenames, e.g. "...A3.tif", "B2_500_20_at injection...".
+# A -> Surface loading, B -> Injection (lab convention).
+CONDITION_RE = re.compile(r'([AB])(\d+)')
+CONDITION_LABELS = {"A": "Surface loading", "B": "Injection"}
+
+
+def condition_label_from_filename(filename: str) -> Optional[str]:
+    """Return 'Surface loading' / 'Injection' from an A<n>/B<n> token in the filename, else None."""
+    m = CONDITION_RE.search(filename)
+    return CONDITION_LABELS.get(m.group(1)) if m else None
+
+
+def parse_rec_comment_metadata(rec_path: Optional[Path]) -> Dict[str, Any]:
+    """
+    Parse acquisition metadata from a .rec file's header and Comment section:
+    laser power (mW), immersion/sample depth (µm), and record date/time.
+
+    Returns keys: laser_power_mW, depth_um, recorded_at (pandas Timestamp or NaT).
+    """
+    meta: Dict[str, Any] = {
+        "laser_power_mW": float('nan'),
+        "depth_um": float('nan'),
+        "recorded_at": pd.NaT,
+    }
+    if not rec_path:
+        return meta
+    rec_path = Path(rec_path)
+    if not rec_path.exists():
+        return meta
+
+    encoding = check_text_encoding(rec_path)
+    try:
+        content = rec_path.read_text(encoding=encoding, errors='replace')
+    except Exception as e:
+        print(f"    Warning: Could not parse comment of {rec_path.name}: {e}")
+        return meta
+
+    dt_match = DATETIME_RE.search(content)
+    if dt_match:
+        try:
+            meta["recorded_at"] = pd.to_datetime(f"{dt_match.group(1)} {dt_match.group(2)}", dayfirst=True)
+        except ValueError:
+            pass
+
+    comment_idx = content.find("Comment:")
+    comment = content[comment_idx + len("Comment:"):] if comment_idx != -1 else content
+
+    depth_match = DEPTH_RE.search(comment)
+    if depth_match:
+        value = float(depth_match.group(1).replace(",", "."))
+        unit = depth_match.group(2).lower()
+        meta["depth_um"] = value * 1000.0 if unit == "mm" else value
+
+    power_match = POWER_RE.search(comment)
+    if power_match:
+        value = float(power_match.group(1).replace(",", "."))
+        is_micro = power_match.group(2)[0].lower() in ("µ", "μ", "u")
+        meta["laser_power_mW"] = value * 1e-3 if is_micro else value
+
+    return meta
+
 # -----------------------------
-# XML parsing 
+# XML parsing
 # -----------------------------
 
 def get_dls_reference_maps() -> Dict[str, Dict[float, float]]:

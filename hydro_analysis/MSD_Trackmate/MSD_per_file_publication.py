@@ -355,7 +355,6 @@ def plot_msd_single_file(
         if save_path is not None:
             out = Path(save_path)
             out.mkdir(parents=True, exist_ok=True)
-            fig.savefig(out / f"{filename}.pdf", bbox_inches="tight")
             fig.savefig(out / f"{filename}.png", dpi=600, bbox_inches="tight")
             plt.close(fig)
         else:

@@ -22,7 +22,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from hydro_analysis.core.io import single_file_data, get_dls_reference_maps, get_dls_sizes, get_dls_labels  # noqa: F401
+from hydro_analysis.core.io import (  # noqa: F401
+    single_file_data, get_dls_reference_maps, get_dls_sizes, get_dls_labels,
+    condition_label_from_filename, parse_rec_comment_metadata,
+)
 from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
 from hydro_analysis.core.physics import calculate_theoretical_diffusion
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import plot_msd_single_file
@@ -98,17 +101,42 @@ def main() -> None:
                 base = rd.get("base_name", xml_path.stem)
                 print(f"  [{int(size_nm)} nm  {fps:.0f} fps] {base}")
 
+                tracks_df = rd.get("tracks_df")
+                if tracks_df is not None and not tracks_df.empty:
+                    track_lengths          = tracks_df.groupby("particle").size()
+                    num_detections_total   = len(tracks_df)
+                    mean_track_length      = track_lengths.mean()
+                else:
+                    num_detections_total   = 0
+                    mean_track_length      = np.nan
+
+                duration_s = rd["num_frames"] / fps if fps else np.nan
+                rec_meta   = parse_rec_comment_metadata(rd.get("rec_path"))
+
                 summary_rows.append({
-                    "file":             base,
-                    "size_nm":          int(size_nm),
-                    "label_nm":         label_nm,
-                    "fps":              fps,
-                    "D_MSD_um2_per_s":  fit.get("D_um2_per_s",    np.nan),
-                    "D_error":          fit.get("D_error",         np.nan),
-                    "exponent":         fit.get("exponent",        np.nan),
-                    "exponent_error":   fit.get("exponent_error",  np.nan),
-                    "sigma_loc_nm":     fit.get("sigma_loc_nm",    np.nan),
-                    "D_theo_um2_per_s": D_theo,
+                    "file":                          base,
+                    "size_nm":                       int(size_nm),
+                    "label_nm":                      label_nm,
+                    "condition":                     condition_label_from_filename(base),
+                    "fps":                           fps,
+                    "mpp_um_per_px":                 rd.get("mpp"),
+                    "D_MSD_um2_per_s":               fit.get("D_um2_per_s",    np.nan),
+                    "D_error":                       fit.get("D_error",         np.nan),
+                    "exponent":                      fit.get("exponent",        np.nan),
+                    "exponent_error":                fit.get("exponent_error",  np.nan),
+                    "sigma_loc_nm":                  fit.get("sigma_loc_nm",    np.nan),
+                    "D_theo_um2_per_s":              D_theo,
+                    "num_trajectories":              rd.get("num_tracks"),
+                    "num_detections_total":          num_detections_total,
+                    "mean_trajectory_length_frames": mean_track_length,
+                    "num_frames":                    rd.get("num_frames"),
+                    "duration_s":                    duration_s,
+                    "laser_power_mW":                rec_meta["laser_power_mW"],
+                    "depth_um":                      rec_meta["depth_um"],
+                    "recorded_at":                   rec_meta["recorded_at"],
+                    "xml_path":                      rd.get("xml_path"),
+                    "tif_path":                      rd.get("tif_path"),
+                    "rec_path":                      rd.get("rec_path"),
                 })
 
                 xlim = (0.01, 6.0) if target_fps == FPS_SMALL_TARGET else (0.04, 3.0)

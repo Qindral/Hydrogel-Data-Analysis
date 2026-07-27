@@ -908,7 +908,6 @@ def plot_theory_comparison(
 
     plt.show()
     fig.savefig(save_path, dpi=600, bbox_inches="tight")
-    fig.savefig(save_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Theorienvergleich gespeichert: {save_path}")
 

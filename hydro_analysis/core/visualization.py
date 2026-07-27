@@ -716,12 +716,7 @@ def plot_diffusion_comparison(
         png_path = save_path / 'diffusion_comparison_msd.png'
         fig.savefig(png_path, dpi=600, bbox_inches='tight')
 
-        # Also save as PDF
-        pdf_path = save_path / 'diffusion_comparison_msd.pdf'
-        fig.savefig(pdf_path, bbox_inches='tight')
-
         print(f"Diffusion comparison plot saved: {png_path}")
-        print(f"Diffusion comparison plot saved: {pdf_path}")
 
         plt.close(fig)
 
@@ -964,13 +959,8 @@ def plot_theory_comparison(
     # Save as PNG (style guide: 600 dpi)
     fig.savefig(save_path, dpi=600, bbox_inches='tight')
 
-    # Also save as PDF (vector format for publication)
-    pdf_path = save_path.with_suffix('.pdf')
-    fig.savefig(pdf_path, bbox_inches='tight')
-
     plt.close(fig)
     print(f"Theory comparison plot saved: {save_path}")
-    print(f"Theory comparison plot saved: {pdf_path}")
 
 
 # ============================================================================

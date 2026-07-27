@@ -600,8 +600,7 @@ def _save_or_show(fig: plt.Figure, save_path: Path | None, base: str) -> None:
         save_path = Path(save_path)
         save_path.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path / f"{base}.png", dpi=600)
-        fig.savefig(save_path / f"{base}.pdf")
-        print(f"  Saved: {base}.png / .pdf")
+        print(f"  Saved: {base}.png")
         plt.close(fig)
     else:
         plt.show()

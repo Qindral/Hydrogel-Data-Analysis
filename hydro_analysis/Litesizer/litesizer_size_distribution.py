@@ -213,8 +213,7 @@ def plot_all_sizes(
         save_path.mkdir(parents=True, exist_ok=True)
         base = f"size_dist_{dist_type}_{fig_suffix}"
         fig.savefig(save_path / f"{base}.png", dpi=600)
-        fig.savefig(save_path / f"{base}.pdf")
-        print(f"  Saved: {base}.png / .pdf")
+        print(f"  Saved: {base}.png")
         plt.close(fig)
     else:
         plt.show()

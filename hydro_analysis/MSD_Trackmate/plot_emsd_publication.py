@@ -269,7 +269,6 @@ def plot_emsd_publication(
         if save_path is not None:
             out = Path(save_path)
             out.mkdir(parents=True, exist_ok=True)
-            fig.savefig(out / f"{filename}.pdf", bbox_inches="tight")
             fig.savefig(out / f"{filename}.png", dpi=600, bbox_inches="tight")
 
         plt.show()
@@ -380,7 +379,6 @@ def plot_fit_lines_overview(
         if save_path is not None:
             out = Path(save_path)
             out.mkdir(parents=True, exist_ok=True)
-            fig.savefig(out / f"{filename}.pdf", bbox_inches="tight")
             fig.savefig(out / f"{filename}.png", dpi=600, bbox_inches="tight")
 
         plt.show()
@@ -494,7 +492,6 @@ def plot_emsd_overview(
         if save_path is not None:
             out = Path(save_path)
             out.mkdir(parents=True, exist_ok=True)
-            fig.savefig(out / f"{filename}.pdf", bbox_inches="tight")
             fig.savefig(out / f"{filename}.png", dpi=600, bbox_inches="tight")
 
         plt.show()

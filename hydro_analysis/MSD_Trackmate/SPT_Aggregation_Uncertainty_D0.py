@@ -706,7 +706,6 @@ def plot_six_schemes(results_by_size: dict[float, dict], save_path: Path | None)
         if save_path is not None:
             save_path.mkdir(parents=True, exist_ok=True)
             fig.savefig(save_path / "six_schemes_D.png", dpi=600, bbox_inches="tight")
-            fig.savefig(save_path / "six_schemes_D.pdf")
             print(f"Saved: {save_path / 'six_schemes_D.png'}")
         plt.show()
 
@@ -743,7 +742,6 @@ def plot_five_uncertainties(results_by_size: dict[float, dict], save_path: Path 
         if save_path is not None:
             save_path.mkdir(parents=True, exist_ok=True)
             fig.savefig(save_path / "five_uncertainties.png", dpi=600, bbox_inches="tight")
-            fig.savefig(save_path / "five_uncertainties.pdf")
             print(f"Saved: {save_path / 'five_uncertainties.png'}")
         plt.show()
 
@@ -780,7 +778,6 @@ def plot_variance_decomposition(results_by_size: dict[float, dict], save_path: P
         if save_path is not None:
             save_path.mkdir(parents=True, exist_ok=True)
             fig.savefig(save_path / "variance_decomposition.png", dpi=600, bbox_inches="tight")
-            fig.savefig(save_path / "variance_decomposition.pdf")
             print(f"Saved: {save_path / 'variance_decomposition.png'}")
         plt.show()
 

@@ -250,9 +250,7 @@ def plot_imsd_overlays_by_size(
         if out_dir is not None:
             base = f"imsd_overlay_{int(round(size_nm))}nm"
             png_path = out_dir / f"{base}.png"
-            pdf_path = out_dir / f"{base}.pdf"
             fig.savefig(png_path, dpi=600, bbox_inches="tight")
-            fig.savefig(pdf_path, bbox_inches="tight")
             plt.close(fig)
             print(f"  iMSD plot saved: {png_path}")
 

@@ -281,7 +281,6 @@ def main() -> None:
     ax.legend(loc="best")
 
     fig.savefig(out_dir / "msd_ratio_hydrogel_vs_water.png", dpi=600, bbox_inches="tight")
-    fig.savefig(out_dir / "msd_ratio_hydrogel_vs_water.pdf")
 
     # ── Weitere Grafiken ──────────────────────────────────────────────
 
@@ -314,7 +313,6 @@ def main() -> None:
     _plot_series(ax, xs, xerr, ratios_20, errors_20, STYLE_20MG)
     _decorate(ax, X_ALL)
     fig_a.savefig(out_dir / "msd_ratio_20mg_all.png",  dpi=600, bbox_inches="tight")
-    fig_a.savefig(out_dir / "msd_ratio_20mg_all.pdf")
 
     # ── B: 13 mg – alle Partikel, kein Fit ───────────────────────────
     fig_b = None
@@ -323,14 +321,12 @@ def main() -> None:
         _plot_series(ax, xs, xerr, ratios_13, errors_13, STYLE_13MG)
         _decorate(ax, X_ALL)
         fig_b.savefig(out_dir / "msd_ratio_13mg_all.png",  dpi=600, bbox_inches="tight")
-        fig_b.savefig(out_dir / "msd_ratio_13mg_all.pdf")
 
     # ── C: 20 mg – 35–100 nm, mit Fit ────────────────────────────────
     fig_c, ax = plt.subplots(constrained_layout=True)
     _plot_series(ax, xs_100, xerr_100, r20_100, e20_100, STYLE_20MG, fit=fit_20_100)
     _decorate(ax, X_100)
     fig_c.savefig(out_dir / "msd_ratio_20mg_fit.png",  dpi=600, bbox_inches="tight")
-    fig_c.savefig(out_dir / "msd_ratio_20mg_fit.pdf")
 
     # ── D: 13 mg – 35–100 nm, mit Fit ────────────────────────────────
     fig_d = None
@@ -339,7 +335,6 @@ def main() -> None:
         _plot_series(ax, xs_100, xerr_100, r13_100, e13_100, STYLE_13MG, fit=fit_13_100)
         _decorate(ax, X_100)
         fig_d.savefig(out_dir / "msd_ratio_13mg_fit.png",  dpi=600, bbox_inches="tight")
-        fig_d.savefig(out_dir / "msd_ratio_13mg_fit.pdf")
 
     # ── E: 13 + 20 mg – 35–100 nm, Datenpunkte ───────────────────────
     fig_e, ax = plt.subplots(constrained_layout=True)
@@ -348,7 +343,6 @@ def main() -> None:
         _plot_series(ax, xs_100, xerr_100, r13_100, e13_100, STYLE_13MG)
     _decorate(ax, X_100)
     fig_e.savefig(out_dir / "msd_ratio_comparison.png",  dpi=600, bbox_inches="tight")
-    fig_e.savefig(out_dir / "msd_ratio_comparison.pdf")
 
     # ── F: 13 + 20 mg – 35–100 nm, mit Fits (keine Parameter) ────────
     fig_f, ax = plt.subplots(constrained_layout=True)
@@ -359,7 +353,6 @@ def main() -> None:
                      fit=fit_13_100, show_fit_label=False)
     _decorate(ax, X_100)
     fig_f.savefig(out_dir / "msd_ratio_comparison_fit.png",  dpi=600, bbox_inches="tight")
-    fig_f.savefig(out_dir / "msd_ratio_comparison_fit.pdf")
 
     plt.show()
 

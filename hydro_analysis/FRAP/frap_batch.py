@@ -659,14 +659,12 @@ def main():
     fig_summary = plot_summary(all_results)
     out_path = DATA_ROOT / "frap_batch_summary.png"
     fig_summary.savefig(out_path, dpi=600)
-    fig_summary.savefig(out_path.with_suffix(".pdf"))
     print(f"\nSummary saved to:\n  {out_path}")
 
     # --- Recovery curve comparison ---
     fig_recovery = plot_recovery_comparison(all_results)
     out_recovery = DATA_ROOT / "frap_recovery_comparison.png"
     fig_recovery.savefig(out_recovery, dpi=600)
-    fig_recovery.savefig(out_recovery.with_suffix(".pdf"))
     print(f"Recovery comparison saved to:\n  {out_recovery}")
 
     plt.show()

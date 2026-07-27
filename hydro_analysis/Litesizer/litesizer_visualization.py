@@ -248,7 +248,6 @@ def plot_particle_analysis(
     if output_dir:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_dir / f"particle_analysis_{size_nm}nm.pdf")
         fig.savefig(output_dir / f"particle_analysis_{size_nm}nm.png", dpi=600)
 
     return fig, stats
@@ -446,7 +445,6 @@ def plot_comparison_summary(
 
     if output_dir:
         output_dir = Path(output_dir)
-        fig.savefig(output_dir / "particle_analysis_comparison.pdf")
         fig.savefig(output_dir / "particle_analysis_comparison.png", dpi=600)
 
     return fig

@@ -18,9 +18,7 @@ Beispiel: (width, height) = (7.15, 5.00) inch oder (14.3, 10.0) cm.
 
 Export:
 
-Plots als PDF/SVG (Vektor) für Paper/Poster.
-
-Zusätzlich PNG (raster) mit 600 dpi für schnelle Nutzung.
+Nur PNG (raster) mit 600 dpi. Keine PDF/SVG-Exports (nie abspeichern).
 
 Ränder/Layouts: immer constrained_layout=True oder tight_layout(), keine abgeschnittenen Labels.
 

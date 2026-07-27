@@ -1,89 +1,107 @@
-from pathlib import Path
-import re
-import pandas as pd
-import matplotlib.pyplot as plt
+"""
+Per-file inventory of all SPT measurements: MSD fit results (D, n) combined
+with acquisition metadata parsed from the paired .rec file, exported to Excel.
 
-from hydro_analysis.core.io import extract_particle_size_from_path
+For every TrackMate XML found under `root`, one row is written with:
+  - D / D_error, exponent / exponent_error, r_squared, sigma_loc_nm  (MSD fit)
+  - num_trajectories, num_detections_total, mean_trajectory_length_frames
+  - fps, mpp, num_frames, duration_s
+  - condition ("Surface loading" for an "A<n>" token in the filename,
+    "Injection" for a "B<n>" token, e.g. "...A3.tif" vs "...B3_Crack.tif")
+  - laser_power_mW, depth_um (both parsed from the .rec Comment section)
+  - recorded_at (Record Date/Time header of the .rec file)
+  - xml_path, tif_path, rec_path (storage locations)
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from hydro_analysis.core.io import single_file_data, scan_xml_folder, condition_label_from_filename, parse_rec_comment_metadata
+from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS
 
 root = Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung")
 # root = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
 root = Path(r"E:\PhD Data Analysis\SPT 2025 II")
-# Matches e.g. "0.4 mW", "50 µW", "23µW", "3.6mW", "3.6MW"
-# IGNORECASE covers mw/MW/mW; character class covers µ variants and uW
-POWER_RE = re.compile(r'(\d+[.,]\d+|\d+)\s*([µ\xb5\u03bcuU]W|mW)', re.IGNORECASE)
 
-ENCODINGS = ["utf-16", "utf-8-sig", "utf-8", "latin-1", "cp1252"]
+OUTPUT_XLSX = Path(__file__).parent / "per_file_inventory.xlsx"
 
 
-def _read_rec(path: Path) -> str | None:
-    """Try multiple encodings; return file content or None on failure."""
-    for enc in ENCODINGS:
-        try:
-            return path.read_text(encoding=enc)
-        except (UnicodeDecodeError, ValueError):
+def build_row(xml_path: Path) -> dict | None:
+    rd = single_file_data(xml_path)
+    if rd is None:
+        return None
+
+    try:
+        perform_msd_analysis(rd, fit_points=DEFAULT_MSD_FIT_POINTS)
+    except Exception as e:
+        print(f"  [WARN] MSD-Fit fehlgeschlagen für {rd['base_name']}: {e}")
+
+    fit = rd.get("fit_results_MSD") or {}
+    tracks_df = rd["tracks_df"]
+    if tracks_df is not None and not tracks_df.empty:
+        track_lengths = tracks_df.groupby("particle").size()
+        num_detections_total = len(tracks_df)
+        mean_track_length = track_lengths.mean()
+    else:
+        num_detections_total = 0
+        mean_track_length = np.nan
+
+    fps = rd.get("fps")
+    duration_s = rd["num_frames"] / fps if fps else np.nan
+
+    rec_meta = parse_rec_comment_metadata(rd.get("rec_path"))
+
+    return {
+        "file":                          rd["base_name"],
+        "particle_size_nm":              rd["particle_size_nm"],
+        "condition":                     condition_label_from_filename(rd["base_name"]),
+        "D_um2_per_s":                   fit.get("D_um2_per_s", np.nan),
+        "D_error":                       fit.get("D_error", np.nan),
+        "exponent":                      fit.get("exponent", np.nan),
+        "exponent_error":                fit.get("exponent_error", np.nan),
+        "r_squared":                     fit.get("r_squared", np.nan),
+        "sigma_loc_nm":                  fit.get("sigma_loc_nm", np.nan),
+        "num_trajectories":              rd["num_tracks"],
+        "num_detections_total":          num_detections_total,
+        "mean_trajectory_length_frames": mean_track_length,
+        "fps":                           fps,
+        "mpp_um_per_px":                 rd.get("mpp"),
+        "num_frames":                    rd["num_frames"],
+        "duration_s":                    duration_s,
+        "laser_power_mW":                rec_meta["laser_power_mW"],
+        "depth_um":                      rec_meta["depth_um"],
+        "recorded_at":                   rec_meta["recorded_at"],
+        "xml_path":                      rd["xml_path"],
+        "tif_path":                      rd["tif_path"],
+        "rec_path":                      rd["rec_path"],
+    }
+
+
+def main() -> None:
+    xml_files = scan_xml_folder(root)
+    print(f"Anzahl der .xml Dateien: {len(xml_files)}")
+
+    rows = []
+    n_skipped = 0
+    for xml_path in sorted(xml_files):
+        row = build_row(xml_path)
+        if row is None:
+            n_skipped += 1
             continue
-    return None
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    print(f"Verarbeitet: {len(df)} Dateien, {n_skipped} übersprungen (fehlende Kalibrierung)")
+    if not df.empty:
+        preview_cols = ["file", "particle_size_nm", "condition", "D_um2_per_s", "exponent", "num_trajectories"]
+        print(df[preview_cols].to_string(index=False))
+
+    OUTPUT_XLSX.parent.mkdir(parents=True, exist_ok=True)
+    df.to_excel(OUTPUT_XLSX, index=False)
+    print(f"\nExcel gespeichert: {OUTPUT_XLSX}")
 
 
-results = []
-n_skipped = 0
-print("Anzahl der .rec Dateien:", len(list(root.rglob("*.rec"))))
-
-for rec_file in root.rglob("*.rec"):
-    content = _read_rec(rec_file)
-    if content is None:
-        print(f"  [FEHLER] Konnte nicht lesen: {rec_file.name}")
-        n_skipped += 1
-        continue
-
-    # Only search within the Comment section
-    comment_idx = content.find("Comment:")
-    if comment_idx == -1:
-        print(f"  [SKIP kein Comment] {rec_file.name}")
-        n_skipped += 1
-        continue
-
-    comment_section = content[comment_idx + len("Comment:"):]
-
-    m = POWER_RE.search(comment_section)
-    if m is None:
-        print(f"  [SKIP kein mW/µW]  {rec_file.name}  | Comment: {comment_section[:60].strip()!r}")
-        n_skipped += 1
-        continue
-
-    raw_value  = m.group(1).replace(",", ".")
-    power_value = float(raw_value)
-    raw_unit    = m.group(2)
-    is_micro    = raw_unit[0].lower() in ("µ", "\xb5", "\u03bc", "u")
-    power_unit  = "µW" if is_micro else "mW"
-    power_mw    = power_value * 1e-3 if is_micro else power_value
-
-    results.append({
-        "file":             rec_file.name,
-        "particle_size_nm": extract_particle_size_from_path(rec_file),
-        "power_value":      power_value,
-        "power_unit":       power_unit,
-        "power_mW":         power_mw,
-        "comment_line":     m.group(0),
-        "path":             str(rec_file),
-    })
-
-df = pd.DataFrame(results)
-print(f"Gefunden: {len(df)} Dateien mit Leistungsangabe, {n_skipped} übersprungen")
-print(df[["file", "particle_size_nm", "power_value", "power_unit", "power_mW"]].to_string(index=False))
-
-# ── Plot ─────────────────────────────────────────────────────────────
-fig, ax = plt.subplots(figsize=(8, 5))
-for particle_size in [20, 50, 100, 200, 500, 1000]:
-    subset = df[df["particle_size_nm"] == particle_size]
-    if subset.empty:
-        continue
-    ax.scatter([particle_size] * len(subset), subset["power_mW"],
-               label=f"{particle_size} nm", zorder=3)
-
-ax.set_xlabel("Particle size (nm)")
-ax.set_ylabel("Laser power (mW)")
-ax.set_title("Laser power per particle size")
-ax.legend(loc="best")
-plt.tight_layout()
-plt.show()
+if __name__ == "__main__":
+    main()
