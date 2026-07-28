@@ -57,8 +57,8 @@ MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS
 VERBOSE = False
 FPS_SMALL_TARGET = 60.0
 FPS_LARGE_TARGET = 20.0
-FPS_TOLERANCE = 3.0  # Allowed deviation in fps
-FPS_SIZE_EXACT: dict[float, float] = {50.0: 60.0}  # exact fps required for these sizes (±0.5)
+FPS_TOLERANCE = 40.0  # Allowed deviation in fps
+FPS_SIZE_EXACT: dict[float, float] = {}#{50.0: 60.0}  # exact fps required for these sizes (±0.5)
 PRINT_FILE_SUMMARY = True
 
 # Pickle output (always overwritten fresh, never read back to skip recomputation)

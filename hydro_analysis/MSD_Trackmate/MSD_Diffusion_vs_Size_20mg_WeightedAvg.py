@@ -33,7 +33,9 @@ from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC, _DASH_THE
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_result.pkl"
-SAVE_PATH: Path | None = None
+SAVE_PATH: Path | None = Path(
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+)
 
 X_MIN, X_MAX = 15.0, 1500.0
 

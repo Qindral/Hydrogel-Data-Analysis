@@ -20,7 +20,6 @@ the gap, to correct spurious TrackMate linking of near-edge detections.
 """
 from __future__ import annotations
 
-import csv
 import pickle
 from pathlib import Path
 
@@ -77,7 +76,7 @@ _COL_THEORY  = "black"
 _COL_FIT     = "#cc2200"
 _COL_TRK     = "#000000"
 
-_ALPHA_IMSD  = 0.01
+_ALPHA_IMSD  = 0.1
 _LW_IMSD     = 0.65
 _LW_EMSD     = 0.8
 _MS_EMSD     = 3
@@ -439,12 +438,13 @@ def main() -> None:
                 n_processed += 1
 
     # ── per-file summary CSV ──────────────────────────────────────────────────
+    # sep=";" / decimal="," so Excel (German locale) opens this directly with
+    # columns already split and numbers recognized, instead of dumping everything
+    # into one column. utf-8-sig BOM so Excel auto-detects the encoding.
     if summary_rows and SAVE_PATH is not None:
         csv_path = SAVE_PATH / "per_file_summary.csv"
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
-            writer.writeheader()
-            writer.writerows(summary_rows)
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df.to_csv(csv_path, index=False, sep=";", decimal=",", encoding="utf-8-sig")
         print(f"\nSummary saved: {csv_path}")
 
     if summary_rows:
