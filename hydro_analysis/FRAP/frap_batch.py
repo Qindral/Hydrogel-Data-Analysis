@@ -18,8 +18,9 @@ from frap_analysis import (
     parse_properties_xml,
     parse_frame_timestamps,
     load_tif_series,
-    fit_gaussian_2d,
+    fit_gaussian_dip_2d,
     analyze_frap_recovery,
+    analyze_gaussian_profile_diffusion,
     parse_frap_roi,
 )
 
@@ -333,7 +334,7 @@ def analyze_single(base_dir, save_dir=None, control=False):
     pre_avg = pre_images.mean(axis=0)
     h, w   = pre_avg.shape
 
-    # --- Parse exact ROI geometry + pixel size from Properties XML (no fallbacks) ---
+    # --- Parse exact ROI geometry + pixel size from Properties XML ---
     pb0_name = pb_folders[0].name
     props_xml_path = pb_folders[0] / "MetaData" / f"{pb0_name}_Properties.xml"
     try:
@@ -342,45 +343,96 @@ def analyze_single(base_dir, save_dir=None, control=False):
         print(f"  SKIP {label}: parse_frap_roi failed: {e}")
         return None
 
-    # Pixel size: must come from XML
+    # Pixel size: must come from XML (independent of whether a drawn ROI exists)
     if "mpp_um" not in frap_roi:
         print(f"  SKIP {label}: pixel size not found in XML ({props_xml_path.name})")
         return None
     params["mpp_um"] = frap_roi["mpp_um"]
 
-    # Bleach centre: must come from XML
-    if "roi_cx_px" not in frap_roi or "roi_cy_px" not in frap_roi:
-        print(f"  SKIP {label}: bleach ROI centre not found in XML")
-        return None
-    cx, cy = frap_roi["roi_cx_px"], frap_roi["roi_cy_px"]
-    if not (0 <= cx < w and 0 <= cy < h):
-        print(f"  SKIP {label}: XML bleach centre ({cx}, {cy}) outside image ({w}x{h})")
-        return None
-    bleach_center = (cy, cx)
-    print(f"    Bleach centre (XML): ({cx}, {cy}) px")
+    # A drawn-ROI shape (REALWORLD_SCALING SizeX/SizeY) is only present for
+    # box/ellipse bleach ROIs. Point bleaches (Attachment Name="BLEACH_POINT")
+    # record no shape at all - the XML fields still exist but are all zero,
+    # which used to pass a keys-only check and silently proceed with a bogus
+    # (0,0) / 1px "ROI", producing nonsense D values. Check the values, not
+    # just their presence.
+    cx = frap_roi.get("roi_cx_px")
+    cy = frap_roi.get("roi_cy_px")
+    rx = frap_roi.get("roi_rx_px", 0)
+    ry = frap_roi.get("roi_ry_px", 0)
+    has_xml_roi = (
+        cx is not None and cy is not None and rx > 0 and ry > 0
+        and 0 <= cx < w and 0 <= cy < h
+    )
 
-    # ROI radius: must come from XML (area-equivalent radius of ellipse)
-    if "roi_rx_px" not in frap_roi or "roi_ry_px" not in frap_roi:
-        print(f"  SKIP {label}: bleach ROI radius not found in XML")
-        return None
-    roi_r = max(1, int(round(np.sqrt(frap_roi["roi_rx_px"] * frap_roi["roi_ry_px"]))))
-    print(f"    Bleach ROI radius (XML): {roi_r} px"
-          f"  |  area = {frap_roi.get('roi_area_um2', 0):.1f} µm²")
-    if frap_roi.get("phases"):
-        for ph in frap_roi["phases"]:
-            print(f"      {ph['name']}: {ph['frame_count']} frames, {ph['time_s']:.3f} s")
+    bleach_center = None
+    roi_r = None
+    if has_xml_roi:
+        bleach_center = (cy, cx)
+        roi_r = max(1, int(round(np.sqrt(rx * ry))))
+        print(f"    Bleach centre (XML): ({cx}, {cy}) px")
+        print(f"    Bleach ROI radius (XML): {roi_r} px"
+              f"  |  area = {frap_roi.get('roi_area_um2', 0):.1f} µm²")
+        if frap_roi.get("phases"):
+            for ph in frap_roi["phases"]:
+                print(f"      {ph['name']}: {ph['frame_count']} frames, {ph['time_s']:.3f} s")
+    else:
+        print(f"    No drawn-ROI geometry in XML (likely a point bleach) - "
+              "the XML-ROI Soumpasis method needs one and will be skipped; "
+              "the Axelrod method below does not.")
 
-    ref_inner = roi_r + 10
-    ref_outer = roi_r + 50
+    # Control experiments need a real XML ROI (the Imin/Imax pipeline below
+    # has no bleach dip to fall back on for centering).
+    if control and not has_xml_roi:
+        print(f"  SKIP {label}: control experiment without a drawn XML ROI")
+        return None
+
+    ref_inner = (roi_r + 10) if has_xml_roi else None
+    ref_outer = (roi_r + 50) if has_xml_roi else None
 
     # Image display
     if control:
         _plot_control_images(label, pre_avg, pb_images.mean(axis=0), save_dir)
-    else:
+    elif has_xml_roi:
         _plot_pre_images(label, pre_images, pre_avg, pb_images[0],
                          cy, cx, roi_r, ref_inner, ref_outer, save_dir=save_dir)
 
-    # --- Normalization (run for all experiments including control) ---
+    # --- Independent Axelrod (Gaussian bleach-profile) diffusion estimate ---
+    # Self-contained: finds its own centroid-based center and radially fits
+    # r_e from the actual bleach profile, so it works regardless of whether
+    # the XML has a drawn-ROI shape - see analyze_gaussian_profile_diffusion
+    # in frap_analysis.py.
+    gauss_profile_result = None
+    if not control:
+        gauss_profile_result = analyze_gaussian_profile_diffusion(
+            pre_images, pb_images, pb_times_s, pre_avg, params.get("mpp_um", 1)
+        )
+        if gauss_profile_result:
+            print(f"    D (Axelrod) = {gauss_profile_result['D_axelrod_um2_s']:.4f} +/- "
+                  f"{gauss_profile_result['D_axelrod_err_um2_s']:.4f} um2/s "
+                  f"(r_e = {gauss_profile_result['r_e_um']:.2f} um)")
+        else:
+            print("    D (Axelrod): failed")
+
+    axelrod_fields = {
+        "D_axelrod_um2_s":     gauss_profile_result["D_axelrod_um2_s"] if gauss_profile_result else np.nan,
+        "D_axelrod_err_um2_s": gauss_profile_result["D_axelrod_err_um2_s"] if gauss_profile_result else np.nan,
+        "r_e_um":              gauss_profile_result["r_e_um"] if gauss_profile_result else np.nan,
+        "r_e_err_um":          gauss_profile_result["r_e_err_um"] if gauss_profile_result else np.nan,
+        "tau_axelrod_s":       gauss_profile_result["tau_s"] if gauss_profile_result else np.nan,
+    }
+
+    if not has_xml_roi:
+        # No legacy XML-ROI Soumpasis D possible, but the Axelrod result above
+        # still stands on its own.
+        return {
+            "label":         label,
+            "D_um2_s":       np.nan,
+            "no_xml_roi":    True,
+            "pb_times_s":    pb_times_s,
+            **axelrod_fields,
+        }
+
+    # --- Legacy XML-ROI Soumpasis pipeline ---
     # Imax: mean global brightness across ALL pre-bleach frames
     Imax = float(pre_images.mean())
 
@@ -419,7 +471,7 @@ def analyze_single(base_dir, save_dir=None, control=False):
         }
 
     # Gaussian fit at t=0 for bleach spot sigma (fixed initial center)
-    gauss_result = fit_gaussian_2d(pb_images[0], bleach_center, roi_radius=200)
+    gauss_result = fit_gaussian_dip_2d(pre_avg, pb_images[0], bleach_center)
     sigma_px = gauss_result[1] if gauss_result is not None else float(roi_r)
     sigma_um = sigma_px * params.get("mpp_um", 1)
 
@@ -446,19 +498,26 @@ def analyze_single(base_dir, save_dir=None, control=False):
         # Recovery curve: 0 = bleach min, 1 = full pre-bleach level
         "pb_times_s":      pb_times_s,
         "pb_norm":         pb_norm,
+        **axelrod_fields,
     }
 
 
 # =============================================================================
 # Summary plotting
 # =============================================================================
-def plot_summary(all_results):
-    """Create summary figure: individual D values + grouped mean/SEM."""
+def plot_summary(all_results, value_key="D_um2_s",
+                  value_label=r"$D$ [$\mu$m$^2$/s]", title_suffix=""):
+    """Create summary figure: individual values of `value_key` + grouped mean/SEM.
+
+    Called once for the XML-ROI Soumpasis D (default) and again for the
+    independent Axelrod D (value_key="D_axelrod_um2_s") so the two estimates
+    can be compared side by side across groups.
+    """
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14.3, 5.0),
                                    gridspec_kw={"width_ratios": [2, 1]})
 
-    # --- Left panel: individual D values per measurement ---
+    # --- Left panel: individual values per measurement ---
     x_pos = 0
     x_ticks = []
     x_labels = []
@@ -470,10 +529,11 @@ def plot_summary(all_results):
         x_start = x_pos
 
         for r in results:
-            if r is None or np.isnan(r["D_um2_s"]):
+            val = r.get(value_key, np.nan) if r is not None else np.nan
+            if r is None or np.isnan(val):
                 x_pos += 1
                 continue
-            ax1.scatter(x_pos, r["D_um2_s"], s=26, color=base_color,
+            ax1.scatter(x_pos, val, s=26, color=base_color,
                         edgecolors=dark_color, linewidths=0.8, zorder=3)
             x_ticks.append(x_pos)
             x_labels.append(r["label"])
@@ -484,8 +544,8 @@ def plot_summary(all_results):
 
     ax1.set_xticks(x_ticks)
     ax1.set_xticklabels(x_labels, rotation=45, ha="right", fontsize=7)
-    ax1.set_ylabel(r"$D$ [$\mu$m$^2$/s]")
-    ax1.set_title("Diffusion coefficient per measurement")
+    ax1.set_ylabel(value_label)
+    ax1.set_title(f"Diffusion coefficient per measurement{title_suffix}")
 
     # Group labels at bottom
     for group_name, (xs, xe) in group_spans.items():
@@ -502,14 +562,14 @@ def plot_summary(all_results):
     bar_colors = []
 
     for group_name, results in all_results.items():
-        D_values = [r["D_um2_s"] for r in results
-                    if r is not None and not np.isnan(r["D_um2_s"])]
-        if not D_values:
+        values = [r.get(value_key, np.nan) for r in results if r is not None]
+        values = [v for v in values if not np.isnan(v)]
+        if not values:
             continue
-        D_arr = np.array(D_values)
+        arr = np.array(values)
         group_names.append(group_name)
-        group_means.append(np.mean(D_arr))
-        group_sems.append(np.std(D_arr, ddof=1) / np.sqrt(len(D_arr)) if len(D_arr) > 1 else 0)
+        group_means.append(np.mean(arr))
+        group_sems.append(np.std(arr, ddof=1) / np.sqrt(len(arr)) if len(arr) > 1 else 0)
         bar_colors.append(GROUP_COLORS.get(group_name, (COLORS_BASE[0],))[0])
 
     x_bar = np.arange(len(group_names))
@@ -522,16 +582,16 @@ def plot_summary(all_results):
 
     # Individual data points on bars
     for i, group_name in enumerate(group_names):
-        D_values = [r["D_um2_s"] for r in all_results[group_name]
-                    if r is not None and not np.isnan(r["D_um2_s"])]
-        jitter = np.random.default_rng(42).uniform(-0.15, 0.15, len(D_values))
-        ax2.scatter(x_bar[i] + jitter, D_values, s=22, color="white",
+        values = [r.get(value_key, np.nan) for r in all_results[group_name] if r is not None]
+        values = [v for v in values if not np.isnan(v)]
+        jitter = np.random.default_rng(42).uniform(-0.15, 0.15, len(values))
+        ax2.scatter(x_bar[i] + jitter, values, s=22, color="white",
                     edgecolors="black", linewidths=0.8, zorder=4, alpha=0.85)
 
     ax2.set_xticks(x_bar)
     ax2.set_xticklabels(group_names)
-    ax2.set_ylabel(r"$D$ [$\mu$m$^2$/s]")
-    ax2.set_title("Grouped (mean $\\pm$ SEM)")
+    ax2.set_ylabel(value_label)
+    ax2.set_title(f"Grouped (mean $\\pm$ SEM){title_suffix}")
 
     plt.tight_layout()
     return fig
@@ -600,20 +660,29 @@ def plot_recovery_comparison(all_results):
 
 def print_summary_table(all_results):
     """Print a results table to the console."""
-    print("\n" + "=" * 90)
+    print("\n" + "=" * 118)
     print(f"{'Group':<10} {'Folder':<30} {'D [um2/s]':>10} {'tau [s]':>10} "
-          f"{'t1/2 [s]':>10} {'Mobile%':>10}")
-    print("-" * 90)
+          f"{'t1/2 [s]':>10} {'Mobile%':>10} {'D_Axelrod':>12} {'r_e [um]':>10}")
+    print("-" * 118)
     for group_name, results in all_results.items():
         for r in results:
             if r is None:
                 continue
+            d_ax = r.get("D_axelrod_um2_s", np.nan)
+            re_um = r.get("r_e_um", np.nan)
+            d_ax_str = f"{d_ax:.4f}" if not np.isnan(d_ax) else "n/a"
+            re_str = f"{re_um:.2f}" if not np.isnan(re_um) else "n/a"
             if np.isnan(r["D_um2_s"]):
-                print(f"{group_name:<10} {r['label']:<30} {'control':>10}")
+                # Distinguish a real no-FITC control (no Axelrod attempted)
+                # from a point-bleach experiment where only the legacy
+                # XML-ROI method had to be skipped - Axelrod may still be valid.
+                tag = "no-XML-ROI" if r.get("no_xml_roi") else "control"
+                print(f"{group_name:<10} {r['label']:<30} {tag:>10} {'':>10} "
+                      f"{'':>10} {'':>10} {d_ax_str:>12} {re_str:>10}")
                 continue
             print(f"{group_name:<10} {r['label']:<30} {r['D_um2_s']:>10.4f} "
                   f"{r['tau_s']:>10.2f} {r['t_half_s']:>10.2f} "
-                  f"{r['mobile_fraction']*100:>9.1f}%")
+                  f"{r['mobile_fraction']*100:>9.1f}% {d_ax_str:>12} {re_str:>10}")
         # Group summary (only for groups with valid D values)
         D_vals = [r["D_um2_s"] for r in results
                   if r is not None and not np.isnan(r["D_um2_s"])]
@@ -621,8 +690,14 @@ def print_summary_table(all_results):
             m = np.mean(D_vals)
             sem = np.std(D_vals, ddof=1) / np.sqrt(len(D_vals))
             print(f"{'':>10} {'>>> MEAN +/- SEM':<30} {m:>10.4f} +/- {sem:.4f}")
+        D_ax_vals = [r["D_axelrod_um2_s"] for r in results
+                     if r is not None and not np.isnan(r.get("D_axelrod_um2_s", np.nan))]
+        if len(D_ax_vals) > 1:
+            m_ax = np.mean(D_ax_vals)
+            sem_ax = np.std(D_ax_vals, ddof=1) / np.sqrt(len(D_ax_vals))
+            print(f"{'':>10} {'>>> MEAN +/- SEM (Axelrod)':<30} {m_ax:>10.4f} +/- {sem_ax:.4f}")
         print()
-    print("=" * 90)
+    print("=" * 118)
 
 
 # =============================================================================
@@ -655,11 +730,20 @@ def main():
     # Summary
     print_summary_table(all_results)
 
-    # --- Diffusion coefficient summary ---
+    # --- Diffusion coefficient summary (XML-ROI Soumpasis) ---
     fig_summary = plot_summary(all_results)
     out_path = DATA_ROOT / "frap_batch_summary.png"
     fig_summary.savefig(out_path, dpi=600)
     print(f"\nSummary saved to:\n  {out_path}")
+
+    # --- Diffusion coefficient summary (Axelrod, Gaussian bleach-profile) ---
+    fig_summary_axelrod = plot_summary(
+        all_results, value_key="D_axelrod_um2_s",
+        value_label=r"$D_{Axelrod}$ [$\mu$m$^2$/s]", title_suffix=" (Axelrod)",
+    )
+    out_path_axelrod = DATA_ROOT / "frap_batch_summary_axelrod.png"
+    fig_summary_axelrod.savefig(out_path_axelrod, dpi=600)
+    print(f"Axelrod summary saved to:\n  {out_path_axelrod}")
 
     # --- Recovery curve comparison ---
     fig_recovery = plot_recovery_comparison(all_results)
