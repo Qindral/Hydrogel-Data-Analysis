@@ -369,6 +369,32 @@ def get_dls_labels() -> dict[float, int]:
     return {float(k): _PARTICLE_LABELS[int(k)] for k in cache.keys()}
 
 
+def get_dls_diffusion_means() -> dict[float, dict]:
+    """
+    Canonical per-size DLS diffusion summary -- single source of truth for
+    the "DLS mean D" reference point used by the Dissertation_Figures
+    scripts. Supersedes get_dls_reference_maps()'s hardcoded
+    dls_D_um2_per_s/dls_D_err_um2_per_s for this purpose, and the
+    DLS_MEASUREMENTS dicts duplicated inside core/visualization.py.
+    get_dls_sizes()/get_dls_labels() remain the reference for x-axis size
+    mapping/labels, unaffected by this.
+
+    Returns {nominal_nm: {"D_mean_um2s", "sigma_D_um2s", "z_mean_nm", "label_nm"}}.
+    label_nm falls back to _PARTICLE_LABELS (same fallback get_dls_labels()
+    uses) since older dls_reference.pkl caches predate that field.
+    """
+    cache = load_dls_cache()
+    return {
+        float(nominal): {
+            "D_mean_um2s": float(entry["D_mean_um2s"]),
+            "sigma_D_um2s": float(entry["sigma_D_um2s"]),
+            "z_mean_nm": float(entry["z_mean_nm"]),
+            "label_nm": entry.get("label_nm", _PARTICLE_LABELS.get(int(nominal), int(nominal))),
+        }
+        for nominal, entry in cache.items()
+    }
+
+
 def read_trackmate_xml(xml_file_path: Path) -> Optional[pd.DataFrame]:
     """
     Parse TrackMate XML file and convert to pandas DataFrame.

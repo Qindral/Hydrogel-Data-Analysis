@@ -12,6 +12,7 @@ from .io import (
     collect_all_files_by_particle_size,
     single_file_data,
     compare_xml,
+    get_dls_diffusion_means,
 )
 
 # Analysis functions
@@ -51,7 +52,8 @@ __all__ = [
     'collect_all_files_by_particle_size',
     'single_file_data',
     'compare_xml',
-    
+    'get_dls_diffusion_means',
+
     # Analysis functions
     'calculate_step_sizes',
     'fit_gaussian_diffusion_1d',

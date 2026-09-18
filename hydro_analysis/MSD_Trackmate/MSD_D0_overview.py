@@ -108,19 +108,15 @@ def _process_file(xml_path: Path) -> dict | None:
         "tau_max": float(lag.max()),
         "fps":     fps,
         "file":    xml_path.name,
-        "emsd":    emsd,
     }
 
 
-def _collect(folders: dict[float, list[Path]],
-             ) -> tuple[dict[float, list[dict]], dict[float, list[pd.Series]]]:
-    """Walk all folders, return (fits_by_size, emsd_by_size)."""
-    fits:  dict[float, list[dict]]       = {}
-    emsds: dict[float, list[pd.Series]] = {}
+def _collect(folders: dict[float, list[Path]]) -> dict[float, list[dict]]:
+    """Walk all folders, return fits_by_size."""
+    fits: dict[float, list[dict]] = {}
 
     for size_nm, folder_list in folders.items():
-        fits[size_nm]  = []
-        emsds[size_nm] = []
+        fits[size_nm] = []
 
         for folder in folder_list:
             if not folder.exists():
@@ -131,16 +127,14 @@ def _collect(folders: dict[float, list[Path]],
                 if result is None:
                     print(f"  [SKIP] {xml_path.name}")
                     continue
-                fit_dict = {k: v for k, v in result.items() if k != "emsd"}
-                fits[size_nm].append(fit_dict)
-                emsds[size_nm].append(result["emsd"])
+                fits[size_nm].append(result)
                 print(f"  [{int(size_nm)} nm  {result['fps']:.0f} fps] "
                       f"A={result['A']:.3e}  n={result['n']:.3f}  "
                       f"{xml_path.name}")
 
         print(f"  → {int(size_nm)} nm: {len(fits[size_nm])} files")
 
-    return fits, emsds
+    return fits
 
 
 def main() -> None:
@@ -155,10 +149,10 @@ def main() -> None:
     }
 
     print("=== D₀ water ===")
-    fits_by_size, _ = _collect(XML_FOLDERS_D0)
+    fits_by_size = _collect(XML_FOLDERS_D0)
 
     print("\n=== 20 mg/mL C16 ===")
-    fits_20mg, _ = _collect(XML_FOLDERS_20MG)
+    fits_20mg = _collect(XML_FOLDERS_20MG)
 
     plot_fit_lines_overview(
         fits_by_size=fits_by_size,

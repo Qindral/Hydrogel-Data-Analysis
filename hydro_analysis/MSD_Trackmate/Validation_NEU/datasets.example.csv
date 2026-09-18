@@ -1,0 +1,5 @@
+xml_path,tiff_path,condition,particle_size_nm,label
+E:/path/to/35nm_water.xml,E:/path/to/35nm_water.tif,water,35,35 nm water
+E:/path/to/35nm_hydrogel.xml,E:/path/to/35nm_hydrogel.tif,hydrogel,35,35 nm hydrogel
+E:/path/to/50nm_hydrogel.xml,E:/path/to/50nm_hydrogel.tif,hydrogel,50,50 nm hydrogel
+E:/path/to/immobilized_35nm.xml,E:/path/to/immobilized_35nm.tif,immobilized,35,immobilized 35 nm

@@ -1,0 +1,6 @@
+xml_path,tiff_path,condition,particle_size_nm,label
+E:/PhD Data Analysis/SPT 2025 II/D_0 Wassermessung/20 nm/Trackmate_Analyses/20nm_2.xml,E:/PhD Data Analysis/SPT 2025 II/D_0 Wassermessung/20 nm/20nm_2.tif,water,35,35 nm Wasser
+E:/PhD Data Analysis/SPT 2025 II/D_0 Wassermessung/50 nm/Analysis/50nm_2.xml,E:/PhD Data Analysis/SPT 2025 II/D_0 Wassermessung/50 nm/50 nm_2.tif,water,50,50 nm Wasser
+E:/PhD Data Analysis/SPT 2025 II/Hydrogel Messung/20mg C16/20 nm/20 nm 20 mg/analysis/20nm_1d_A2_02.xml,E:/PhD Data Analysis/SPT 2025 II/Hydrogel Messung/20mg C16/20 nm/20 nm 20 mg/20nm_1d_A2_02.tif,hydrogel,35,35 nm Hydrogel
+E:/PhD Data Analysis/SPT 2025 II/Hydrogel Messung/20mg C16/50 nm/50 nm 20 mg/Analysis/50nmA2_2d_01.xml,E:/PhD Data Analysis/SPT 2025 II/Hydrogel Messung/20mg C16/50 nm/50 nm 20 mg/50 nm A2_2d_01.tif,hydrogel,50,50 nm Hydrogel
+E:/PhD Data Analysis/SPT 2025 II/2026.01.31_immobilized/Analysis/20nm_immob.xml,E:/PhD Data Analysis/SPT 2025 II/2026.01.31_immobilized/20nm_immob.tif,immobilized,35,immobilisiert 35 nm
