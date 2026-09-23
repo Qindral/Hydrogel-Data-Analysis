@@ -61,7 +61,7 @@ XML_FOLDERS = {
 }
 
 MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS
-VERBOSE = False
+VERBOSE = True
 PRINT_FILE_SUMMARY = True
 
 # For the small (DLS 35-100 nm / nominal 20-100 nm) particles specifically, a

@@ -53,10 +53,11 @@ Per condition, one (frame, anchor particle) example is chosen by:
   5. For the accepted (frame, anchor), the smallest field of view in
      [FOV_MIN_UM, FOV_MAX_UM] (user: "roughly the same" physical size across
      conditions -- see those constants below for the current range) that
-     still contains >= MIN_PARTICLES_IN_VIEW qualifying tracks, centered on
-     the anchor, is used as the cutout -- see _fov_for_min_count(). If even
-     FOV_MAX_UM cannot fit 3, that anchor/frame is rejected and the next is
-     tried.
+     still contains >= MIN_PARTICLES_IN_VIEW qualifying tracks, each with at
+     least MARGIN_UM clearance to the box edge (user: "a border of 600 nm to
+     the particles"), centered on the anchor, is used as the cutout -- see
+     _fov_for_min_count(). If even FOV_MAX_UM cannot fit 3 particles with
+     that margin, that anchor/frame is rejected and the next is tried.
 
 Rendering reuses Trajectory/trajectory_plotter.py's primitives unchanged
 (load_tiff_stack, average_frames, render_frame_on_ax, render_tracks_on_ax,
@@ -155,6 +156,9 @@ CUTOUT_RATIO = 1.42           # user requirement: 1 x 1.42 cutout
 MIN_PARTICLES_IN_VIEW = 3     # user requirement: "at least 3 in the cutout"
 FOV_MIN_UM = 15.0             # user requirement: "roughly the same, about 15 to 22 um"
 FOV_MAX_UM = 35.0
+MARGIN_UM = 0.6                # user requirement: 600 nm clearance between the cutout edge and
+                               # every particle counted toward MIN_PARTICLES_IN_VIEW (not just the
+                               # anchor), so no particle sits flush against the crop border
 TRAIL_HISTORY_SECONDS = 5.0   # trajectory-history window shown in v3/v4;
                                # capped (not "whole track since start"), since tracks here can run to
                                # 1000+ frames and a full-track window would draw a trail far outside
@@ -251,16 +255,18 @@ def _michelson_contrast(frame: np.ndarray, x0: float, y0: float, inner: int = 3,
 
 def _fov_for_min_count(anchor_xy: tuple[float, float], positions_xy: list[tuple[float, float]],
                         mpp: float, ratio: float, min_count: int,
-                        fov_min_um: float, fov_max_um: float) -> Optional[float]:
+                        fov_min_um: float, fov_max_um: float,
+                        margin_um: float = MARGIN_UM) -> Optional[float]:
     """Smallest FOV width (um, clipped to >= fov_min_um) whose 1:ratio box
     centered on anchor_xy contains >= min_count of positions_xy (anchor
-    itself included, at distance 0). None if even fov_max_um is not enough."""
+    itself included, at distance 0) with at least margin_um clearance to the
+    box edge for every one of them. None if even fov_max_um is not enough."""
     ax0, ay0 = anchor_xy
     needed = []
     for x, y in positions_xy:
-        dx_um = abs(x - ax0) * mpp
-        dy_um = abs(y - ay0) * mpp
-        # box half-width = fov/2, half-height = fov/(2*ratio); point inside <=> fov >= max(2dx, 2*ratio*dy)
+        dx_um = abs(x - ax0) * mpp + margin_um
+        dy_um = abs(y - ay0) * mpp + margin_um
+        # box half-width = fov/2, half-height = fov/(2*ratio); point (+margin) inside <=> fov >= max(2dx, 2*ratio*dy)
         needed.append(max(2.0 * dx_um, 2.0 * ratio * dy_um))
     needed.sort()
     if len(needed) < min_count:

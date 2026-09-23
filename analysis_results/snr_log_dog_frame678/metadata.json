@@ -1,0 +1,23 @@
+{
+  "frame_zero_based": 677,
+  "frame_one_based": 678,
+  "spot_id": 12914,
+  "x": 95.53932901244852,
+  "y": 110.90067615894597,
+  "radius_px": 2.5,
+  "source_tiff": "E:\\PhD Data Analysis\\SPT 2025 II\\Hydrogel Messung\\20mg C16\\20 nm\\20 nm 20 mg\\20nm_1d_A2_02.tif",
+  "session_xml": "E:\\PhD Data Analysis\\SPT 2025 II\\Hydrogel Messung\\20mg C16\\20 nm\\20 nm 20 mg\\analysis\\20nm_1d_A2_02.xml",
+  "log_sigma_px": 1.7677669529663687,
+  "dog_sigmas_px": [
+    [
+      1.5103807466993215,
+      1.5103807466993215
+    ],
+    [
+      1.8791620472966137,
+      1.8791620472966137
+    ]
+  ],
+  "median_prefilter": false,
+  "implementation": "SciPy convolution using TrackMate LoG kernel formula; shared SciPy DoG approximation; mirror boundaries"
+}

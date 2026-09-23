@@ -26,17 +26,20 @@ from hydro_analysis.core.io import (
 )
 from hydro_analysis.core.analysis import DEFAULT_MSD_FIT_POINTS
 from hydro_analysis.core.physics import calculate_theoretical_diffusion
-from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import plot_msd_single_file
+from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import clip_msd_points, plot_msd_single_file
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_files.pkl"
 
-SAVE_PATH = None# Path(
-   # rf"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16"
-   # rf"\PerFile_{pd.Timestamp.now().strftime('%Y%m%d')}")
+SAVE_PATH = Path(
+    rf"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16"
+    rf"\PerFile_{pd.Timestamp.now().strftime('%Y%m%d')}")
 MSD_FIT_POINTS   = DEFAULT_MSD_FIT_POINTS
-FPS_SMALL_TARGET = 60.0
-FPS_LARGE_TARGET = 20.0
+MSD_MAX_POINTS   = 22    # plot only the first N lag points (iMSD, eMSD, theory, fit); None = all
+SHOW_IMSD        = False  # draw individual MSD curves
+XLIM             = (0.01, 5.0)    # lag time (s), particles < 200 nm
+XLIM_200         = (0.04, 5.0)    # lag time (s), particles >= 200 nm
+YLIM             = (0.01, 100.0)  # MSD (µm²)
 
 
 # ── Main ────────────────────────────────────────────────────────────────────────
@@ -76,7 +79,6 @@ def main() -> None:
         mapped_size = dls_sizes.get(size_nm, size_override.get(size_nm, size_nm))
         label_nm    = dls_labels.get(size_nm, int(size_nm))
         D_theo      = calculate_theoretical_diffusion(particle_size_nm=mapped_size)
-        target_fps  = FPS_SMALL_TARGET if size_nm < 200 else FPS_LARGE_TARGET
 
         base = rd.get("base_name", "")
         fps  = rd.get("fps")
@@ -124,15 +126,20 @@ def main() -> None:
             "rec_path":                      rd.get("rec_path"),
         })
 
-        xlim = (0.01, 6.0) if target_fps == FPS_SMALL_TARGET else (0.04, 3.0)
+        rd_plot = clip_msd_points(rd, MSD_MAX_POINTS)
+        suffix  = f"_first{MSD_MAX_POINTS}" if MSD_MAX_POINTS is not None else ""
+        # Nominal size, not the DLS label: >= 200 nm is the 20 fps recording regime.
+        xlim    = XLIM_200 if size_nm >= 200 else XLIM
         plot_msd_single_file(
-            rd=rd,
+            rd=rd_plot,
             D_theo=D_theo,
             label_nm=label_nm,
             n_fit=MSD_FIT_POINTS,
             save_path=SAVE_PATH,
-            filename=f"{base}_{int(size_nm)}nm",
+            filename=f"{base}_{int(size_nm)}nm{suffix}",
             xlim=xlim,
+            ylim=YLIM,
+            show_imsd=SHOW_IMSD,
             sample_label="20 mg/mL C16",
         )
         n_processed += 1

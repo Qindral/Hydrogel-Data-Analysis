@@ -157,6 +157,25 @@ def _inset_style(ax: plt.Axes) -> None:
         sp.set_linewidth(0.6)
 
 
+def clip_msd_points(rd: dict, max_points: int | None) -> dict:
+    """
+    Return a shallow copy of rd whose iMSD/eMSD keep only the first max_points
+    lag times. The original result_dict (and cached pickle content) is left
+    untouched. Since plot_msd_single_file() draws the Stokes-Einstein and fit
+    lines over the eMSD lag range, both lines are clipped accordingly.
+    """
+    fit = rd.get("fit_results_MSD")
+    if max_points is None or not fit:
+        return rd
+    fit_clipped = dict(fit)
+    for key in ("imsd", "emsd"):
+        data = fit.get(key)
+        if data is not None:
+            fit_clipped[key] = data.iloc[:max_points]
+    rd_clipped = dict(rd)
+    rd_clipped["fit_results_MSD"] = fit_clipped
+    return rd_clipped
+
 
 
 # ── Plot ────────────────────────────────────────────────────────────────────────
@@ -170,6 +189,8 @@ def plot_msd_single_file(
     filename: str = "msd",
     xlim: tuple = (1e-2, 4.0),
     sample_label: str | None = None,
+    ylim: tuple = (1e-2, 1e3),
+    show_imsd: bool = True,
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Publication figure for one TrackMate XML file.
@@ -184,6 +205,8 @@ def plot_msd_single_file(
     filename     base name without extension
     xlim         (x_min, x_max) lag-time axis limits in seconds
     sample_label short sample description shown inside the figure
+    ylim         (y_min, y_max) MSD axis limits in µm²
+    show_imsd    draw the individual MSD curves (and their legend entry)
     """
     fit = rd.get("fit_results_MSD") or {}
     imsd: pd.DataFrame | None = fit.get("imsd")
@@ -217,7 +240,7 @@ def plot_msd_single_file(
                     color=_COL_FIT, linewidth=_LW_FIT, zorder=4)
 
         # ── individual MSDs ───────────────────────────────────────────────
-        if imsd is not None and not imsd.empty:
+        if show_imsd and imsd is not None and not imsd.empty:
             for col in imsd.columns:
                 s = imsd[col].dropna()
                 s = s[s > 0]
@@ -235,7 +258,7 @@ def plot_msd_single_file(
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(*xlim)
-        ax.set_ylim(1e-2, 1e3)
+        ax.set_ylim(*ylim)
         _add_log_minor_ticks(ax)
         ax.set_xlabel(r"Lag time $\tau$ (s)")
         ax.set_ylabel(r"MSD ($\mu\mathrm{m}^2$)")
@@ -249,6 +272,8 @@ def plot_msd_single_file(
         handles = [
             Line2D([0], [0], color=_COL_IMSD, linewidth=0.9, alpha=0.5,
                    label=imsd_label),
+        ] if show_imsd else []
+        handles += [
             Line2D([0], [0], color=_COL_EMSD, linewidth=_LW_EMSD,
                    marker="o", markersize=_MS_EMSD, markeredgewidth=0,
                    label=emsd_label),
