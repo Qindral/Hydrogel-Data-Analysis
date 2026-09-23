@@ -15,6 +15,10 @@ layout as TrackLength_Histogram.py), D0 and D_eff overlaid per panel (two
 colors, shared bin edges), mirroring the "for D_0 and D_eff" request as one
 direct-comparison view rather than two separate grids.
 
+Saved in two versions: a plain count histogram, and a "_kde" variant where
+both series are density-normalized and each gets its own Gaussian KDE
+overlay (scipy.stats.gaussian_kde) from the same underlying step sizes.
+
 Run Schrittweiten_methode_D0.py and Schrittweiten_methode_20mg.py first (or
 after any raw-data change) to refresh both pickles.
 
@@ -27,8 +31,16 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
+import sys
+
+# Resolve project imports when using the editor Run button or opening this file.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
 
 from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
@@ -71,7 +83,7 @@ def _pool_step_sizes_by_size(results: dict) -> dict[float, np.ndarray]:
 
 
 def _plot_grid(d0_by_size: dict[float, np.ndarray], deff_by_size: dict[float, np.ndarray],
-               dls_labels: dict[float, int]) -> plt.Figure:
+               dls_labels: dict[float, int], kde: bool = False) -> plt.Figure:
     sizes = sorted(set(d0_by_size) | set(deff_by_size))
     n = len(sizes)
     if n == 0:
@@ -107,15 +119,22 @@ def _plot_grid(d0_by_size: dict[float, np.ndarray], deff_by_size: dict[float, np
             continue
 
         if d0_vals.size:
-            ax.hist(d0_vals, bins=bins, alpha=0.5, color=STYLE_D0["face"], edgecolor=STYLE_D0["edge"],
-                    linewidth=0.4, label=STYLE_D0["label"])
+            ax.hist(d0_vals, bins=bins, density=kde, alpha=0.5, color=STYLE_D0["face"],
+                    edgecolor=STYLE_D0["edge"], linewidth=0.4, label=STYLE_D0["label"])
         if deff_vals.size:
-            ax.hist(deff_vals, bins=bins, alpha=0.5, color=STYLE_DEFF["face"], edgecolor=STYLE_DEFF["edge"],
-                    linewidth=0.4, label=STYLE_DEFF["label"])
+            ax.hist(deff_vals, bins=bins, density=kde, alpha=0.5, color=STYLE_DEFF["face"],
+                    edgecolor=STYLE_DEFF["edge"], linewidth=0.4, label=STYLE_DEFF["label"])
+
+        if kde:
+            x_grid = np.linspace(X_MIN, X_MAX, 400)
+            if d0_vals.size >= 2:
+                ax.plot(x_grid, gaussian_kde(d0_vals)(x_grid), color=STYLE_D0["edge"], linewidth=1.6)
+            if deff_vals.size >= 2:
+                ax.plot(x_grid, gaussian_kde(deff_vals)(x_grid), color=STYLE_DEFF["edge"], linewidth=1.6)
 
         ax.set_xlim(X_MIN, X_MAX)
         ax.set_xlabel("Step size (nm)")
-        ax.set_ylabel("Count")
+        ax.set_ylabel("Density" if kde else "Count")
         ax.set_title(f"{label_nm} nm")
         ax.minorticks_on()
 
@@ -128,7 +147,8 @@ def _plot_grid(d0_by_size: dict[float, np.ndarray], deff_by_size: dict[float, np
         ],
         loc="upper right", fontsize=7, frameon=False,
     )
-    fig.suptitle("Step size per particle size, D0 vs. D_eff", fontsize=12, fontweight="semibold")
+    suffix = " (density + KDE)" if kde else ""
+    fig.suptitle(f"Step size per particle size, D0 vs. D_eff{suffix}", fontsize=12, fontweight="semibold")
     return fig
 
 
@@ -143,14 +163,16 @@ def main() -> None:
     deff_by_size = _pool_step_sizes_by_size(deff_results)
 
     with plt.rc_context(_RC):
-        fig = _plot_grid(d0_by_size, deff_by_size, dls_labels)
-        plt.show()
+        for kde, filename in ((False, "step_size_histogram_d0_deff.png"),
+                               (True, "step_size_histogram_d0_deff_kde.png")):
+            fig = _plot_grid(d0_by_size, deff_by_size, dls_labels, kde=kde)
+            plt.show()
 
-        if SAVE_PATH is not None:
-            SAVE_PATH.mkdir(parents=True, exist_ok=True)
-            png_path = SAVE_PATH / "step_size_histogram_d0_deff.png"
-            fig.savefig(png_path, dpi=600, bbox_inches="tight")
-            print(f"Plot gespeichert: {png_path}")
+            if SAVE_PATH is not None:
+                SAVE_PATH.mkdir(parents=True, exist_ok=True)
+                png_path = SAVE_PATH / filename
+                fig.savefig(png_path, dpi=600, bbox_inches="tight")
+                print(f"Plot gespeichert: {png_path}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 {
-  "python.defaultInterpreterPath": "C:\\Users\\Jonas\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
   "python.testing.unittestArgs": [
     "-v",
     "-s",

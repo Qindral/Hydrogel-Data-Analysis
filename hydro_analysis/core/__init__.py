@@ -1,5 +1,8 @@
 """Core functionality for hydrogel analysis."""
 
+# Physics functions
+from .physics import calculate_theoretical_psf_sigma
+
 # IO functions
 from .io import (
     find_rec_tif_files,
@@ -41,6 +44,9 @@ from .visualization import (
 )
 
 __all__ = [
+    # Physics functions
+    'calculate_theoretical_psf_sigma',
+
     # IO functions
     'find_rec_tif_files',
     'parse_rec_file',

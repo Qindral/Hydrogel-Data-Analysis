@@ -23,6 +23,15 @@ np.logspace bin edges (same precedent). Panel titles use the real DLS
 particle size (core.io.get_dls_labels()), not the nominal folder name, and
 show no N. No reference lines are drawn inside the histograms.
 
+Each figure is also saved as a "_kde" variant. Because the x-axis is log
+and the data is roughly log-normally distributed, the KDE is fit in
+log10(D)-space (scipy.stats.gaussian_kde on log10(D_pos), not on D_pos
+itself -- a linear-space KDE would badly over-smooth the bulk of small
+values and give a long, near-flat tail), then transformed back to a
+density in D-space via the standard change-of-variables Jacobian
+(density(D) = density(log10 D) / (D * ln 10)) so it overlays a
+density=True histogram on the same log-x axis correctly.
+
 Run MSD_FromTrackmate_D0.py and MSD_FromTrackmate_20mg.py first (or after
 any raw-data change) to refresh both pickles.
 
@@ -35,9 +44,17 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
+import sys
+
+# Resolve project imports when using the editor Run button or opening this file.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
 
 from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.core.analysis import DEFAULT_MSD_FIT_POINTS
@@ -98,7 +115,8 @@ def _extract_track_D_per_size(results: dict, n_points: int) -> dict[float, np.nd
     return {s: np.array(v) for s, v in size_D.items()}
 
 
-def _plot_grid(size_D: dict[float, np.ndarray], style: dict, dls_labels: dict[float, int]) -> plt.Figure:
+def _plot_grid(size_D: dict[float, np.ndarray], style: dict, dls_labels: dict[float, int],
+               kde: bool = False) -> plt.Figure:
     sizes = sorted(size_D.keys())
     n = len(sizes)
     if n == 0:
@@ -133,16 +151,24 @@ def _plot_grid(size_D: dict[float, np.ndarray], style: dict, dls_labels: dict[fl
             continue
 
         bins = np.logspace(np.log10(D_pos.min()), np.log10(D_pos.max()), N_BINS + 1)
-        ax.hist(D_pos, bins=bins, color=style["face"], edgecolor=style["edge"],
+        ax.hist(D_pos, bins=bins, density=kde, color=style["face"], edgecolor=style["edge"],
                 linewidth=0.5, alpha=0.85)
+
+        if kde and D_pos.size >= 2:
+            log_vals = np.log10(D_pos)
+            x_grid = np.logspace(np.log10(D_pos.min()), np.log10(D_pos.max()), 300)
+            density_logspace = gaussian_kde(log_vals)(np.log10(x_grid))
+            density_linear = density_logspace / (x_grid * np.log(10))
+            ax.plot(x_grid, density_linear, color=style["edge"], linewidth=1.6)
 
         ax.set_xscale("log")
         ax.set_xlabel(r"$D$ (µm²/s)")
-        ax.set_ylabel("Count")
+        ax.set_ylabel("Density" if kde else "Count")
         ax.set_title(f"{label_nm} nm")
         ax.minorticks_on()
 
-    fig.suptitle(f"Individual-particle D, by particle size -- {style['label']}",
+    suffix = " (density + KDE, fit in log10(D))" if kde else ""
+    fig.suptitle(f"Individual-particle D, by particle size -- {style['label']}{suffix}",
                  fontsize=12, fontweight="semibold")
     return fig
 
@@ -158,11 +184,13 @@ def main() -> None:
     deff_size_D = _extract_track_D_per_size(deff_results, DEFAULT_MSD_FIT_POINTS)
 
     with plt.rc_context(_RC):
-        for size_D, style, filename in (
-            (d0_size_D, STYLE_D0, "d0_individual_d_histogram.png"),
-            (deff_size_D, STYLE_DEFF, "deff_individual_d_histogram.png"),
+        for size_D, style, filename, kde in (
+            (d0_size_D, STYLE_D0, "d0_individual_d_histogram.png", False),
+            (deff_size_D, STYLE_DEFF, "deff_individual_d_histogram.png", False),
+            (d0_size_D, STYLE_D0, "d0_individual_d_histogram_kde.png", True),
+            (deff_size_D, STYLE_DEFF, "deff_individual_d_histogram_kde.png", True),
         ):
-            fig = _plot_grid(size_D, style, dls_labels)
+            fig = _plot_grid(size_D, style, dls_labels, kde=kde)
             plt.show()
 
             if SAVE_PATH is not None:

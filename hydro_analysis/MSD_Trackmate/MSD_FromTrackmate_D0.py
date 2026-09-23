@@ -18,6 +18,17 @@ overwrites msd_d0_results.pkl, so downstream scripts always get fresh results.
 Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
 detections within 3% of the frame border are dropped and trajectories split at
 the gap, to correct spurious TrackMate linking of near-edge detections.
+
+fps filter: only for the small sizes (DLS 35-100 nm / nominal 20-100 nm,
+SMALL_SIZES_NM) is a minimum frame rate required (MIN_FPS_SMALL_SIZES=40 Hz
+-- fast diffusion needs enough temporal sampling, unlike the larger, slower
+sizes). This replaces a stricter per-size target-fps-with-tight-tolerance
+filter that used to apply to EVERY size and silently excluded the majority
+of some sizes' files (e.g. 1000 nm: 8 of 10 real movies were recorded at
+frame rates other than the ~20 Hz target and were being dropped without
+this being obvious) -- removed on request; the 200/500/1000 nm sizes now
+have no fps requirement at all. fps is still recorded per file (see the
+"fps" column in the printed summary and in each result_dict).
 """
 
 from pathlib import Path
@@ -54,11 +65,15 @@ XML_FOLDERS = {
 
 MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS
 VERBOSE = True
-FPS_SMALL_TARGET = 60.0
-FPS_LARGE_TARGET = 20.0
-FPS_TOLERANCE = 3.0  # Allowed deviation in fps
-FPS_SIZE_EXACT: dict[float, float] = {50.0: 60.0}  # exact fps required for these sizes (±0.5)
 PRINT_FILE_SUMMARY = True
+
+# For the small (DLS 35-100 nm / nominal 20-100 nm) particles specifically, a
+# minimum frame rate is required -- fast diffusion needs enough temporal
+# sampling; anything slower undersamples the motion, unlike the larger,
+# slower-diffusing sizes, which have no fps requirement at all (see module
+# docstring: the earlier fps filter for ALL sizes was removed on request).
+MIN_FPS_SMALL_SIZES = 40.0
+SMALL_SIZES_NM = (20.0, 50.0, 100.0)
 
 # Pickle output (always overwritten fresh, never read back to skip recomputation)
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
@@ -79,11 +94,6 @@ def compute_results() -> dict:
     processed = 0
 
     for size_nm, folders in XML_FOLDERS.items():
-        if size_nm in FPS_SIZE_EXACT:
-            target_fps, tol = FPS_SIZE_EXACT[size_nm], 0.5
-        else:
-            target_fps = FPS_SMALL_TARGET if size_nm < 200 else FPS_LARGE_TARGET
-            tol = FPS_TOLERANCE
         for folder in folders:
             if not folder.exists():
                 print(f"WARNING: folder not found: {folder}")
@@ -95,8 +105,8 @@ def compute_results() -> dict:
                 if rd is None:
                     continue
                 fps = rd.get("fps")
-                if fps is None or abs(float(fps) - target_fps) > tol:
-                    print(f"  [SKIP fps={fps}] {xml_path.name}")
+                if size_nm in SMALL_SIZES_NM and (fps is None or fps < MIN_FPS_SMALL_SIZES):
+                    print(f"  [SKIP fps={fps}<{MIN_FPS_SMALL_SIZES}] {xml_path.name}")
                     continue
                 rd["particle_size_nm"] = size_nm if rd.get("particle_size_nm") is None else rd["particle_size_nm"]
                 perform_msd_analysis(rd, fit_points=MSD_FIT_POINTS)

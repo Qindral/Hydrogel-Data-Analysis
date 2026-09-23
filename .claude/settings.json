@@ -11,7 +11,12 @@
       "PowerShell(python -c \"import matplotlib.font_manager as fm; fonts = [f.name for f in fm.fontManager.ttflist]; print\\([f for f in fonts if 'Open' in f]\\)\")",
       "PowerShell(python -c \"import matplotlib; print\\(matplotlib.get_data_path\\(\\)\\)\")",
       "Bash(.venv/Scripts/python.exe -c \"from hydro_analysis.core.io import get_dls_diffusion_means; import pprint; pprint.pp\\(get_dls_diffusion_means\\(\\)\\)\")",
-      "Read(//e/PhD Data Analysis/SPT 2025 II/Visualizations/PhD Dis Bilder/Experiments and Results - Data/Auswertungsbilder/AnomalousExponent_D0_vs_Deff/**)"
+      "Read(//e/PhD Data Analysis/SPT 2025 II/Visualizations/PhD Dis Bilder/Experiments and Results - Data/Auswertungsbilder/AnomalousExponent_D0_vs_Deff/**)",
+      "Bash(\".venv/Scripts/python.exe\" -m hydro_analysis.MSD_Trackmate.Validation_Claude.Loc_Error_Analyse_immob_particle)",
+      "Bash(\".venv/Scripts/python.exe\" -m hydro_analysis.MSD_Trackmate.Validation_Claude.eMSD_files_histogram)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(\".venv/Scripts/python.exe\" -c \"from hydro_analysis.MSD_Trackmate.Validation_Claude import PSF_Analysis\")",
+      "Bash(\".venv/Scripts/python.exe\" -m hydro_analysis.MSD_Trackmate.Validation_Claude.Validation_Summary)"
     ]
   }
 }

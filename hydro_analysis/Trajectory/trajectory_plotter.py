@@ -49,8 +49,8 @@ SCALEBAR_UM = 5.0
 D_MAX = 15.0
 SAVE_DPI = 600
 
-COLOR_BLUE = "#0000da"
-COLOR_BLUE_DARK = "#000099"
+COLOR_BLUE = "#0a51e9"
+COLOR_BLUE_DARK = "#5858CF"
 
 # ============================================================================
 # TIFF / XML helpers

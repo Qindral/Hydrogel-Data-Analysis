@@ -141,9 +141,13 @@ def parse_rec_file(rec_path: Path) -> Dict[str, Any]:
             elif x == 400:
                 result['mpp'] = 0.15 
             elif x==696:
-                result['mpp'] = 0.149 
+                result['mpp'] = 0.15 
             elif x==696*2:
-                result['mpp'] = 0.149 / 2
+                result['mpp'] = 0.15 / 2
+            elif x==800:
+                result['mpp'] = 0.130
+            elif x==348:
+                result['mpp'] = 0.3
     
     except Exception as e:
         print(f"    Warning: Could not parse {rec_path.name}: {e}")
