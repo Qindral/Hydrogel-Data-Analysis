@@ -17,9 +17,10 @@ Reihenfolge (SCRIPTS unten) und der Grund dafuer:
   5. eMSD_files_histogram              -- unabhaengig (liest nur msd_*.pkl)
   6. Correlations                      -- braucht Loc_Error_Analyse_immob_particle's Cache
   7. Fittingpoints_robustness          -- unabhaengig (liest nur msd_*.pkl)
-  8. SNR_Analysis                      -- unabhaengig, am langsamsten (kein Cache, jedes
-                                           Mal echte Neuberechnung ueber viele Frames)
-  9. Validation_Summary                -- braucht die CSVs/Caches aller vorigen Skripte,
+  8. Particle_Size_SNR_Compute         -- schreibt cache/particle_size_snr.pkl (Gauss-FWHM und
+                                           SNR aller getrackten Detektionen), am langsamsten
+  9. SNR_Analysis                      -- braucht particle_size_snr.pkl
+ 10. Validation_Summary                -- braucht die CSVs/Caches aller vorigen Skripte,
                                            muss deshalb immer zuletzt laufen
 
 Jedes Skript laeuft als eigener Subprozess (python -m <Modul>), nicht als
@@ -59,6 +60,7 @@ SCRIPTS = [
     "eMSD_files_histogram",
     "Correlations",
     "Fittingpoints_robustness",
+    "Particle_Size_SNR_Compute",
     "SNR_Analysis",
     "Validation_Summary",
 ]

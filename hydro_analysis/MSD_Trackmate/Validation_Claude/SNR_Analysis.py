@@ -1,35 +1,29 @@
 """
 SNR-Uebersicht pro Partikelgroesse -- wie gut/schlecht sind die Partikel
-detektierbar (Wasser/Hydrogel/immobilisiert), je Partikelgroesse separat.
+detektierbar, je Bedingung (Wasser/Hydrogel) und Partikelgroesse separat.
 
-Neues Skript, ersetzt keine bestehenden Skripte. Reine Aggregation: ruft
-snr_signal_profile.py::analyze_file() unveraendert mehrfach auf (gleiche
-Session-Suche find_session_and_tif(), Isolationspruefung _is_isolated(),
-Annulus-Hintergrundstatistik und Peak/Hintergrund-SNR-Definition
-SNR = (Peak - mu_bg) / sigma_bg -- kein separater DoG-Filter-Response, siehe
-dortiger Docstring). snr_signal_profile.py zeigt pro (Bedingung, Groesse)
-nur bis zu N_PARTICLES_PER_CONDITION=5 Partikel aus EINEM zufaelligen Frame;
-hier wird analyze_file() stattdessen wiederholt aufgerufen (es nutzt den
-globalen, SEED=42-initialisierten random-Zustand, ein erneuter Aufruf zieht
-daher jeweils einen neuen Frame), bis zu MAX_SPOTS_PER_GROUP=200 Partikel
-gesammelt sind -- fuer eine echte SNR-Verteilung statt nur ein paar
-Beispielwerte. Nur die in snr_signal_profile.py::FILES hinterlegten
-(Bedingung, Groesse)-Referenzdateien werden verwendet (ein Movie pro
-Kombination; fehlende Kombinationen siehe dortige Kommentare).
+Consumer-Skript: liest ausschliesslich cache/particle_size_snr.pkl
+(geschrieben von Particle_Size_SNR_Compute.py --mode all; vorher ausfuehren).
+Dort ist jede getrackte Detektion aller Dateien gemessen, keine Stichprobe
+aus einer einzelnen Referenzdatei pro Groesse wie im frueheren
+snr_signal_profile.analyze_file()-Ansatz -- daher sind jetzt auch alle
+50 nm-Dateien enthalten.
 
-snr_signal_profile.py musste dafuer minimal angepasst werden (Code in
-main() + if __name__ == "__main__" verschoben, Verhalten beim direkten
-Ausfuehren unveraendert), da es zuvor seine gesamte Pipeline beim Import
-ausgefuehrt haette.
+SNR-Definition unveraendert: SNR = (Peak innerhalb R - mu_bg) / sigma_bg,
+Annulus 1.5 R bis 3 R, andere Spots ausmaskiert, R = TrackMate-Radius. Jeder
+Track zaehlt einmal (Median seiner Detektionen, Tabelle "tracks"), damit
+lange Tracks die Verteilung nicht dominieren.
 
 Ausgabe (Auswertungsbilder\\SNR_Analysis\\): snr_overview_by_size.png
 (Boxplot SNR je Partikelgroesse, nach Bedingung gruppiert, nie gepoolt),
-snr_values_by_size.csv (jeder einzelne gesammelte Partikel),
-snr_summary_by_size.csv (Median/IQR/N je (Groesse, Bedingung) --
-fuettert die Detectability-Zeile in Validation_Summary.py).
+snr_values_by_size.csv (ein Wert je Track), snr_summary_by_size.csv
+(Median/IQR/N je (Groesse, Bedingung) -- fuettert die Detectability-Zeile in
+Validation_Summary.py und Validation_Summary_Refined.py).
 """
 from __future__ import annotations
 
+import argparse
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -37,31 +31,24 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
-from hydro_analysis.MSD_Trackmate.Validation_Claude.snr_signal_profile import (
-    FILES, analyze_file, CONDITION_COLORS, _RC,
-)
+from hydro_analysis.MSD_Trackmate.Validation_Claude.snr_signal_profile import CONDITION_COLORS, _RC
 from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_savefig
 
 # ── Configuration ──────────────────────────────────────────────────────────────
+PSS_CACHE = Path(__file__).resolve().parent.parent / "cache" / "particle_size_snr.pkl"
 SAVE_PATH = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
 ) / "SNR_Analysis"
 
-MAX_SPOTS_PER_GROUP = 200
-MAX_CALLS_PER_GROUP = 100   # analyze_file() liefert bis zu 5 Partikel je Aufruf; Sicherheitsobergrenze
 
-
-def collect_snr_distribution(tracks_xml: Path, max_spots: int) -> list[dict]:
-    """Ruft analyze_file() wiederholt auf (jeweils ein neuer zufaelliger Frame,
-    siehe Modul-Docstring), bis max_spots Partikel gesammelt sind oder das
-    Aufruf-Limit erreicht ist."""
-    results: list[dict] = []
-    calls = 0
-    while len(results) < max_spots and calls < MAX_CALLS_PER_GROUP:
-        batch = analyze_file(tracks_xml, n_particles=5)
-        calls += 1
-        results.extend(batch)
-    return results[:max_spots]
+def load_track_snr(path: Path) -> pd.DataFrame:
+    """One SNR value per track from particle_size_snr.pkl."""
+    if not path.exists():
+        raise FileNotFoundError(f"Nicht gefunden: {path}\nBitte zuerst Particle_Size_SNR_Compute.py --mode all ausfuehren.")
+    with open(path, "rb") as f:
+        tracks = pickle.load(f)["tracks"]
+    df = tracks[["particle_size_nm", "condition", "file", "particle", "snr", "dog_snr", "tm_snr"]].copy()
+    return df[np.isfinite(df["snr"])]
 
 
 def plot_snr_overview(df: pd.DataFrame) -> plt.Figure:
@@ -93,43 +80,29 @@ def plot_snr_overview(df: pd.DataFrame) -> plt.Figure:
     return fig
 
 
-def main() -> None:
-    sizes = sorted({s for (_, s) in FILES})
-    rows = []
-    for size_nm in sizes:
-        conditions = sorted(c for (c, s) in FILES if s == size_nm)
-        for condition in conditions:
-            tracks_xml = Path(FILES[(condition, size_nm)])
-            if not tracks_xml.exists():
-                print(f"  [SKIP] {condition} {size_nm:.0f} nm: {tracks_xml} nicht gefunden")
-                continue
-            spots = collect_snr_distribution(tracks_xml, MAX_SPOTS_PER_GROUP)
-            print(f"  {size_nm:>6.0f} nm  {condition:<12}: {len(spots)} Partikel gesammelt")
-            for r in spots:
-                rows.append({"particle_size_nm": size_nm, "condition": condition, "snr": r["snr"],
-                             "frame": r["frame"], "spot_id": r["spot_id"]})
-
-    df = pd.DataFrame(rows)
-    if df.empty:
-        raise RuntimeError("Keine SNR-Werte gesammelt -- siehe [SKIP]/[UEBERSPRUNGEN]-Meldungen oben.")
-
+def main(pss_cache: Path = PSS_CACHE, output_dir: Path = SAVE_PATH) -> None:
+    df = load_track_snr(pss_cache)
     summary = df.groupby(["particle_size_nm", "condition"])["snr"].agg(
         n="count", median="median", q25=lambda s: s.quantile(0.25), q75=lambda s: s.quantile(0.75),
     ).reset_index()
     print(summary.to_string(index=False))
 
-    SAVE_PATH.mkdir(parents=True, exist_ok=True)
-    df.to_csv(SAVE_PATH / "snr_values_by_size.csv", index=False)
-    summary.to_csv(SAVE_PATH / "snr_summary_by_size.csv", index=False)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_dir / "snr_values_by_size.csv", index=False)
+    summary.to_csv(output_dir / "snr_summary_by_size.csv", index=False)
 
     with plt.rc_context(_RC):
         fig = plot_snr_overview(df)
-        fig_path = SAVE_PATH / "snr_overview_by_size.png"
-        safe_savefig(fig, fig_path, dpi=300, bbox_inches="tight")
+        fig_path = output_dir / "snr_overview_by_size.png"
+        safe_savefig(fig, fig_path, dpi=600, bbox_inches="tight")
         plt.close(fig)
         print(f"Plot gespeichert: {fig_path}")
-    print(f"Tabellen gespeichert unter: {SAVE_PATH}")
+    print(f"Tabellen gespeichert unter: {output_dir}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", type=Path, default=PSS_CACHE)
+    parser.add_argument("--output-dir", type=Path, default=SAVE_PATH)
+    args = parser.parse_args()
+    main(args.input, args.output_dir)
