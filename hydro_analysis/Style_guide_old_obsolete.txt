@@ -13,12 +13,13 @@ Einheitlichkeit > Kreativität: gleiche Strichstärken, gleiche Tick-Logik, glei
 
 1) Figure-Format, Export, Geometrie
 
-Standard-Seitenverhältnis (width:height): 1.43 : 1
-Beispiel: (width, height) = (7.15, 5.00) inch oder (14.3, 10.0) cm.
+Standard-Seitenverhältnis (width:height): 1.42 : 1
+Beispiel:  (14.2, 10.0) cm.
 
 Export:
 
 Nur PNG (raster) mit 600 dpi. Keine PDF/SVG-Exports (nie abspeichern).
+immer mit Breite 
 
 Ränder/Layouts: immer constrained_layout=True oder tight_layout(), keine abgeschnittenen Labels.
 
@@ -317,7 +318,7 @@ Fehlerbalken (elinewidth 0.8, capsize 2.0, markeredgewidth 0.6).
 Theorie-Linie (z. B. Stokes-Einstein D0): schwarz, linewidth 1.2,
 _DASH_THEORY = (0, (4, 3)) (aus MSD_per_file_publication.py importierbar).
 
-DLS-Referenzpunkte: Stern-Marker (fmt="*", markersize 10), Farbe
+DLS-Referenzpunkte: Quadrat-Marker (fmt="s", markersize 6, opak), Farbe
 #da00bd / dunkel #9b5191, mit x- und y-Fehlerbalken (DLS-Größen- bzw.
 D-Unsicherheit).
 

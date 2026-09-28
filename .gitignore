@@ -28,3 +28,7 @@ hist_partikel_template_um.txt
 analysis_results/bildinventur/node_modules/bmp-js/test/bit1.bmp
 analysis_results/bildinventur/node_modules/bmp-js/test/bit16_565_out.bmp
 /analysis_results/bildinventur
+*.png
+*.csv
+*.html
+*.html

@@ -15,12 +15,27 @@ module-level side effect, but this script's own plotting happens inside
 plt.rc_context(_RC) regardless of matplotlib's ambient defaults, so the
 side effect never reaches the saved figure.
 
-Each point is plotted at that one measurement's own z_average_nm
-(hydrodynamic diameter) and diffusion_coeff_um2s -- not the aggregate DLS
-mean position -- so repeat-to-repeat DLS measurement spread is visible, the
-same way SPT per-file spread is visible in D0_Diffusion_vs_Size.py. No
-error bars (file-wise plot). Particle size axis ticks are still the
-aggregate DLS label (core.io.get_dls_labels()) for readability.
+Each point is that one measurement's diffusion_coeff_um2s, plotted at the
+DLS particle size of its population (core.io.get_dls_sizes(), with the
+get_dls_reference_maps()['size_override_nm'] fallback) -- the same x
+position and tick labels (core.io.get_dls_labels()) as the SPT per-file
+points in D0_Diffusion_vs_Size.py. The per-measurement z_average_nm is
+deliberately not used as x, so all repeats of one population stack in a
+single column and repeat-to-repeat spread shows up purely in D. No error
+bars (file-wise plot); alpha makes overlapping repeats read darker.
+Markers are squares (Style_guide.txt §4: comparison data), since the star
+marker is reserved for the aggregated DLS mean reference in the sibling
+scripts.
+
+Inset: relative deviation of each repeat from Stokes-Einstein,
+100 * (D_DLS - D_SE(d)) / D_SE(d) in %, evaluated at the same DLS particle
+size d used as x in the main panel, on a linear y axis -- the log-log main
+panel compresses these few-percent deviations to invisibility. Note that
+the LiteSizer derives z_average_nm from the measured D via Stokes-Einstein
+with its own temperature/viscosity settings, so the deviation reflects the
+repeat-to-repeat scatter around the population mean plus any mismatch
+between those instrument settings and core.physics (TEMPERATURE_K,
+VISCOSITY_PA_S); it is not an independent size validation.
 
 Always reads the LiteSizer XLSX fresh (H:\\Daten Promotion Sicherung\\Lite
 Sizer Particle Measurements\\Size_repitition_All Sizes.xlsx via
@@ -66,7 +81,20 @@ X_MIN, X_MAX = 15.0, 1500.0
 COLOR_DLS, COLOR_DLS_DARK = "#da00bd", "#9b5191"   # Style-guide Markierung A
 COLOR_THEORY = "black"
 
-POINT_ALPHA = 0.7
+POINT_ALPHA = 0.5
+MARKER_DLS  = "s"
+
+# Inset position in main-axes fraction: lower left is empty for a falling D(d) curve.
+INSET_BOUNDS = [0.12, 0.12, 0.36, 0.30]
+
+
+def _inset_style(ax: plt.Axes) -> None:
+    ax.tick_params(which="both", direction="in",
+                   top=True, right=True, labelsize=7, width=0.6)
+    ax.tick_params(which="major", length=3.5)
+    ax.tick_params(which="minor", length=2.0)
+    for sp in ax.spines.values():
+        sp.set_linewidth(0.6)
 
 
 def main() -> None:
@@ -81,16 +109,25 @@ def main() -> None:
     def _map_size(size: float) -> float:
         return float(dls_sizes.get(size, size_override.get(size, size)))
 
-    # ── One (z_average_nm, diffusion_coeff_um2s) row per individual DLS measurement ──
+    # ── One (DLS particle size, diffusion_coeff_um2s) row per individual DLS measurement ──
     rows: list[tuple[float, float]] = []
     for size_nm, entry in agg.items():
+        x = _map_size(size_nm)
         for rec in entry["records"]:
             D = rec.get("diffusion_coeff_um2s")
-            z = rec.get("z_average_nm")
-            if D is None or z is None:
+            if D is None:
                 continue
-            rows.append((float(z), float(D)))
+            rows.append((x, float(D)))
     print(f"{len(rows)} individuelle DLS-Messungen mit gültigem D-Wert.")
+
+    xs = np.array([x for x, D in rows])
+    ys = np.array([D for x, D in rows])
+    D_theory = np.array([calculate_theoretical_diffusion(x) for x in xs])
+    dev_pct = 100.0 * (ys - D_theory) / D_theory
+
+    tick_nominal = sorted(dls_labels.keys())
+    tick_pos     = [_map_size(s) for s in tick_nominal]
+    tick_text    = [str(dls_labels[s]) for s in tick_nominal]
 
     with plt.rc_context(_RC):
         fig, ax = plt.subplots(figsize=(7.15, 5.00), constrained_layout=True)
@@ -101,11 +138,9 @@ def main() -> None:
         ax.plot(sizes_range, D_theory_range, color=COLOR_THEORY, linewidth=1.2,
                 linestyle=_DASH_THEORY, zorder=3)
 
-        # ── Individual DLS measurements -- own z_average_nm, no error bars ──
+        # ── Individual DLS measurements -- at the population's DLS size, no error bars ──
         if rows:
-            xs = [z for z, D in rows]
-            ys = [D for z, D in rows]
-            ax.scatter(xs, ys, s=60, alpha=POINT_ALPHA, marker="*",
+            ax.scatter(xs, ys, s=26, alpha=POINT_ALPHA, marker=MARKER_DLS,
                        facecolor=COLOR_DLS, edgecolor=COLOR_DLS_DARK, linewidth=0.6, zorder=5)
 
         # ── Axes: DLS-mapped tick positions, DLS labels (not nominal names) ──
@@ -113,10 +148,6 @@ def main() -> None:
         ax.set_yscale("log")
         ax.set_xlim(X_MIN, X_MAX)
         _add_log_minor_ticks(ax)
-
-        tick_nominal = sorted(dls_labels.keys())
-        tick_pos     = [_map_size(s) for s in tick_nominal]
-        tick_text    = [str(dls_labels[s]) for s in tick_nominal]
         ax.xaxis.set_major_locator(FixedLocator(tick_pos))
         ax.xaxis.set_major_formatter(FixedFormatter(tick_text))
 
@@ -126,11 +157,27 @@ def main() -> None:
         legend_elements = [
             Line2D([0], [0], color=COLOR_THEORY, linewidth=1.2, linestyle=_DASH_THEORY,
                    label="Stokes–Einstein theory (D0)"),
-            Line2D([0], [0], marker="*", color="w", markerfacecolor=COLOR_DLS,
-                   markeredgecolor=COLOR_DLS_DARK, markersize=10, markeredgewidth=0.6,
-                   label="DLS D0 (water, per measurement)", linestyle="None"),
+            Line2D([0], [0], marker=MARKER_DLS, color="w", markerfacecolor=COLOR_DLS,
+                   markeredgecolor=COLOR_DLS_DARK, markersize=6, markeredgewidth=0.6,
+                   alpha=POINT_ALPHA, label="DLS D0 (water, per measurement)", linestyle="None"),
         ]
         ax.legend(handles=legend_elements, loc="upper right", frameon=False)
+
+        # ── Inset: relative deviation from Stokes-Einstein, linear y ────────
+        if rows:
+            axin = ax.inset_axes(INSET_BOUNDS)
+            axin.axhline(0.0, color=COLOR_THEORY, linewidth=0.8, linestyle=_DASH_THEORY, zorder=1)
+            axin.scatter(xs, dev_pct, s=16, alpha=POINT_ALPHA, marker=MARKER_DLS,
+                         facecolor=COLOR_DLS, edgecolor=COLOR_DLS_DARK, linewidth=0.5, zorder=3)
+            axin.set_xscale("log")
+            axin.set_xlim(min(tick_pos) * 0.7, max(tick_pos) * 1.4)
+            axin.xaxis.set_major_locator(FixedLocator(tick_pos))
+            axin.xaxis.set_major_formatter(FixedFormatter(tick_text))
+            axin.xaxis.set_minor_locator(FixedLocator([]))
+            y_lim = max(5.0, float(np.nanmax(np.abs(dev_pct))) * 1.25)
+            axin.set_ylim(-y_lim, y_lim)
+            _inset_style(axin)
+            axin.set_ylabel(r"$\Delta D / D_\mathrm{SE}$ (%)", fontsize=7)
 
         plt.show()
 

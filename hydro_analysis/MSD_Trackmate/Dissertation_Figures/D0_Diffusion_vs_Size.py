@@ -19,7 +19,7 @@ hardcoded get_dls_reference_maps()['dls_D_um2_per_s'] -- this is the single
 canonical DLS-mean D source for all Dissertation_Figures scripts. Particle
 size on the x-axis is still the real DLS z-average diameter
 (get_dls_sizes()/get_dls_labels()), never the nominal folder name; the DLS
-star's x-error bar still uses get_dls_reference_maps()['size_err_nm'] (a
+square's x-error bar still uses get_dls_reference_maps()['size_err_nm'] (a
 diameter uncertainty, not superseded by the new function, which does not
 carry a size-error field).
 
@@ -122,7 +122,7 @@ def main() -> None:
         dls_y    = [dls_means[s]["D_mean_um2s"] for s in dls_ref_sizes]
         dls_xerr = [_sz_err(s) for s in dls_ref_sizes]
         dls_yerr = [dls_means[s]["sigma_D_um2s"] for s in dls_ref_sizes]
-        ax.errorbar(dls_x, dls_y, xerr=dls_xerr, yerr=dls_yerr, fmt="*", markersize=10,
+        ax.errorbar(dls_x, dls_y, xerr=dls_xerr, yerr=dls_yerr, fmt="s", markersize=6,
                     markerfacecolor=COLOR_DLS, markeredgecolor=COLOR_DLS_DARK, markeredgewidth=0.8,
                     ecolor=COLOR_DLS_DARK, elinewidth=0.8, capsize=2.0, capthick=0.8,
                     linestyle="None", zorder=8)
@@ -154,8 +154,8 @@ def main() -> None:
         legend_elements = [
             Line2D([0], [0], color=COLOR_THEORY, linewidth=1.2, linestyle=_DASH_THEORY,
                    label="Stokes–Einstein theory (D0)"),
-            Line2D([0], [0], marker="*", color="w", markerfacecolor=COLOR_DLS,
-                   markeredgecolor=COLOR_DLS_DARK, markersize=10, markeredgewidth=0.8,
+            Line2D([0], [0], marker="s", color="w", markerfacecolor=COLOR_DLS,
+                   markeredgecolor=COLOR_DLS_DARK, markersize=6, markeredgewidth=0.8,
                    label="DLS D0 (water, mean)", linestyle="None"),
             Line2D([0], [0], marker="o", color="w", markerfacecolor=COLOR_MEASURED,
                    markeredgecolor=COLOR_MEASURED_DARK, markersize=7, markeredgewidth=0.6,

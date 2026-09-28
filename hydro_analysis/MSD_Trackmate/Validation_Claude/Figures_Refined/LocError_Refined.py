@@ -22,6 +22,11 @@ Outputs (own folder, PNG only, 600 dpi, English labels):
   C_locerror_vs_stepsize_ratio_pct.png -- ratio as percent (not a dimensionless
                                          fraction), gray boxes, 100% reference
                                          line (replaces the ratio=1 line)
+  D_expected_locerror_by_size.png/.csv -- table, one row per qualifying
+                                         (size, mpp) group of A: n tracks,
+                                         median + IQR and mean +- SD of
+                                         sigma_xy_static_nm, median step size
+                                         and median/step ratio (%)
 """
 from __future__ import annotations
 
@@ -202,6 +207,66 @@ def plot_ratio_percent(df: pd.DataFrame, qualifying: list[tuple[float, float]],
     return fig
 
 
+# ── D: expected localization error per particle size (table) ────────────────────
+
+def build_locerror_table(df: pd.DataFrame, qualifying: list[tuple[float, float]],
+                          step_size_nm: dict[float, float], dls_labels: dict[float, int]) -> pd.DataFrame:
+    """One row per qualifying (size, mpp) group -- the same per-track
+    sigma_xy_static_nm values shown as boxes in A, summarized. The median is
+    the expected localization error of a single track of that size."""
+    rows = []
+    for s, m in qualifying:
+        vals = df.loc[(df["particle_size_nm"] == s) & (df["mpp"] == m), "sigma_xy_static_nm"].dropna().to_numpy()
+        if vals.size == 0:
+            continue
+        q1, median, q3 = np.percentile(vals, [25, 50, 75])
+        step = step_size_nm.get(s, np.nan)
+        ratio_pct = median / step * 100.0 if np.isfinite(step) and step > 0 else np.nan
+        rows.append({
+            "Particle Size DLS (nm)": dls_labels.get(s, int(s)),
+            "Nominal Size (nm)": int(s),
+            "mpp (um/px)": m,
+            "n Tracks": int(vals.size),
+            "Median Sigma Loc (nm)": median,
+            "Q1 Sigma Loc (nm)": q1,
+            "Q3 Sigma Loc (nm)": q3,
+            "Mean Sigma Loc (nm)": float(np.mean(vals)),
+            "SD Sigma Loc (nm)": float(np.std(vals, ddof=1)) if vals.size > 1 else np.nan,
+            "Median Step Size (nm)": step,
+            "Median Sigma Loc / Step Size (%)": ratio_pct,
+        })
+    return pd.DataFrame(rows)
+
+
+def render_locerror_table(table: pd.DataFrame) -> plt.Figure:
+    def fmt(v: float, digits: int = 1) -> str:
+        return f"{v:.{digits}f}" if np.isfinite(v) else "--"
+
+    display = pd.DataFrame({
+        "Particle Size (nm)\nDLS (Nominal)": [f"{d} ({n})" for d, n in zip(table["Particle Size DLS (nm)"], table["Nominal Size (nm)"])],
+        "mpp (µm/px)": [f"{m:.3g}" for m in table["mpp (um/px)"]],
+        "n Tracks": table["n Tracks"].astype(str),
+        "Median σ_loc (nm)": [fmt(v) for v in table["Median Sigma Loc (nm)"]],
+        "IQR (nm)": [f"{fmt(a)} – {fmt(b)}" for a, b in zip(table["Q1 Sigma Loc (nm)"], table["Q3 Sigma Loc (nm)"])],
+        "Mean ± SD (nm)": [f"{fmt(a)} ± {fmt(b)}" for a, b in zip(table["Mean Sigma Loc (nm)"], table["SD Sigma Loc (nm)"])],
+        "Median Step Size (nm)": [fmt(v) for v in table["Median Step Size (nm)"]],
+        "σ_loc / Step Size (%)": [fmt(v) for v in table["Median Sigma Loc / Step Size (%)"]],
+    })
+    fig, ax = plt.subplots(figsize=(10.0, 0.4 * len(display) + 1.0))
+    ax.axis("off")
+    tbl = ax.table(cellText=display.values, colLabels=display.columns, loc="center", cellLoc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(8)
+    tbl.scale(1, 1.8)
+    for col in range(len(display.columns)):
+        tbl[0, col].set_height(tbl[0, col].get_height() * 1.4)
+    for (row, _), cell in tbl.get_celld().items():
+        if row == 0:
+            cell.set_text_props(fontweight="bold", wrap=True)
+    fig.tight_layout()
+    return fig
+
+
 def main() -> None:
     df = _load_pickle(CACHE_FILE, "Loc_Error_Analyse_immob_particle.py")
     print(f"Cache geladen: {CACHE_FILE} ({len(df)} Tracks)")
@@ -226,6 +291,16 @@ def main() -> None:
             safe_savefig(fig, SAVE_PATH / filename, dpi=600, bbox_inches="tight")
             plt.close(fig)
             print(f"Plot gespeichert: {SAVE_PATH / filename}")
+
+        table = build_locerror_table(df, qualifying, step_size_nm, dls_labels)
+        print(table.to_string(index=False))
+        fig = render_locerror_table(table)
+        safe_savefig(fig, SAVE_PATH / "D_expected_locerror_by_size.png", dpi=600, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Plot gespeichert: {SAVE_PATH / 'D_expected_locerror_by_size.png'}")
+    csv_path = SAVE_PATH / "D_expected_locerror_by_size.csv"
+    table.to_csv(csv_path, index=False)
+    print(f"Tabelle gespeichert: {csv_path}")
 
 
 if __name__ == "__main__":

@@ -48,7 +48,12 @@ universal "Particle diameter (nm)" per user request.
 Pure consumer; imports WAVELENGTH_NM, NUMERICAL_APERTURE, COLOR_FIT,
 COLOR_XML, COLOR_THEORY from PSF_Analysis.py unchanged.
 
-Output (own folder, PNG, 600 dpi): psf_scatter_vs_theory_all_sizes.png.
+Outputs (own folder, PNG, 600 dpi):
+  psf_scatter_vs_theory_all_sizes.png  one point per track (median of its
+      accepted fits), plus detection diameter 2R and the theory line
+  psf_fwhm_all_fits.png                every accepted single-frame fit as a
+      point (immobilized movies are sampled every 10th frame in the pickle),
+      median per size -- no theory, no detection diameter
 """
 from __future__ import annotations
 
@@ -131,11 +136,46 @@ def plot_psf_scatter_theory_all_sizes(df: pd.DataFrame, dls_labels: dict[float, 
     return fig
 
 
-def load_tracks(path: Path) -> pd.DataFrame:
+def plot_psf_fwhm_all_fits(det: pd.DataFrame, dls_labels: dict[float, int]) -> plt.Figure:
+    """Every accepted fit of the condition as one point, median per size."""
+    sizes = sorted(det["particle_size_nm"].dropna().unique())
+    rng = np.random.default_rng(0)
+    fig, ax = plt.subplots(figsize=(7.15, 5.00), constrained_layout=True)
+    tick_labels = []
+    for x0, size in enumerate(sizes):
+        values = det.loc[det["particle_size_nm"] == size, "fwhm_nm"].dropna().to_numpy()
+        tick_labels.append(f"{dls_labels.get(size, int(size))} nm\nn = {len(values)}")
+        if not len(values):
+            continue
+        jitter = (rng.random(len(values)) - 0.5) * 0.7
+        ax.scatter(x0 + jitter, values, s=3, alpha=0.15, facecolor=COLOR_FIT, edgecolor="none",
+                   rasterized=True, zorder=3)
+        median = float(np.median(values))
+        ax.plot([x0 - 0.4, x0 + 0.4], [median, median], color="black", linewidth=1.6, zorder=4)
+    ax.set_xticks(range(len(sizes)))
+    ax.set_xticklabels(tick_labels)
+    ax.set_xlabel("Particle diameter (nm)")
+    ax.set_ylabel("FWHM (nm)")
+    ax.set_xlim(-0.7, len(sizes) - 0.3)
+    ax.legend(handles=[Line2D([0], [0], marker="o", color="w", markerfacecolor=COLOR_FIT, markersize=6,
+                              label="Measured FWHM (2D Gaussian, per fit)"),
+                       Line2D([0], [0], color="black", linewidth=1.6, label="Median")],
+              loc="upper left", fontsize=7, frameon=False)
+    return fig
+
+
+def load_pickle(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Nicht gefunden: {path}\nBitte zuerst Particle_Size_SNR_Compute.py --mode all ausführen.")
     with open(path, "rb") as f:
-        tracks = pickle.load(f)["tracks"]
+        return pickle.load(f)
+
+
+def select_fits(det: pd.DataFrame) -> pd.DataFrame:
+    return det[(det["condition"] == CONDITION) & (det["status"] == "accepted")].copy()
+
+
+def select_tracks(tracks: pd.DataFrame) -> pd.DataFrame:
     selected = tracks[(tracks["condition"] == CONDITION) & (tracks["n_fit_accepted"] >= MIN_ACCEPTED_FITS)]
     print(f"{len(selected)} {CONDITION} tracks with >= {MIN_ACCEPTED_FITS} accepted fits "
           f"(of {int((tracks['condition'] == CONDITION).sum())})")
@@ -143,8 +183,11 @@ def load_tracks(path: Path) -> pd.DataFrame:
 
 
 def main(pss_cache: Path = PSS_CACHE, output_dir: Path = SAVE_PATH) -> None:
-    df = load_tracks(Path(pss_cache))
+    data = load_pickle(Path(pss_cache))
+    df = select_tracks(data["tracks"])
+    fits = select_fits(data["detections"])
     dls_labels = get_dls_labels()
+    print(f"{len(fits)} accepted {CONDITION} fits")
 
     diffraction_fwhm_nm = FWHM_FACTOR * calculate_theoretical_psf_sigma(WAVELENGTH_NM, NUMERICAL_APERTURE)
     print(f"Diffraction-limited term: FWHM = {diffraction_fwhm_nm:.1f} nm (= {FWHM_FACTOR:.4f} * sigma), "
@@ -162,6 +205,12 @@ def main(pss_cache: Path = PSS_CACHE, output_dir: Path = SAVE_PATH) -> None:
     with plt.rc_context(_RC):
         fig = plot_psf_scatter_theory_all_sizes(df, dls_labels)
         fig_path = output_dir / "psf_scatter_vs_theory_all_sizes.png"
+        safe_savefig(fig, fig_path, dpi=600, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Plot gespeichert: {fig_path}")
+
+        fig = plot_psf_fwhm_all_fits(fits, dls_labels)
+        fig_path = output_dir / "psf_fwhm_all_fits.png"
         safe_savefig(fig, fig_path, dpi=600, bbox_inches="tight")
         plt.close(fig)
         print(f"Plot gespeichert: {fig_path}")

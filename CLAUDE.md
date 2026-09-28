@@ -30,7 +30,9 @@ hydro_analysis/
   Visualisation/           # Ad-hoc demo/candidate-frame viewers
   Fotos_Labor/              # Lab photo EXIF/metadata inventory
   3D_Visualisation/         # (currently empty scaffold)
-Style_guide.txt            # Figure style bible (German) — see "Figures" below
+  thesis.mplstyle           # Matplotlib rcParams of the figure style guide (§14)
+  Style_guide_old_obsolete.txt  # Superseded v1 style guide, do not follow
+Styleguide_Figures_Dissertation.md  # Figure style guide v2 (German, repo root) — see "Figures" below
 ```
 
 Raw microscopy/instrument data (TIFF stacks, TrackMate XML, `.rec` files) is **not in this repo**. It lives on external drives, referenced by absolute Windows paths hardcoded near the top of each script (e.g. `E:\PhD Data Analysis\SPT 2025 II\...`, `H:\Daten Promotion Sicherung\...`). Editing a script's analysis often means editing these path/folder dictionaries, not the analysis logic.
@@ -63,15 +65,17 @@ Key standardized data structure: the **`result_dict`** (built by `core.io.single
 
 ## Figures
 
-`hydro_analysis/Style_guide.txt` (German) is the canonical figure style spec — read it before writing new plotting code. Key rules:
+`Styleguide_Figures_Dissertation.md` (repo root, German, v2) is the canonical figure style spec, matched to the LaTeX layout of the dissertation — read it before writing or restyling plotting code. `hydro_analysis/Style_guide_old_obsolete.txt` is the superseded v1 (PNG only, 7.15 × 5.00 in); do not follow it. Key rules:
 
-- **PNG only, 600 dpi, never PDF/SVG.** ([[no-pdf-export]] feedback memory)
-- Standard figure size `(7.15, 5.00)` inch, ratio 1.43:1, `constrained_layout=True` or `tight_layout()`.
-- Font: Open Source Sans in-figure; ticks inward on all four sides (`direction="in"`, `top=True`, `right=True`); no grid by default.
-- Fixed 8-color "Jet-derived" accent palette with `base`/`dark`/`bright` variants per index (defined in the style guide and reused as literal hex constants across plotting scripts, e.g. `COLOR_MEASURED_BASE = '#0000da'`). Reuse these exact hex values for new plots in the same family rather than picking new colors.
-- Scatter marker size 26, `elinewidth=1.2`, `capsize=3.0`, fit line width 2.2 — see `core/visualization.py::plot_diffusion_comparison` / `plot_theory_comparison` for the reference implementation, and `Style_guide.txt` §12 for the dataset-vs-particle-size (log-log) plot convention specifically (shared `_RC` rcParams dict, defined once in `MSD_Trackmate/MSD_per_file_publication.py` and imported by sibling scripts — reuse it rather than redefining rcParams).
-- Both `core/visualization.py` functions and many domain scripts build figures directly with `matplotlib` (rather than routing everything through `core/visualization.py`) — style constants are frequently duplicated as local module-level constants per script instead of imported, so when editing a plot's look, check whether the script defines its own `COLOR_*`/`_RC` constants before assuming it calls into `core/visualization.py`.
-- Standard save location for evaluation-script plots: `E:\...\Auswertungsbilder` ([[project_save_path_auswertung]] project memory) — an external path, not inside the repo.
+- **Golden rule: create every figure at exactly its printed size and embed it unscaled.** Only four width classes, each paired with a fixed LaTeX width: `full` 6.30 in (`width=\linewidth`), `narrow` 4.72 in (`0.75\linewidth`), `half` 3.07 in (subfigure `0.49\linewidth`), `third` 2.01 in (subfigure `0.32\linewidth`); height = width / 1.42. Multi-panel figures with shared axes are one Python figure in `full`, whose height may deviate from 1.42:1.
+- **Export: plots as PDF (vector), microscopy images and crops as PNG at 600 dpi**; very dense plots as PDF with `rasterized=True` data layers. **Never `bbox_inches="tight"`** — it changes the figure size and therefore the printed font size; keep all labels inside the fixed figure via constrained layout or explicit axes positions. File names descriptive, lowercase, no spaces or umlauts (e.g. `emsd_hyd_35nm_surface.pdf`). ([[no-pdf-export]] feedback memory records this v2 rule.)
+- **rcParams live in `hydro_analysis/thesis.mplstyle`** (style guide §14): Open Sans (mathtext too), axis labels 9 pt, tick labels and legend 8 pt, panel labels (A, B, …) 10 pt bold, ticks inward on all four sides (major 3.5 / minor 2.0 pt), spines 0.8 pt, no grid, no titles. Apply with `plt.style.context(<path to thesis.mplstyle>)` resolved from `__file__`, and save inside that context. Reference implementation: `Litesizer/litesizer_visualization.py`.
+- Lines and markers: data line 1.2 pt (1.0 with many series), fit line 1.5 pt in the `dark` colour, theory line black 1.2 pt dashed `(0, (4, 3))`; markersize 4 (scatter `s≈16`), markeredgewidth 0.6; error bars `elinewidth=0.8`, `capsize=2.0`, `capthick=0.8`; overlapping points alpha 0.5–0.7, points exactly at their real x value (no jitter).
+- Colours: 8-colour Jet-derived palette with `base`/`dark`/`bright` variants, plus muted category colours (A `#3B8C8C`, B `#D98C3D`, single series `#3B6E8C`, DLS reference `#da00bd`) — see style guide §11 for all hex values and roles (data `base`, fit/model `dark`).
+- **Particle sizes have one fixed colour across all figures**: `SIZE_COLORS` in `MSD_Trackmate/Validation_Claude/Correlations.py`, `{nominal_nm: (base, dark)}`, 20 nm orange → 1000 nm blue (style guide §11, "Partikelgrößen"). Import it, never copy it; `base` for fills and marker faces, `dark` for lines, edges and error bars. Legends and size axes use the DLS labels from `core.io.get_dls_labels()` (35/50/100/240/560/1370 nm), not the nominal sizes.
+- All figure text in English; axis labels as `Name symbol (unit)`, e.g. `Diffusion coefficient D (µm² s⁻¹)`.
+- **Most existing scripts predate v2**: they use the `_RC` dict from `MSD_Trackmate/MSD_per_file_publication.py` (which also still provides `_DASH_THEORY` and `_add_log_minor_ticks()`), 7.15 × 5.00 in figures and PNG export with `bbox_inches="tight"`. Migrate a script to v2 only when asked; new or restyled figures follow v2. Style constants are frequently duplicated as local module-level constants per script (`COLOR_*`, `_RC`) rather than routed through `core/visualization.py`, so check the script itself before editing a plot's look.
+- Save all figures and accompanying result workbooks to `E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data`. This user-specified destination supersedes the former `Auswertungsbilder` convention. Do not save results inside the GitHub repository or beside the raw data.
 
 ## Script header convention
 

@@ -1,52 +1,121 @@
-"""LiteSizer data visualization following the style guide."""
+"""
+DLS particle-size reference figure (Anton Paar LiteSizer 500) for the
+fluorescent polystyrene particles that are subsequently analysed by SPT.
+
+The DLS data are a reference characterisation, not a main result, so the
+output is one compact two-panel figure:
+
+  A  Intensity-weighted size distributions of every accepted replicate
+     measurement, each max-normalised and drawn as its own curve in the
+     colour of its nominal size (no averaging, no SD band). Dotted vertical
+     lines mark the nominal manufacturer diameter.
+  B  DLS hydrodynamic diameter d_H vs. nominal diameter: every accepted
+     replicate as a small semi-transparent point, plus the mean +-SD
+     between replicates, with a grey dashed 1:1 reference line. No
+     regression is fitted.
+
+d_H is the Anton Paar-reported "Hydrodynamic diameter" of each measurement
+(cumulant z-average, MeasurementData.hydrodynamic_diameter_nm as parsed by
+litesizer_parser.py). It is never re-derived from the plotted intensity
+distribution; the distribution data are used for panel A only.
+
+Measurements with PDI > MAX_PDI (42 %) are excluded before any statistics
+are computed; every exclusion and the remaining count per size are printed.
+
+Legend labels follow the dissertation-wide particle labels
+(core.io.get_dls_labels(), e.g. nominal 20 nm -> "35 nm"), read from
+Litesizer/cache/dls_reference.pkl (written by litesizer_measurements_mean.py);
+if that cache is missing, the nominal size is used as label. Size colours
+are SIZE_COLORS from MSD_Trackmate/Validation_Claude/Correlations.py
+(Styleguide_Figures_Dissertation.md §11, "Partikelgroessen").
+
+Styling follows Styleguide_Figures_Dissertation.md (v2): plotting happens
+inside plt.style.context(hydro_analysis/thesis.mplstyle); the figure is
+created in its final printed size, width class "full" (6.30 in, embedded
+with \\includegraphics[width=\\linewidth], never rescaled), and saved as
+vector PDF without bbox_inches="tight", so font sizes in the thesis are
+exactly those set here.
+
+Reads the LiteSizer XLSX directly (no cache of its own, nothing needs to be
+run first). Shows the figure first (plt.show(), blocking); only after the
+window is closed are the outputs written into SAVE_PATH
+(Auswertungsbilder\\DLS_particle_size_reference\\):
+  dls_particle_size_reference.pdf
+  dls_particle_size_reference_statistics.csv
+No other script reads these outputs.
+"""
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 
+from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.Litesizer.litesizer_parser import LiteSizerData, MeasurementData, load_litesizer_xlsx
+from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _DASH_THEORY, _add_log_minor_ticks
+from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
 
-# Style guide colors (Jet-based palette)
-COLORS = {
-    "base": ["#0000da", "#004cff", "#00c4ff", "#49ffad", "#adff49", "#ffd700", "#ff6800", "#da0000"],
-    "dark": ["#000099", "#0035b2", "#0089b2", "#33b279", "#79b233", "#b29600", "#b24900", "#990000"],
-    "bright": ["#1f1fde", "#1f61ff", "#1fcbff", "#5bffb8", "#b8ff5b", "#ffde1f", "#ff751f", "#de1f1f"],
-}
+# ── Configuration ──────────────────────────────────────────────────────────────
+XLSX_PATH  = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
+SAVE_PATH_BASE = Path(
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+)
+SAVE_PATH: Path | None = SAVE_PATH_BASE / "DLS_particle_size_reference"
+FIG_STEM   = "dls_particle_size_reference"
+STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 
+SIZES   = [20, 50, 100, 200, 500, 1000]   # nominal manufacturer diameters (nm)
+MAX_PDI = 42.0                            # measurements with PDI > this (%) are excluded
 
-def setup_style():
-    """Apply style guide settings."""
-    mpl.rcParams.update({
-        "figure.figsize": (7.15, 5.00),
-        "figure.dpi": 150,
-        "savefig.dpi": 600,
-        "savefig.bbox": "tight",
-        "font.family": "sans-serif",
-        "font.size": 9,
-        "axes.titlesize": 12,
-        "axes.titleweight": "semibold",
-        "axes.labelsize": 10,
-        "axes.linewidth": 1.0,
-        "xtick.direction": "in",
-        "ytick.direction": "in",
-        "xtick.top": True,
-        "ytick.right": True,
-        "xtick.major.size": 4.0,
-        "ytick.major.size": 4.0,
-        "xtick.minor.size": 2.0,
-        "ytick.minor.size": 2.0,
-        "xtick.major.width": 1.0,
-        "ytick.major.width": 1.0,
-        "lines.linewidth": 1.8,
-        "lines.markersize": 4.5,
-        "legend.fontsize": 9,
-        "legend.frameon": False,
-    })
+SUPPORT_EPS  = 1e-3        # normalised intensity below this is treated as zero (masking)
+
+POINT_ALPHA     = 0.5      # single measurements in panel B (style guide §7, §13)
+CURVE_ALPHA     = 0.8      # overlapping replicate curves in panel A
+REFERENCE_ALPHA = 0.7      # nominal-diameter lines: reference, thinner and transparent (§12)
+COLOR_REFERENCE = "#888888"
+
+# Figure geometry in inches, width class "full" (style guide §2). Both axes share the
+# same height; panel B is square (identical log limits on x and y), panel A takes the
+# remaining width (~1.4 x B). The height deviates from 1.42:1, as allowed for multi-panel
+# full-width figures. PANEL_GAP_IN holds panel B's y tick labels and y label plus free
+# space, so that label sits visibly closer to its own axes than to panel A. All margins
+# must contain every label, because the PDF is saved without bbox_inches="tight".
+FIG_WIDTH_IN     = 6.30
+AX_HEIGHT_IN     = 2.05
+MARGIN_LEFT_IN   = 0.50
+MARGIN_RIGHT_IN  = 0.06
+MARGIN_BOTTOM_IN = 0.42
+MARGIN_TOP_IN    = 0.30    # room for the shared legend above both panels
+PANEL_GAP_IN     = 0.80
+
+A_X_LIM      = (10.0, 3000.0)             # diameter range shown in panel A (nm)
+B_AXIS_LIM   = (12.0, 2500.0)             # identical x and y limits for panel B
+B_TICKS      = [20, 50, 100, 200, 500, 1000]
+
+# Per-size colours: the dissertation-wide (face, edge) mapping from
+# Validation_Claude/Correlations.py (1000 nm blue ... 20 nm orange), shared with the
+# Figures_Refined scripts. Face colours fill SD bands and markers; edge (dark) colours
+# draw lines, error bars and indicators, because the light faces are not legible as
+# thin lines on white.
+SIZE_COLOR_FALLBACK = ("#999999", "#555555")
+
+CSV_COLUMNS = [
+    "nominal_size_nm",
+    "dls_diameter_mean_nm",
+    "dls_diameter_sd_nm",
+    "dls_diameter_sem_nm",
+    "diffusion_mean_um2s",
+    "diffusion_sd_um2s",
+    "pdi_mean_pct",
+    "pdi_sd_pct",
+    "n_measurements",
+]
 
 
 def calculate_statistics(values: List[float]) -> Tuple[float, float, float]:
@@ -63,430 +132,357 @@ def calculate_statistics(values: List[float]) -> Tuple[float, float, float]:
     return mean, std, sem
 
 
-def filter_measurements_by_size(
-    measurements: List[MeasurementData],
-    size_nm: int,
-) -> List[MeasurementData]:
-    """Filter measurements by nominal particle size."""
-    return [m for m in measurements if f"{size_nm} nm" in m.name]
+# ── Grouping and exclusion ─────────────────────────────────────────────────────
+
+_NOMINAL_RE = re.compile(r"^\s*(\d+)\s*nm\b")
 
 
-def plot_size_distributions(
-    measurements: List[MeasurementData],
-    title: str = "Size Distribution",
-    distribution_type: str = "volume",
-    ax: Optional[plt.Axes] = None,
-) -> plt.Axes:
-    """Plot size distributions for multiple measurements.
-
-    Parameters
-    ----------
-    measurements : list of MeasurementData
-        Measurements to plot.
-    title : str
-        Plot title.
-    distribution_type : str
-        One of "volume", "intensity", "number".
-    ax : Axes, optional
-        Matplotlib axes to plot on.
-
-    Returns
-    -------
-    ax : Axes
-    """
-    if ax is None:
-        fig, ax = plt.subplots(constrained_layout=True)
-
-    for i, m in enumerate(measurements):
-        # Get distribution data
-        if distribution_type == "volume":
-            df = m.size_distribution_volume
-        elif distribution_type == "intensity":
-            df = m.size_distribution_intensity
-        else:
-            df = m.size_distribution_number
-
-        if df.empty:
-            continue
-
-        color = COLORS["base"][i % len(COLORS["base"])]
-        ax.plot(
-            df["diameter_nm"],
-            df["frequency_pct"],
-            color=color,
-            linewidth=1.8,
-            label=m.name,
-        )
-
-    ax.set_xlabel("Particle diameter (nm)")
-    ax.set_ylabel("Frequency (%)")
-    ax.set_title(title)
-    ax.legend(loc="upper right")
-    ax.set_xscale("log")
-
-    # Minor ticks
-    ax.minorticks_on()
-
-    return ax
+def _nominal_size_from_name(name: str) -> Optional[int]:
+    """Return the nominal size encoded at the start of a measurement name ("500 nm 2" -> 500)."""
+    match = _NOMINAL_RE.match(name)
+    return int(match.group(1)) if match else None
 
 
-def plot_particle_analysis(
-    data: LiteSizerData,
-    size_nm: int,
-    output_dir: Optional[Path] = None,
-) -> Tuple[plt.Figure, dict]:
-    """Create analysis plot for a specific particle size.
-
-    Parameters
-    ----------
-    data : LiteSizerData
-        Loaded LiteSizer data.
-    size_nm : int
-        Nominal particle size in nm.
-    output_dir : Path, optional
-        Directory to save figures.
-
-    Returns
-    -------
-    fig : Figure
-        Matplotlib figure.
-    stats : dict
-        Statistics dictionary.
-    """
-    setup_style()
-
-    # Filter measurements
-    measurements = filter_measurements_by_size(data.measurements, size_nm)
-    if not measurements:
-        raise ValueError(f"No measurements found for {size_nm} nm particles")
-
-    # Exclude high-PDI measurements
-    MAX_PDI = 42.0
-    filtered, n_excluded = [], 0
-    for m in measurements:
-        if m.polydispersity_pct is not None and m.polydispersity_pct > MAX_PDI:
-            print(f"  [EXCLUDED PDI={m.polydispersity_pct:.1f}%] {m.name}")
-            n_excluded += 1
-        else:
-            filtered.append(m)
-    if n_excluded:
-        print(f"  → {n_excluded} measurement(s) excluded (PDI > {MAX_PDI:.0f}%)")
-    measurements = filtered
-    if not measurements:
-        raise ValueError(f"No measurements remain for {size_nm} nm after PDI filter")
-
-    # Calculate statistics
-    diameters = [m.hydrodynamic_diameter_nm for m in measurements if m.hydrodynamic_diameter_nm]
-    diffusions = [m.diffusion_coefficient_um2s for m in measurements if m.diffusion_coefficient_um2s]
-    pdis = [m.polydispersity_pct for m in measurements if m.polydispersity_pct]
-
-    d_mean, d_std, d_sem = calculate_statistics(diameters)
-    diff_mean, diff_std, diff_sem = calculate_statistics(diffusions)
-    pdi_mean, pdi_std, pdi_sem = calculate_statistics(pdis)
-
-    stats = {
-        "diameter_nm": {"mean": d_mean, "std": d_std, "sem": d_sem, "n": len(diameters)},
-        "diffusion_um2s": {"mean": diff_mean, "std": diff_std, "sem": diff_sem, "n": len(diffusions)},
-        "pdi_pct": {"mean": pdi_mean, "std": pdi_std, "sem": pdi_sem, "n": len(pdis)},
-    }
-
-    # Create figure with subplots
-    fig, axes = plt.subplots(1, 2, figsize=(14.3, 5.0), constrained_layout=True)
-
-    # Left: Size distribution
-    plot_size_distributions(
-        measurements,
-        title=f"Size Distribution ({size_nm} nm nominal)",
-        distribution_type="volume",
-        ax=axes[0],
-    )
-
-    # Add mean line
-    axes[0].axvline(d_mean, color="#da0000", linestyle="--", linewidth=1.5, alpha=0.8,
-                    label=f"Mean: {d_mean:.1f} nm")
-    axes[0].legend(loc="upper right")
-
-    # Right: Statistics summary
-    ax_stats = axes[1]
-    ax_stats.axis("off")
-
-    # Create statistics text
-    stats_text = f"""
-    Particle Size Analysis: {size_nm} nm (nominal)
-    {'='*50}
-
-    Number of measurements: {len(measurements)}
-
-    Hydrodynamic Diameter:
-        Mean:  {d_mean:.2f} nm
-        Std:   {d_std:.2f} nm
-        SEM:   {d_sem:.2f} nm
-        Result: {d_mean:.1f} ± {d_sem:.1f} nm (SEM)
-                {d_mean:.1f} ± {d_std:.1f} nm (SD)
-
-    Diffusion Coefficient:
-        Mean:  {diff_mean:.4f} µm²/s
-        Std:   {diff_std:.4f} µm²/s
-        SEM:   {diff_sem:.4f} µm²/s
-        Result: {diff_mean:.3f} ± {diff_sem:.3f} µm²/s (SEM)
-
-    Polydispersity Index (PDI):
-        Mean:  {pdi_mean:.2f}%
-        Std:   {pdi_std:.2f}%
-        Result: {pdi_mean:.1f} ± {pdi_std:.1f}%
-
-    Individual Measurements:
-    """
-
-    for m in measurements:
-        stats_text += f"\n      {m.name}: {m.hydrodynamic_diameter_nm:.2f} nm, D = {m.diffusion_coefficient_um2s:.4f} µm²/s"
-
-    ax_stats.text(0.05, 0.95, stats_text, transform=ax_stats.transAxes,
-                  fontsize=10, family="monospace", verticalalignment="top")
-
-    # Save figure
-    if output_dir:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_dir / f"particle_analysis_{size_nm}nm.png", dpi=600)
-
-    return fig, stats
-
-
-def print_statistics(stats: dict, size_nm: int) -> None:
-    """Print statistics to console."""
-    d = stats["diameter_nm"]
-    diff = stats["diffusion_um2s"]
-    pdi = stats["pdi_pct"]
-
-    print(f"\n{'='*60}")
-    print(f"  Statistics for {size_nm} nm particles (n={d['n']})")
-    print(f"{'='*60}")
-    print(f"\n  Hydrodynamic Diameter:")
-    print(f"    {d['mean']:.2f} ± {d['sem']:.2f} nm (SEM)")
-    print(f"    {d['mean']:.2f} ± {d['std']:.2f} nm (SD)")
-    print(f"\n  Diffusion Coefficient:")
-    print(f"    {diff['mean']:.4f} ± {diff['sem']:.4f} µm²/s (SEM)")
-    print(f"    {diff['mean']:.4f} ± {diff['std']:.4f} µm²/s (SD)")
-    print(f"\n  Polydispersity Index:")
-    print(f"    {pdi['mean']:.2f} ± {pdi['std']:.2f}%")
-    print(f"{'='*60}\n")
-
-
-def analyze_all_sizes(
+def group_accepted_measurements(
     data: LiteSizerData,
     sizes: List[int],
-    output_dir: Optional[Path] = None,
-) -> pd.DataFrame:
-    """Analyze all particle sizes and create summary.
+    max_pdi: float = MAX_PDI,
+) -> Dict[int, List[MeasurementData]]:
+    """Group measurements by nominal size and apply the PDI exclusion.
 
-    Parameters
-    ----------
-    data : LiteSizerData
-        Loaded data.
-    sizes : list of int
-        Particle sizes to analyze.
-    output_dir : Path, optional
-        Output directory for figures.
+    A measurement is excluded when its Anton Paar polydispersity exceeds
+    max_pdi. A PDI this high means the cumulant analysis does not describe
+    a single narrow population (aggregates, dust or multimodality), so its
+    z-average d_H is not a meaningful reference diameter. Measurements
+    without a reported d_H are excluded as well. Every exclusion is printed
+    with its reason; sizes without any (accepted) measurement are reported
+    and left out, never substituted.
 
     Returns
     -------
-    summary_df : DataFrame
-        Summary statistics for all sizes.
+    dict
+        {nominal_nm: [accepted MeasurementData, ...]} for sizes with at
+        least one accepted measurement, in the order of `sizes`.
     """
-    setup_style()
+    found: Dict[int, List[MeasurementData]] = {s: [] for s in sizes}
+    for m in data.measurements:
+        nominal = _nominal_size_from_name(m.name)
+        if nominal in found:
+            found[nominal].append(m)
+        else:
+            print(f"  [IGNORED] '{m.name}': nominal size not in SIZES {sizes}")
 
-    all_stats = []
-
+    print(f"\nMeasurement exclusion (criterion: PDI > {max_pdi:.0f} %)")
+    print("-" * 70)
+    accepted: Dict[int, List[MeasurementData]] = {}
     for size in sizes:
-        try:
-            fig, stats = plot_particle_analysis(data, size_nm=size, output_dir=output_dir)
-            print_statistics(stats, size_nm=size)
-            plt.close(fig)
+        kept = []
+        for m in found[size]:
+            if m.hydrodynamic_diameter_nm is None:
+                print(f"  [EXCLUDED] {size:>4} nm  '{m.name}': no hydrodynamic diameter reported")
+            elif m.polydispersity_pct is not None and m.polydispersity_pct > max_pdi:
+                print(f"  [EXCLUDED] {size:>4} nm  '{m.name}': PDI = {m.polydispersity_pct:.1f} % > {max_pdi:.0f} %"
+                      f"  (d_H = {m.hydrodynamic_diameter_nm:.1f} nm)")
+            else:
+                kept.append(m)
+        if kept:
+            accepted[size] = kept
 
-            # Add to summary
-            all_stats.append({
-                "nominal_size_nm": size,
-                "measured_diameter_nm": stats["diameter_nm"]["mean"],
-                "diameter_std": stats["diameter_nm"]["std"],
-                "diameter_sem": stats["diameter_nm"]["sem"],
-                "diffusion_um2s": stats["diffusion_um2s"]["mean"],
-                "diffusion_std": stats["diffusion_um2s"]["std"],
-                "diffusion_sem": stats["diffusion_um2s"]["sem"],
-                "pdi_pct": stats["pdi_pct"]["mean"],
-                "pdi_std": stats["pdi_pct"]["std"],
-                "n_measurements": stats["diameter_nm"]["n"],
-            })
-        except ValueError as e:
-            print(f"Skipping {size} nm: {e}")
+    print("\nAccepted measurements per nominal size")
+    print("-" * 70)
+    for size in sizes:
+        n_total = len(found[size])
+        n_kept = len(accepted.get(size, []))
+        if n_total == 0:
+            note = "  <-- MISSING: no measurement with this nominal size in the XLSX"
+        elif n_kept == 0:
+            note = "  <-- NO ACCEPTED MEASUREMENT: size omitted from figure and CSV"
+        elif n_kept == 1:
+            note = "  <-- only one measurement: SD/SEM undefined"
+        else:
+            note = ""
+        print(f"  {size:>4} nm: {n_kept} of {n_total} accepted ({n_total - n_kept} excluded){note}")
 
-    return pd.DataFrame(all_stats)
+    if not accepted:
+        raise ValueError("No accepted DLS measurement for any configured particle size.")
+    return accepted
 
 
-def plot_comparison_summary(
-    summary_df: pd.DataFrame,
-    output_dir: Optional[Path] = None,
-) -> plt.Figure:
-    """Create comparison plot for all particle sizes.
+# ── Statistics ─────────────────────────────────────────────────────────────────
 
-    Parameters
-    ----------
-    summary_df : DataFrame
-        Summary statistics from analyze_all_sizes.
-    output_dir : Path, optional
-        Output directory.
+def summarize_size_statistics(groups: Dict[int, List[MeasurementData]]) -> pd.DataFrame:
+    """Per-size statistics over the accepted replicate measurements.
+
+    d_H is the Anton Paar cumulant z-average of each measurement. The SD is
+    the sample standard deviation (ddof = 1) between independent replicate
+    measurements, i.e. the measurement-to-measurement variation shown as
+    error bar in panel B; SEM = SD / sqrt(n) is exported for completeness.
+    SD and SEM are NaN when only one measurement was accepted.
+    """
+    rows = []
+    for size, ms in groups.items():
+        d_h = [m.hydrodynamic_diameter_nm for m in ms]
+        diff = [m.diffusion_coefficient_um2s for m in ms if m.diffusion_coefficient_um2s is not None]
+        pdi = [m.polydispersity_pct for m in ms if m.polydispersity_pct is not None]
+        n = len(d_h)
+
+        d_mean, d_sd, d_sem = calculate_statistics(d_h) if n > 1 else (float(d_h[0]), np.nan, np.nan)
+        diff_mean, diff_sd, _ = calculate_statistics(diff) if len(diff) > 1 else (
+            float(diff[0]) if diff else np.nan, np.nan, np.nan)
+        pdi_mean, pdi_sd, _ = calculate_statistics(pdi) if len(pdi) > 1 else (
+            float(pdi[0]) if pdi else np.nan, np.nan, np.nan)
+
+        rows.append({
+            "nominal_size_nm": size,
+            "dls_diameter_mean_nm": d_mean,
+            "dls_diameter_sd_nm": d_sd,
+            "dls_diameter_sem_nm": d_sem,
+            "diffusion_mean_um2s": diff_mean,
+            "diffusion_sd_um2s": diff_sd,
+            "pdi_mean_pct": pdi_mean,
+            "pdi_sd_pct": pdi_sd,
+            "n_measurements": n,
+        })
+    return pd.DataFrame(rows, columns=CSV_COLUMNS)
+
+
+def prepare_normalized_replicates(
+    groups: Dict[int, List[MeasurementData]],
+) -> Dict[int, List[Tuple[np.ndarray, np.ndarray]]]:
+    """Max-normalised intensity distribution of every accepted replicate.
+
+    Normalisation: each intensity-weighted distribution is divided by its own
+    maximum so that its peak equals 1. This is purely a graphical
+    normalisation for comparing shapes and positions of populations with very
+    different scattering intensities; the diameter values are the measured
+    LiteSizer grid, unchanged. Replicates are not averaged or interpolated.
 
     Returns
     -------
-    fig : Figure
+    dict
+        {nominal_nm: [(diameter_nm, normalised_intensity), ...]}, one entry
+        per replicate measurement.
     """
-    setup_style()
+    curves: Dict[int, List[Tuple[np.ndarray, np.ndarray]]] = {}
+    for size, ms in groups.items():
+        for m in ms:
+            df = m.size_distribution_intensity
+            if df.empty:
+                print(f"  [NO DISTRIBUTION] {size} nm '{m.name}': intensity distribution missing, "
+                      "skipped in panel A only")
+                continue
+            d = df["diameter_nm"].to_numpy(dtype=float)
+            y = df["frequency_pct"].to_numpy(dtype=float)
+            valid = d > 0
+            d, y = d[valid], y[valid]
+            if y.max() <= 0:
+                print(f"  [NO DISTRIBUTION] {size} nm '{m.name}': intensity distribution is all zero, "
+                      "skipped in panel A only")
+                continue
+            order = np.argsort(d)
+            curves.setdefault(size, []).append((d[order], y[order] / y.max()))
+    return curves
 
-    fig, axes = plt.subplots(2, 2, figsize=(14.3, 10.0), constrained_layout=True)
 
-    # Color for each size
-    n_sizes = len(summary_df)
-    colors = [COLORS["base"][i % len(COLORS["base"])] for i in range(n_sizes)]
+# ── Plotting ───────────────────────────────────────────────────────────────────
 
-    # 1. Measured vs Nominal diameter
-    ax = axes[0, 0]
-    ax.errorbar(
-        summary_df["nominal_size_nm"],
-        summary_df["measured_diameter_nm"],
-        yerr=summary_df["diameter_sem"],
-        fmt="o",
-        markersize=8,
-        capsize=4,
-        capthick=1.2,
-        elinewidth=1.2,
-        color=COLORS["base"][0],
-        markerfacecolor=COLORS["base"][0],
-        markeredgecolor=COLORS["dark"][0],
-        markeredgewidth=0.8,
-    )
-    # Add 1:1 line
-    max_size = summary_df["measured_diameter_nm"].max() * 1.1
-    ax.plot([0, max_size], [0, max_size], "--", color="#888888", linewidth=1.5, label="1:1")
-    ax.set_xlabel("Nominal diameter (nm)")
-    ax.set_ylabel("Measured diameter (nm)")
-    ax.set_title("Measured vs. Nominal Particle Size")
-    ax.legend(loc="upper left")
-    ax.set_xlim(0, max_size)
-    ax.set_ylim(0, max_size)
-    # ax.set_xscale("log")
-    # ax.set_yscale("log")
+def _size_colors(size: int) -> Tuple[str, str]:
+    """(face, edge) colour of a nominal size, as in all other dissertation figures."""
+    return SIZE_COLORS.get(float(size), SIZE_COLOR_FALLBACK)
 
-    # 2. Diffusion coefficient vs size
-    ax = axes[0, 1]
-    ax.errorbar(
-        summary_df["measured_diameter_nm"],
-        summary_df["diffusion_um2s"],
-        xerr=summary_df["diameter_sem"],
-        yerr=summary_df["diffusion_sem"],
-        fmt="s",
-        markersize=8,
-        capsize=4,
-        capthick=1.2,
-        elinewidth=1.2,
-        color=COLORS["base"][1],
-        markerfacecolor=COLORS["base"][1],
-        markeredgecolor=COLORS["dark"][1],
-        markeredgewidth=0.8,
-    )
-    ax.set_xlabel("Measured diameter (nm)")
-    ax.set_ylabel("Diffusion coefficient (µm²/s)")
-    ax.set_title("Diffusion Coefficient vs. Particle Size")
+
+def _create_panel_axes() -> Tuple[plt.Figure, plt.Axes, plt.Axes]:
+    """Figure with two axes of identical height at fixed inch positions.
+
+    The constrained layout of thesis.mplstyle is switched off for this figure:
+    with panel B's equal aspect it shrinks B vertically, so the two panels
+    would end up with different heights.
+    """
+    width_b = AX_HEIGHT_IN
+    width_a = FIG_WIDTH_IN - MARGIN_LEFT_IN - MARGIN_RIGHT_IN - PANEL_GAP_IN - width_b
+    fig_height = MARGIN_BOTTOM_IN + AX_HEIGHT_IN + MARGIN_TOP_IN
+    fig = plt.figure(figsize=(FIG_WIDTH_IN, fig_height), layout="none")
+
+    def rect(left_in: float, width_in: float) -> List[float]:
+        return [left_in / FIG_WIDTH_IN, MARGIN_BOTTOM_IN / fig_height,
+                width_in / FIG_WIDTH_IN, AX_HEIGHT_IN / fig_height]
+
+    ax_a = fig.add_axes(rect(MARGIN_LEFT_IN, width_a))
+    ax_b = fig.add_axes(rect(MARGIN_LEFT_IN + width_a + PANEL_GAP_IN, width_b))
+    return fig, ax_a, ax_b
+
+
+def _particle_labels(sizes: List[int]) -> Dict[int, str]:
+    """Dissertation-wide legend labels ("35 nm" for nominal 20 nm, ...), nominal as fallback."""
+    try:
+        labels = get_dls_labels()
+    except FileNotFoundError:
+        print("  [NOTE] DLS label cache missing; legend uses nominal sizes.")
+        labels = {}
+    return {s: f"{labels.get(float(s), s)} nm" for s in sizes}
+
+
+def _panel_label(ax: plt.Axes, text: str) -> None:
+    ax.text(0.03, 0.97, text, transform=ax.transAxes, fontsize=10, fontweight="bold",
+            ha="left", va="top")
+
+
+def plot_normalized_dls_distributions(
+    ax: plt.Axes,
+    replicates: Dict[int, List[Tuple[np.ndarray, np.ndarray]]],
+) -> None:
+    """Panel A: one max-normalised intensity distribution per replicate measurement.
+
+    All replicates of a nominal size share its colour and line style, so
+    replicate-to-replicate agreement is visible directly. A dotted line marks
+    each nominal manufacturer diameter.
+    """
+    for size, reps in replicates.items():
+        _, dark = _size_colors(size)
+        for d, y in reps:
+            # Plot only where the distribution is non-zero (plus one grid point on each side),
+            # so the curves do not merge into a thick coloured baseline at y = 0.
+            nonzero = y > SUPPORT_EPS
+            shown = nonzero | np.roll(nonzero, 1) | np.roll(nonzero, -1)
+            ax.plot(d, np.where(shown, y, np.nan), color=dark, linewidth=1.0, alpha=CURVE_ALPHA, zorder=3)
+        ax.axvline(size, color=dark, linestyle=(0, (1, 2)), linewidth=0.8, alpha=REFERENCE_ALPHA, zorder=1)
+
+    ax.set_xscale("log")
+    ax.set_xlim(*A_X_LIM)
+    ax.set_ylim(0.0, 1.08)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.xaxis.set_minor_locator(mticker.LogLocator(subs=(2, 3, 4, 5, 6, 7, 8, 9), numticks=100))
+    ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.yaxis.set_major_locator(mticker.MultipleLocator(0.25))
+    ax.yaxis.set_minor_locator(mticker.AutoMinorLocator(5))
+    ax.set_xlabel(r"Hydrodynamic diameter $d_\mathrm{H}$ (nm)")
+    ax.set_ylabel("Normalized intensity (a.u.)")
+
+
+def plot_nominal_vs_dls(
+    ax: plt.Axes,
+    summary_df: pd.DataFrame,
+    groups: Dict[int, List[MeasurementData]],
+) -> None:
+    """Panel B: DLS d_H of every replicate and their mean +-SD vs. nominal diameter.
+
+    Individual replicates are drawn exactly at the nominal x value, small and
+    semi-transparent, so coinciding repeats read as a darker spot; the mean
+    +-SD (sample SD between replicates) is drawn on top. The grey dashed line
+    is the identity d_H = nominal, a reference only; no regression is fitted.
+    Both axes are logarithmic with identical limits, ticks and aspect, so
+    vertical distance to the 1:1 line reads as the same relative deviation
+    for every size (a linear axis would compress the 20-100 nm particles
+    into one corner).
+    """
+    lo, hi = B_AXIS_LIM
+    ax.plot([lo, hi], [lo, hi], color=COLOR_REFERENCE, linestyle=_DASH_THEORY, linewidth=1.2, zorder=1)
+
+    for row in summary_df.itertuples(index=False):
+        size = int(row.nominal_size_nm)
+        base, dark = _size_colors(size)
+        d_h = [m.hydrodynamic_diameter_nm for m in groups[size]]
+        ax.scatter(np.full(len(d_h), size), d_h, s=9, marker="o", alpha=POINT_ALPHA,
+                   facecolor=base, edgecolor=dark, linewidth=0.6, zorder=2)
+        yerr = None if np.isnan(row.dls_diameter_sd_nm) else row.dls_diameter_sd_nm
+        ax.errorbar(size, row.dls_diameter_mean_nm, yerr=yerr,
+                    fmt="o", markersize=4, markerfacecolor=base, markeredgecolor=dark,
+                    markeredgewidth=0.6, ecolor=dark, elinewidth=0.8, capsize=2.0, capthick=0.8,
+                    linestyle="None", zorder=3)
+
     ax.set_xscale("log")
     ax.set_yscale("log")
-
-    # 3. PDI vs size
-    ax = axes[1, 0]
-    ax.errorbar(
-        summary_df["nominal_size_nm"],
-        summary_df["pdi_pct"],
-        yerr=summary_df["pdi_std"],
-        fmt="^",
-        markersize=8,
-        capsize=4,
-        capthick=1.2,
-        elinewidth=1.2,
-        color=COLORS["base"][2],
-        markerfacecolor=COLORS["base"][2],
-        markeredgecolor=COLORS["dark"][2],
-        markeredgewidth=0.8,
-    )
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+    ax.set_aspect("equal", adjustable="box")
+    _add_log_minor_ticks(ax)
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_major_locator(mticker.FixedLocator(B_TICKS))
+        axis.set_major_formatter(mticker.FixedFormatter([str(t) for t in B_TICKS]))
     ax.set_xlabel("Nominal diameter (nm)")
-    ax.set_ylabel("Polydispersity Index (%)")
-    ax.set_title("PDI vs. Particle Size")
-    ax.axhline(10, color="#888888", linestyle="--", linewidth=1, alpha=0.7, label="PDI = 10%")
-    ax.legend(loc="upper right")
+    ax.set_ylabel(r"DLS diameter $d_\mathrm{H}$ (nm)")
 
-    # 4. Summary table
-    ax = axes[1, 1]
-    ax.axis("off")
+    grey_face, grey_edge = "#bbbbbb", "#555555"
+    legend_handles = [
+        Line2D([], [], marker="o", markersize=3, linestyle="None", markerfacecolor=grey_face,
+               markeredgecolor=grey_edge, markeredgewidth=0.6, alpha=POINT_ALPHA),
+        ax.errorbar([], [], yerr=[], fmt="o", markersize=4, markerfacecolor=grey_face,
+                    markeredgecolor=grey_edge, markeredgewidth=0.6, ecolor=grey_edge,
+                    elinewidth=0.8, capsize=2.0, capthick=0.8, linestyle="None"),
+        Line2D([], [], color=COLOR_REFERENCE, linestyle=_DASH_THEORY, linewidth=1.2),
+    ]
+    ax.legend(legend_handles, ["Single measurement", "Mean ± SD", r"$d_\mathrm{H}$ = nominal"],
+              loc="lower right", frameon=False, handlelength=2.0, borderaxespad=0.3)
 
-    table_text = "Summary Statistics (Mean ± SEM)\n" + "=" * 70 + "\n\n"
-    table_text += f"{'Size (nm)':<12} {'Diameter (nm)':<20} {'D (µm²/s)':<18} {'PDI (%)':<12} {'n':<5}\n"
-    table_text += "-" * 70 + "\n"
 
-    for _, row in summary_df.iterrows():
-        table_text += (
-            f"{int(row['nominal_size_nm']):<12} "
-            f"{row['measured_diameter_nm']:.1f} ± {row['diameter_sem']:.1f}      "
-            f"{row['diffusion_um2s']:.3f} ± {row['diffusion_sem']:.3f}   "
-            f"{row['pdi_pct']:.1f} ± {row['pdi_std']:.1f}    "
-            f"{int(row['n_measurements']):<5}\n"
-        )
+def plot_dls_reference_figure(
+    replicates: Dict[int, List[Tuple[np.ndarray, np.ndarray]]],
+    summary_df: pd.DataFrame,
+    groups: Dict[int, List[MeasurementData]],
+) -> plt.Figure:
+    """Build the two-panel DLS reference figure; call inside plt.style.context(STYLE_PATH).
 
-    ax.text(0.05, 0.95, table_text, transform=ax.transAxes,
-            fontsize=10, family="monospace", verticalalignment="top")
+    The legend is placed above both panels because the size colours encode
+    the same populations in A and B; the nominal-diameter indicator of panel A
+    is explained once in the same legend.
+    """
+    sizes = list(summary_df["nominal_size_nm"])
+    labels = _particle_labels(sizes)
 
-    fig.suptitle("LiteSizer Particle Size Analysis - All Sizes", fontsize=14, fontweight="semibold")
+    fig, ax_a, ax_b = _create_panel_axes()
+    plot_normalized_dls_distributions(ax_a, replicates)
+    plot_nominal_vs_dls(ax_b, summary_df, groups)
+    _panel_label(ax_a, "A")
+    _panel_label(ax_b, "B")
 
-    if output_dir:
-        output_dir = Path(output_dir)
-        fig.savefig(output_dir / "particle_analysis_comparison.png", dpi=600)
-
+    handles = [Line2D([], [], color=_size_colors(s)[1], linewidth=1.2) for s in sizes]
+    texts = [labels[s] for s in sizes]
+    handles.append(Line2D([], [], color="#555555", linestyle=(0, (1, 2)), linewidth=0.8))
+    texts.append("Nominal diameter")
+    # Anchored just above the common top edge of both axes, centred over their span.
+    x0, x1 = ax_a.get_position().x0, ax_b.get_position().x1
+    fig.legend(handles, texts, loc="lower center", bbox_to_anchor=((x0 + x1) / 2, ax_a.get_position().y1 + 0.005),
+               ncol=len(handles), frameon=False, handlelength=1.5, columnspacing=1.0, handletextpad=0.4,
+               borderaxespad=0.0, borderpad=0.2)
     return fig
 
 
+def print_panel_b_values(summary_df: pd.DataFrame, groups: Dict[int, List[MeasurementData]]) -> None:
+    """Print the values plotted in panel B together with the individual d_H replicates."""
+    print("\nPanel B values (Anton Paar hydrodynamic diameter, accepted measurements)")
+    print("-" * 70)
+    print(f"  {'nominal':>7}  {'d_H mean':>9}  {'SD':>7}  {'SEM':>7}  {'n':>2}   replicates d_H (nm)")
+    for row in summary_df.itertuples(index=False):
+        size = int(row.nominal_size_nm)
+        reps = ", ".join(f"{m.hydrodynamic_diameter_nm:.2f}" for m in groups[size])
+        print(f"  {size:>4} nm  {row.dls_diameter_mean_nm:>9.2f}  {row.dls_diameter_sd_nm:>7.2f}  "
+              f"{row.dls_diameter_sem_nm:>7.2f}  {row.n_measurements:>2}   {reps}")
+    print("-" * 70)
+
+
 def main():
-    """Analyze all particle sizes."""
-    path = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
-    output_dir = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\analysis_output")
+    """Build the DLS reference figure and statistics CSV."""
+    print(f"Loading data from: {XLSX_PATH}")
+    data = load_litesizer_xlsx(XLSX_PATH)
 
-    print(f"Loading data from: {path}")
-    data = load_litesizer_xlsx(path)
+    groups = group_accepted_measurements(data, SIZES, MAX_PDI)
+    summary_df = summarize_size_statistics(groups)
+    replicates = prepare_normalized_replicates(groups)
+    print_panel_b_values(summary_df, groups)
 
-    # Available sizes
-    sizes = [20, 50, 100, 200, 500, 1000]
+    with plt.style.context(STYLE_PATH):
+        fig = plot_dls_reference_figure(replicates, summary_df, groups)
 
-    print("\n" + "=" * 70)
-    print("  ANALYZING ALL PARTICLE SIZES")
-    print("=" * 70)
+        plt.show()
 
-    # Analyze all sizes
-    summary_df = analyze_all_sizes(data, sizes, output_dir=output_dir)
-
-    # Create comparison plot
-    fig = plot_comparison_summary(summary_df, output_dir=output_dir)
-
-    # Print final summary
-    print("\n" + "=" * 70)
-    print("  FINAL SUMMARY")
-    print("=" * 70)
-    print("\nAll results (Mean ± SEM):")
-    print("-" * 70)
-    for _, row in summary_df.iterrows():
-        print(f"  {int(row['nominal_size_nm']):>4} nm: "
-              f"d = {row['measured_diameter_nm']:.1f} ± {row['diameter_sem']:.1f} nm, "
-              f"D = {row['diffusion_um2s']:.3f} ± {row['diffusion_sem']:.3f} µm²/s, "
-              f"PDI = {row['pdi_pct']:.1f}% (n={int(row['n_measurements'])})")
-    print("-" * 70)
-
-    print(f"\nFigures saved to: {output_dir}")
-
-    plt.show()
+        if SAVE_PATH is not None:
+            SAVE_PATH.mkdir(parents=True, exist_ok=True)
+            pdf_path = SAVE_PATH / f"{FIG_STEM}.pdf"
+            fig.savefig(pdf_path, format="pdf")   # final size, no bbox_inches="tight" (style guide §3)
+            csv_path = SAVE_PATH / f"{FIG_STEM}_statistics.csv"
+            summary_df.to_csv(csv_path, index=False)
+            print(f"Plot saved: {pdf_path}")
+            print(f"Statistics saved: {csv_path}")
 
     return data, summary_df
 
