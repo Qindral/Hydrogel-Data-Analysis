@@ -33,17 +33,38 @@ Exclusions (flagged in the table, not dropped):
   too_small       area < MIN_AREA_PX (the Cellpose min_size); removes the
                   1-2 px fragments left in the manually corrected ROI set of
                   20 nm image 004.
+  removed_manually  particle rejected by hand in sem_segmentation_review.py
+                  (mis-segmentations such as gaps between particles, merged
+                  or partly hidden particles, debris). The decisions are read
+                  from REVIEW_PATH (cache/sem_segmentation_review.json); an
+                  entry is applied only if it was made on the same annotation
+                  file that is used now, otherwise it is ignored with a warning.
+                  "removed_ids" there is the final set, i.e. clicked particles
+                  plus those below the brightness / roundness / size
+                  thresholds of that image, minus particles kept by hand.
 
-Always recomputes from the annotation files and overwrites:
+Particles added by hand in the review (ellipses from the 3-point tool, stored
+as "added_ovals" [cx, cy, a, b, theta] in pixels) are appended to their image
+with negative particle ids (-1, -2, ...) and added_manually = True; they are
+measured like ROIs on an ELLIPSE_VERTICES-gon of the ellipse and pass the
+same border and size checks.
+
+Always recomputes from the annotation files (and the review file, if present)
+and overwrites:
   hydro_analysis/SEM_Particles/cache/sem_feret_particles.pkl
       {"particles": per-particle DataFrame, "images": per-image summary DataFrame}
   <SAVE_PATH>/sem_feret_particles.xlsx   (same two tables as sheets)
 Consumers (read the pickle only):
   sem_feret_size_histogram.py        per-size frequency histograms
   sem_vs_dls_size_distribution.py    comparison with the LiteSizer (DLS) distributions
+  sem_example_cutout.py              example cutouts with outlines of the used particles
+find_annotations(), fei_scan_geometry(), feret_min_max(), ellipse_polygon(),
+load_review(), save_review() and added_ovals_for() are also used by
+sem_segmentation_review.py and sem_example_cutout.py.
 """
 from __future__ import annotations
 
+import json
 import pickle
 from pathlib import Path
 
@@ -60,11 +81,13 @@ DATA_DIR = Path(r"E:\Daten Promotion Sicherung\Diffusion in Hydrogel Data\SEM Pa
 SIZE_FOLDERS = {20: "20 nm", 50: "50 nm", 100: "100 nm", 200: "200 nm", 500: "500 nm", 1000: "1000 nm"}
 
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "sem_feret_particles.pkl"
+REVIEW_PATH = Path(__file__).resolve().parent / "cache" / "sem_segmentation_review.json"
 SAVE_PATH: Path | None = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data"
 ) / "SEM_particle_size"
 
 MIN_AREA_PX = 11                       # Cellpose min_size of run_parameters.ijm
+ELLIPSE_VERTICES = 72                  # polygon resolution of hand-drawn ellipses
 FEI_TAG = 34682
 
 
@@ -164,11 +187,80 @@ def find_annotations(folder: Path) -> tuple[dict[str, str], list[str]]:
     return chosen, missing
 
 
+# ── Manual review ──────────────────────────────────────────────────────────────
+
+def review_key(folder_name: str, raw_name: str) -> str:
+    return f"{folder_name}/{raw_name}"
+
+
+def load_review(path: Path = REVIEW_PATH) -> dict:
+    """{"<size folder>/<raw image>": {"annotation", "removed_ids", "reviewed"}}; empty if no review exists."""
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def save_review(review: dict, path: Path = REVIEW_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(review, fh, indent=1, sort_keys=True)
+    tmp.replace(path)
+
+
+def _review_entry(review: dict, folder_name: str, raw_name: str, ann_name: str) -> dict | None:
+    entry = review.get(review_key(folder_name, raw_name))
+    if entry is None:
+        return None
+    if entry["annotation"] != ann_name:
+        print(f"  [WARNING] review of {raw_name} was made on {entry['annotation']}, now {ann_name} is used; "
+              "manual review ignored")
+        return None
+    return entry
+
+
+def ellipse_polygon(cx: float, cy: float, a: float, b: float, theta: float,
+                    n: int = ELLIPSE_VERTICES) -> np.ndarray:
+    """Closed-ring vertices (n x 2, x/y in px) of an ellipse with semi-axes a, b rotated by theta (rad)."""
+    t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    x, y = a * np.cos(t), b * np.sin(t)
+    return np.column_stack([cx + x * np.cos(theta) - y * np.sin(theta),
+                            cy + x * np.sin(theta) + y * np.cos(theta)])
+
+
+def added_ovals_for(review: dict, folder_name: str, raw_name: str, ann_name: str) -> list[list[float]]:
+    """Hand-drawn ellipses [cx, cy, a, b, theta] of one image (empty if none or annotation changed)."""
+    entry = _review_entry(review, folder_name, raw_name, ann_name)
+    return [] if entry is None else entry.get("added_ovals", [])
+
+
+def measure_ovals(ovals: list[list[float]], width: int, height: int) -> pd.DataFrame:
+    """Feret values (px) of hand-drawn ellipses, ids -1, -2, ... in drawing order."""
+    rows = []
+    for k, (cx, cy, a, b, theta) in enumerate(ovals, start=1):
+        xy = ellipse_polygon(cx, cy, a, b, theta)
+        fmin, fmax = feret_min_max(xy)
+        touches = xy[:, 0].min() <= 0 or xy[:, 1].min() <= 0 or xy[:, 0].max() >= width or xy[:, 1].max() >= height
+        rows.append({"particle_id": -k, "feret_min_px": fmin, "feret_max_px": fmax,
+                     "area_px": float(np.pi * a * b), "touches_border": bool(touches)})
+    return pd.DataFrame(rows, columns=["particle_id", "feret_min_px", "feret_max_px", "area_px", "touches_border"])
+
+
+def removed_ids_for(review: dict, folder_name: str, raw_name: str, ann_name: str) -> set[int]:
+    """Removed particle ids of one image, if its review was made on the annotation used now."""
+    entry = review.get(review_key(folder_name, raw_name))
+    if entry is None or entry["annotation"] != ann_name:
+        return set()
+    return set(entry["removed_ids"])
+
+
 # ── Pipeline ───────────────────────────────────────────────────────────────────
 
 def measure_all(data_dir: Path, size_folders: dict[int, str]) -> pd.DataFrame:
     """Per-particle table over all size folders, sizes in nm; exclusions are flagged, not dropped."""
     tables = []
+    review = load_review()
     for nominal, folder_name in size_folders.items():
         folder = data_dir / folder_name
         annotations, missing = find_annotations(folder)
@@ -185,6 +277,11 @@ def measure_all(data_dir: Path, size_folders: dict[int, str]) -> pd.DataFrame:
                 df = measure_roi_set(ann_path, width, height)
             else:
                 df = measure_label_mask(ann_path, width, height)
+            df["added_manually"] = False
+            ovals = measure_ovals(added_ovals_for(review, folder_name, raw_name, ann_name), width, height)
+            if len(ovals):
+                ovals["added_manually"] = True
+                df = pd.concat([df, ovals], ignore_index=True)
             df.insert(0, "nominal_nm", nominal)
             df.insert(1, "image", raw_name)
             df.insert(2, "annotation", ann_name)
@@ -194,7 +291,8 @@ def measure_all(data_dir: Path, size_folders: dict[int, str]) -> pd.DataFrame:
             df["feret_mean_nm"] = 0.5 * (df["feret_min_nm"] + df["feret_max_nm"])
             df["area_nm2"] = df["area_px"] * px_nm ** 2
             df["too_small"] = df["area_px"] < MIN_AREA_PX
-            df["used"] = ~(df["touches_border"] | df["too_small"])
+            df["removed_manually"] = df["particle_id"].isin(removed_ids_for(review, folder_name, raw_name, ann_name))
+            df["used"] = ~(df["touches_border"] | df["too_small"] | df["removed_manually"])
             tables.append(df)
     return pd.concat(tables, ignore_index=True)
 
@@ -208,6 +306,9 @@ def summarize_images(particles: pd.DataFrame) -> pd.DataFrame:
                      "pixel_size_nm": grp["pixel_size_nm"].iloc[0],
                      "n_annotated": len(grp), "n_border_excluded": int(grp["touches_border"].sum()),
                      "n_too_small": int((grp["too_small"] & ~grp["touches_border"]).sum()),
+                     "n_removed_manually": int((grp["removed_manually"] & ~grp["touches_border"]
+                                                & ~grp["too_small"]).sum()),
+                     "n_added_manually": int(grp["added_manually"].sum()),
                      "n_used": len(kept), "feret_mean_mean_nm": kept.mean(),
                      "feret_mean_sd_nm": kept.std(ddof=1), "feret_mean_median_nm": kept.median()})
     return pd.DataFrame(rows)

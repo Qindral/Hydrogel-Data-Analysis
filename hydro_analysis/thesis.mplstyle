@@ -1,0 +1,44 @@
+# Dissertation figure style (Styleguide_Figures_Dissertation.md, section 14).
+# Load with plt.style.use(<path to this file>) or inside plt.style.context(...).
+
+figure.dpi          : 150
+savefig.dpi         : 600
+savefig.format      : pdf
+savefig.bbox        : standard
+savefig.pad_inches  : 0.02
+figure.constrained_layout.use : True
+
+font.family         : sans-serif
+font.sans-serif     : Open Sans, Arial, DejaVu Sans
+font.size           : 9
+axes.labelsize      : 9
+axes.titlesize      : 9
+axes.titleweight    : semibold
+xtick.labelsize     : 8
+ytick.labelsize     : 8
+legend.fontsize     : 8
+legend.frameon      : False
+mathtext.fontset    : custom
+mathtext.rm         : Open Sans
+mathtext.it         : Open Sans:italic
+mathtext.bf         : Open Sans:bold
+
+axes.linewidth      : 0.8
+axes.grid           : False
+xtick.direction     : in
+ytick.direction     : in
+xtick.top           : True
+ytick.right         : True
+xtick.major.size    : 3.5
+ytick.major.size    : 3.5
+xtick.minor.size    : 2.0
+ytick.minor.size    : 2.0
+xtick.major.width   : 0.8
+ytick.major.width   : 0.8
+xtick.minor.width   : 0.6
+ytick.minor.width   : 0.6
+
+lines.linewidth     : 1.2
+lines.markersize    : 4
+lines.markeredgewidth : 0.6
+errorbar.capsize    : 2

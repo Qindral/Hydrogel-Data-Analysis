@@ -1,36 +1,34 @@
 """
-SEM vs. DLS particle size distributions -- mean Feret diameter from SEM
-compared with the number-weighted LiteSizer (DLS) size distributions, one
-panel per nominal particle size (2 x 3 panels, width class "full").
+SEM vs. DLS particle size distributions -- SEM Feret diameter histogram with
+the LiteSizer (DLS) intensity-weighted size distribution, one panel per
+nominal particle size (2 x 3 panels, width class "full").
 
-SEM: number-weighted by construction (every particle counts once); size
-measure d_F = (Feret_max + Feret_min) / 2 of the dry particle. Read from
-hydro_analysis/SEM_Particles/cache/sem_feret_particles.pkl (written by
-sem_feret_measure.py, which must be run first); only particles with
-used == True (border and fragment exclusions applied upstream). The bin
-ranges (COMPARISON_BINS) are wider than those of the single-size histograms
-in sem_feret_size_histogram.py, so that the full DLS distributions are shown.
+SEM: Feret diameter (Feret_max, largest caliper width, ImageJ "Feret") of
+every used particle, number-weighted by construction; relative-frequency
+histogram with N_BINS bins (from sem_feret_size_histogram.py) over
+X_RANGES. X_RANGES are wider than the ranges of the single-size histograms:
+they cover the DLS curve down to about 5 % of its peak (the far tail of the
+20 nm sample near 17 um, dust, is left out) together with the SEM data. Read
+from hydro_analysis/SEM_Particles/cache/sem_feret_particles.pkl (written by
+sem_feret_measure.py, which must be run first); border and fragment
+exclusions are applied upstream.
 
-DLS: the number-weighted size distribution of every accepted LiteSizer
-replicate, read directly from the LiteSizer XLSX with the parser and the PDI
-exclusion (PDI > 42 %) of Litesizer/litesizer_visualization.py. The
-number-weighted distribution is the DLS weighting comparable to an SEM count;
-it is derived by the instrument from the intensity distribution (Mie
-conversion) and describes the hydrodynamic diameter in water, so a systematic
-offset to the dry SEM diameter is expected. The intensity-based z-average d_H
-(the dissertation-wide particle label, e.g. "35 nm") is reported in the
-statistics table for reference.
-
-Figure normalisation: the SEM histogram and every DLS replicate are each
-divided by their own maximum, so peak positions and widths are compared on a
-common 0-1 scale; the diameter values themselves are unchanged. Statistics
-are computed from the unnormalised data: SEM mean, SD, median of the pooled
-particles; DLS mean and SD of each replicate's number distribution
-(frequency-weighted over the LiteSizer grid), then averaged over replicates.
+DLS: the data of Litesizer/litesizer_visualization.py, selected, normalised
+and summarised with that script's own functions, so no DLS result differs
+from it: accepted replicates (PDI <= 42 %, group_accepted_measurements),
+intensity-weighted distributions divided by their own maximum
+(prepare_normalized_replicates), and the d_H mean +- SD between replicates
+(summarize_size_statistics, Anton Paar z-average). For the figure, the
+normalised replicates of one size are summed on the common LiteSizer grid
+into one curve (combined_dls_curves) and scaled so that its peak equals the
+highest histogram bar -- a graphical normalisation only. Intensity weighting
+emphasises large particles and d_H is the hydrodynamic diameter in water, so
+the DLS curve is expected to lie above the dry, number-weighted SEM data.
 
 Writes into SAVE_PATH:
   sem_vs_dls_size_distribution.pdf     2 x 3 panel figure
-  sem_vs_dls_size_statistics.xlsx      per-size SEM and DLS statistics
+  sem_vs_dls_size_statistics.xlsx      per-size SEM statistics next to the
+                                       unchanged LiteSizer statistics
 No other script reads these outputs.
 
 Styling follows Styleguide_Figures_Dissertation.md (v2): plotting inside
@@ -49,10 +47,13 @@ import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from hydro_analysis.Litesizer.litesizer_parser import MeasurementData, load_litesizer_xlsx
-from hydro_analysis.Litesizer.litesizer_visualization import MAX_PDI, XLSX_PATH, group_accepted_measurements
+from hydro_analysis.Litesizer.litesizer_parser import load_litesizer_xlsx
+from hydro_analysis.Litesizer.litesizer_visualization import (
+    MAX_PDI, SUPPORT_EPS, XLSX_PATH, group_accepted_measurements, prepare_normalized_replicates,
+    summarize_size_statistics,
+)
 from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
-from hydro_analysis.SEM_Particles.sem_feret_size_histogram import load_particles, size_label
+from hydro_analysis.SEM_Particles.sem_feret_size_histogram import N_BINS, load_particles, size_label
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 SAVE_PATH: Path | None = Path(
@@ -63,115 +64,122 @@ STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 SHOW_FIGURE = True
 
 SIZES = [20, 50, 100, 200, 500, 1000]
+SEM_COLUMN = "feret_max_nm"            # Feret diameter
 FIG_SIZE_IN = (6.30, 4.20)             # width class "full"; multi-panel height (style guide §2)
 COLOR_DLS = "#da00bd"                  # DLS reference (style guide §11)
-DLS_ALPHA = 0.8                        # overlapping replicate curves
-SEM_ALPHA = 0.6                        # histogram under the DLS curves (style guide §8)
+Y_HEADROOM = 1.45                      # y limit / highest bar, leaves room for the statistics text
 
-# nominal size -> (lower edge, upper edge, bin width) in nm; 40 bins each (style guide §8).
-COMPARISON_BINS = {
-    20: (10.0, 50.0, 1.0),
-    50: (10.0, 90.0, 2.0),
-    100: (40.0, 160.0, 3.0),
-    200: (60.0, 380.0, 8.0),
-    500: (150.0, 750.0, 15.0),
-    1000: (400.0, 1600.0, 30.0),
+X_RANGES = {                           # nominal size -> (lower, upper) x limit and histogram edge in nm
+    20: (10.0, 90.0),
+    50: (15.0, 115.0),
+    100: (50.0, 150.0),
+    200: (100.0, 400.0),
+    500: (250.0, 750.0),
+    1000: (600.0, 2000.0),
 }
+
+
+# ── DLS reference curve ────────────────────────────────────────────────────────
+
+def combined_dls_curves(sizes: list[int]) -> tuple[dict[int, tuple[np.ndarray, np.ndarray]], dict]:
+    """One intensity-weighted DLS curve per size: sum of the max-normalised replicates, peak = 1.
+
+    Replicates are selected and normalised exactly as in litesizer_visualization.py
+    (PDI exclusion, division by each replicate's own maximum); the sum is divided by its
+    maximum. Returns the curves {nominal: (diameter_nm, curve)} and the accepted
+    measurement groups of group_accepted_measurements().
+    """
+    groups = group_accepted_measurements(load_litesizer_xlsx(XLSX_PATH), sizes, MAX_PDI)
+    curves = {}
+    for size, reps in prepare_normalized_replicates(groups).items():
+        d = reps[0][0]
+        if any(r[0].shape != d.shape or not np.allclose(r[0], d) for r in reps):
+            raise ValueError(f"DLS replicates of {size} nm do not share one diameter grid; cannot sum them.")
+        total = np.sum([r[1] for r in reps], axis=0)
+        curves[size] = (d, total / total.max())
+    return curves, groups
+
+
+def plot_dls_curve(ax: plt.Axes, d: np.ndarray, y: np.ndarray, peak: float) -> None:
+    """Draw a peak-1 DLS curve scaled to `peak`.
+
+    Only where the distribution is non-zero (plus one grid point on each side), as in
+    litesizer_visualization.py, so the curve does not form a baseline at y = 0.
+    """
+    nonzero = y > SUPPORT_EPS
+    shown = nonzero | np.roll(nonzero, 1) | np.roll(nonzero, -1)
+    ax.plot(d, np.where(shown, y * peak, np.nan), color=COLOR_DLS, linewidth=1.2, zorder=3)
 
 
 # ── Statistics ─────────────────────────────────────────────────────────────────
 
-def dls_number_distribution(m: MeasurementData) -> tuple[np.ndarray, np.ndarray]:
-    """Diameter grid (nm) and number-weighted frequency (%) of one LiteSizer measurement."""
-    df = m.size_distribution_number
-    d = df["diameter_nm"].to_numpy(dtype=float)
-    f = df["frequency_pct"].to_numpy(dtype=float)
-    valid = d > 0
-    return d[valid], f[valid]
-
-
-def weighted_mean_sd(d: np.ndarray, f: np.ndarray) -> tuple[float, float]:
-    mean = float(np.sum(f * d) / np.sum(f))
-    return mean, float(np.sqrt(np.sum(f * (d - mean) ** 2) / np.sum(f)))
-
-
-def compare_statistics(particles: pd.DataFrame, dls: dict[int, list[MeasurementData]]) -> pd.DataFrame:
-    """One row per size: SEM distribution statistics next to DLS number-distribution statistics."""
+def compare_statistics(particles: pd.DataFrame, dls_summary: pd.DataFrame) -> pd.DataFrame:
+    """SEM Feret statistics per size next to the LiteSizer statistics of litesizer_visualization.py."""
     rows = []
     for nominal in SIZES:
-        d = particles.loc[particles["nominal_nm"] == nominal, "feret_mean_nm"].to_numpy()
-        reps = [weighted_mean_sd(*dls_number_distribution(m)) for m in dls.get(nominal, [])]
-        rep_means = np.array([r[0] for r in reps])
-        rep_sds = np.array([r[1] for r in reps])
-        d_h = np.array([m.hydrodynamic_diameter_nm for m in dls.get(nominal, [])])
-        row = {
+        grp = particles[particles["nominal_nm"] == nominal]
+        f_max, f_mean = grp["feret_max_nm"].to_numpy(), grp["feret_mean_nm"].to_numpy()
+        rows.append({
             "nominal_nm": nominal,
             "label": size_label(nominal),
-            "sem_n_images": particles.loc[particles["nominal_nm"] == nominal, "image"].nunique(),
-            "sem_n_particles": d.size,
-            "sem_mean_nm": d.mean(),
-            "sem_sd_nm": d.std(ddof=1),
-            "sem_cv_pct": 100.0 * d.std(ddof=1) / d.mean(),
-            "sem_median_nm": np.median(d),
-            "dls_n_measurements": len(reps),
-            "dls_number_mean_nm": rep_means.mean() if reps else np.nan,
-            "dls_number_mean_sd_between_reps_nm": rep_means.std(ddof=1) if len(reps) > 1 else np.nan,
-            "dls_number_sd_nm": rep_sds.mean() if reps else np.nan,
-            "dls_number_cv_pct": 100.0 * rep_sds.mean() / rep_means.mean() if reps else np.nan,
-            "dls_z_average_nm": d_h.mean() if reps else np.nan,
-            "dls_z_average_sd_between_reps_nm": d_h.std(ddof=1) if len(reps) > 1 else np.nan,
-        }
-        row["ratio_sem_to_dls_number"] = row["sem_mean_nm"] / row["dls_number_mean_nm"]
-        row["ratio_sem_to_dls_z_average"] = row["sem_mean_nm"] / row["dls_z_average_nm"]
-        rows.append(row)
-    return pd.DataFrame(rows)
+            "sem_n_images": grp["image"].nunique(),
+            "sem_n_particles": len(grp),
+            "sem_feret_mean_nm": f_max.mean(),
+            "sem_feret_sd_nm": f_max.std(ddof=1),
+            "sem_feret_median_nm": np.median(f_max),
+            "sem_mean_feret_mean_nm": f_mean.mean(),
+            "sem_mean_feret_sd_nm": f_mean.std(ddof=1),
+            "sem_mean_feret_median_nm": np.median(f_mean),
+        })
+    stats = pd.DataFrame(rows).merge(dls_summary.rename(columns={"nominal_size_nm": "nominal_nm"}),
+                                     on="nominal_nm", how="left")
+    stats["ratio_sem_feret_to_dls"] = stats["sem_feret_mean_nm"] / stats["dls_diameter_mean_nm"]
+    stats["ratio_sem_mean_feret_to_dls"] = stats["sem_mean_feret_mean_nm"] / stats["dls_diameter_mean_nm"]
+    return stats
 
 
 # ── Plotting ───────────────────────────────────────────────────────────────────
 
-def plot_panel(ax: plt.Axes, nominal: int, d_sem: np.ndarray, dls_reps: list[MeasurementData],
-               stats: pd.Series) -> None:
-    """SEM histogram and DLS number-weighted replicate curves of one size, each max-normalised."""
+def plot_panel(ax: plt.Axes, nominal: int, d_sem: np.ndarray,
+               dls_curve: tuple[np.ndarray, np.ndarray] | None, stats: pd.Series) -> None:
+    """SEM Feret-diameter histogram and the peak-matched summed DLS curve of one size."""
     base, dark = SIZE_COLORS[float(nominal)]
-    lo, hi, width = COMPARISON_BINS[nominal]
-    edges = np.arange(lo, hi + 0.5 * width, width)
-    counts, _ = np.histogram(d_sem, bins=edges)
-    counts = counts / counts.max()
-    ax.stairs(counts, edges, fill=True, color=base, alpha=SEM_ALPHA, zorder=1)
-    ax.stairs(counts, edges, color=dark, linewidth=0.5, zorder=2)
-
-    for m in dls_reps:
-        d, f = dls_number_distribution(m)
-        ax.plot(d, f / f.max(), color=COLOR_DLS, linewidth=1.0, alpha=DLS_ALPHA, zorder=3)
+    edges = np.linspace(*X_RANGES[nominal], N_BINS + 1)
+    freq, _ = np.histogram(d_sem, bins=edges)
+    freq = 100.0 * freq / d_sem.size
+    ax.stairs(freq, edges, fill=True, color=base, zorder=1)
+    ax.stairs(freq, edges, color=dark, linewidth=0.5, zorder=2)
+    if dls_curve is not None:
+        plot_dls_curve(ax, *dls_curve, peak=freq.max())
 
     ax.set_xlim(edges[0], edges[-1])
-    ax.set_ylim(0.0, 1.45)                         # headroom for the statistics text
+    ax.set_ylim(0.0, Y_HEADROOM * freq.max())
     ax.xaxis.set_major_locator(mticker.MaxNLocator(4))
     ax.xaxis.set_minor_locator(mticker.AutoMinorLocator(2))
-    ax.yaxis.set_major_locator(mticker.MultipleLocator(0.5))
-    ax.yaxis.set_minor_locator(mticker.AutoMinorLocator(5))
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(4))
+    ax.yaxis.set_minor_locator(mticker.AutoMinorLocator(2))
     ax.set_title(size_label(nominal))
     ax.text(0.97, 0.96,
-            f"SEM {stats.sem_mean_nm:.0f} ± {stats.sem_sd_nm:.0f} nm\n"
-            f"DLS {stats.dls_number_mean_nm:.0f} ± {stats.dls_number_sd_nm:.0f} nm",
+            f"SEM {stats.sem_feret_mean_nm:.1f} ± {stats.sem_feret_sd_nm:.1f} nm\n"
+            rf"$d_\mathrm{{H}}$ {stats.dls_diameter_mean_nm:.1f} ± {stats.dls_diameter_sd_nm:.1f} nm",
             transform=ax.transAxes, ha="right", va="top", fontsize=8)
 
 
-def plot_comparison(particles: pd.DataFrame, dls: dict[int, list[MeasurementData]],
+def plot_comparison(particles: pd.DataFrame, dls_curves: dict[int, tuple[np.ndarray, np.ndarray]],
                     stats: pd.DataFrame) -> plt.Figure:
     """2 x 3 panel figure; call inside plt.style.context(STYLE_PATH)."""
-    fig, axes = plt.subplots(2, 3, figsize=FIG_SIZE_IN, sharey=True)
+    fig, axes = plt.subplots(2, 3, figsize=FIG_SIZE_IN)
     for ax, nominal in zip(axes.flat, SIZES):
-        d_sem = particles.loc[particles["nominal_nm"] == nominal, "feret_mean_nm"].to_numpy()
-        plot_panel(ax, nominal, d_sem, dls.get(nominal, []), stats.set_index("nominal_nm").loc[nominal])
+        d_sem = particles.loc[particles["nominal_nm"] == nominal, SEM_COLUMN].to_numpy()
+        plot_panel(ax, nominal, d_sem, dls_curves.get(nominal), stats.set_index("nominal_nm").loc[nominal])
     for ax in axes[1]:
-        ax.set_xlabel("Diameter (nm)")
+        ax.set_xlabel("Feret diameter (nm)")
     for ax in axes[:, 0]:
-        ax.set_ylabel("Normalized frequency")
+        ax.set_ylabel("Relative frequency (%)")
 
     handles = [Patch(facecolor="#bbbbbb", edgecolor="#555555", linewidth=0.5),
-               Line2D([], [], color=COLOR_DLS, linewidth=1.0)]
-    fig.legend(handles, [r"SEM, mean Feret diameter $d_\mathrm{F}$", "DLS, number-weighted (per replicate)"],
+               Line2D([], [], color=COLOR_DLS, linewidth=1.2)]
+    fig.legend(handles, ["SEM, Feret diameter", "DLS, intensity-weighted (sum of replicates)"],
                loc="outside upper center", ncol=2, frameon=False)
     return fig
 
@@ -179,17 +187,18 @@ def plot_comparison(particles: pd.DataFrame, dls: dict[int, list[MeasurementData
 def main(show: bool = SHOW_FIGURE):
     """Build the SEM vs. DLS comparison figure and statistics workbook."""
     particles = load_particles()
-    dls = group_accepted_measurements(load_litesizer_xlsx(XLSX_PATH), SIZES, MAX_PDI)
-    stats = compare_statistics(particles, dls)
+    dls_curves, dls_groups = combined_dls_curves(SIZES)
+    stats = compare_statistics(particles, summarize_size_statistics(dls_groups))
 
     with pd.option_context("display.width", 220, "display.max_columns", 30, "display.precision", 2):
         print()
-        print(stats[["label", "sem_n_particles", "sem_mean_nm", "sem_sd_nm", "sem_median_nm",
-                     "dls_n_measurements", "dls_number_mean_nm", "dls_number_sd_nm", "dls_z_average_nm",
-                     "ratio_sem_to_dls_number", "ratio_sem_to_dls_z_average"]].to_string(index=False))
+        print(stats[["label", "sem_n_particles", "sem_feret_mean_nm", "sem_feret_sd_nm",
+                     "sem_mean_feret_mean_nm", "sem_mean_feret_sd_nm", "n_measurements",
+                     "dls_diameter_mean_nm", "dls_diameter_sd_nm", "pdi_mean_pct",
+                     "ratio_sem_feret_to_dls", "ratio_sem_mean_feret_to_dls"]].to_string(index=False))
 
     with plt.style.context(STYLE_PATH):
-        fig = plot_comparison(particles, dls, stats)
+        fig = plot_comparison(particles, dls_curves, stats)
         if show:
             plt.show()
         if SAVE_PATH is not None:

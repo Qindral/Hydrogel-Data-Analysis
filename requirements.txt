@@ -23,6 +23,7 @@ kiwisolver>=1.4
 contourpy>=1.3
 fonttools
 openpyxl
+xlrd>=2.0          # legacy .xls (TRIOS rheometer exports, Rheology/)
 
 
 # Optional: GUI packages

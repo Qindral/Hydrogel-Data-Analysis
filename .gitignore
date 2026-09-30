@@ -32,3 +32,4 @@ analysis_results/bildinventur/node_modules/bmp-js/test/bit16_565_out.bmp
 *.csv
 *.html
 *.html
+*.zip
