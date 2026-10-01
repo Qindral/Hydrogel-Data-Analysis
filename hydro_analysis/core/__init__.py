@@ -1,7 +1,7 @@
 """Core functionality for hydrogel analysis."""
 
 # Physics functions
-from .physics import calculate_theoretical_psf_sigma
+from .physics import calculate_theoretical_psf_sigma, calculate_network_mesh_size
 
 # IO functions
 from .io import (
@@ -46,6 +46,7 @@ from .visualization import (
 __all__ = [
     # Physics functions
     'calculate_theoretical_psf_sigma',
+    'calculate_network_mesh_size',
 
     # IO functions
     'find_rec_tif_files',

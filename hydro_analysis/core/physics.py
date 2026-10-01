@@ -26,6 +26,28 @@ def calculate_theoretical_diffusion(
     return D_um2_per_s
 
 
+def calculate_network_mesh_size(
+    storage_modulus_Pa,
+    temperature_K: float = TEMPERATURE_K,
+    front_factor: float = 1.0,
+):
+    """
+    Mesh size of a polymer network from its elastic modulus (rubber elasticity).
+
+    G' = g * nu * k_B * T, with nu the number density of elastically active
+    strands and g the front factor of the network model (affine network g = 1,
+    phantom network g = 1 - 2/f for junction functionality f, e.g. 0.5 for f = 4).
+    The characteristic mesh size is xi = nu^(-1/3) = (g * k_B * T / G')^(1/3)
+    (Rubinstein & Colby, Polymer Physics, 2003, ch. 7; de Gennes scaling).
+    It describes the distance between elastically effective junctions, not the
+    size of pores seen by electron microscopy.
+
+    Accepts scalars or arrays; returns xi in nm.
+    """
+    g_prime = np.asarray(storage_modulus_Pa, dtype=float)
+    return (front_factor * BOLTZMANN_CONSTANT * temperature_K / g_prime) ** (1.0 / 3.0) * 1e9
+
+
 def calculate_theoretical_psf_sigma(wavelength_nm: float, numerical_aperture: float) -> float:
     """
     Gaussian-approximation of a diffraction-limited widefield/epifluorescence

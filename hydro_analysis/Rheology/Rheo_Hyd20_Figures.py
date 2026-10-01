@@ -24,6 +24,12 @@ Figures (OUTPUT_ROOT/figures/...):
                                       mean G'(f), G''(f) and tan(delta)(f) +- SD
                                       (table mean_frequency_sweeps), and G', G'',
                                       tan(delta) at 0.5 Hz vs. age (mean +- SD, N)
+  mesh_size/          mesh_size_vs_age   network mesh size xi = (g k_B T / G')^(1/3)
+                                      per specimen and per age, pooled mean over
+                                      all ages (affine, and phantom f = 4 as reference)
+                      pore_size_phantom_network  diamond cell (f = 4) to scale with
+                                      cavity sphere; cavity and throat diameter vs.
+                                      strand diameter for f = 4 and f = 6
   validation/         tri_vs_xls_parity   reconstructed vs. TRIOS-exported moduli
 
 In B and C both casts share one age axis, because they come from the same
@@ -44,6 +50,7 @@ from __future__ import annotations
 import pickle
 import re
 import time
+from itertools import product
 from pathlib import Path
 from typing import Dict
 
@@ -54,6 +61,7 @@ import pandas as pd
 from matplotlib.lines import Line2D
 
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _DASH_THEORY
+from hydro_analysis.Rheology.network_geometry import lattice_segments
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "rheo_hyd20_results.pkl"
@@ -367,6 +375,143 @@ def plot_viscoelastic_mean(cache: dict, folder: Path) -> None:
     save(fig, folder, "stability_d_viscoelastic_mean")
 
 
+def plot_mesh_size(cache: dict, folder: Path) -> None:
+    """Network mesh size xi (affine network) vs. gel age; pooled mean over all ages as band.
+
+    Specimen values coloured by cast, mean +- SD per age as black-edged diamonds, pooled
+    mean +- SD over all specimens as solid line and grey band, the phantom-network (f = 4)
+    pooled mean as dashed reference line.
+    """
+    mesh = cache["tables"]["mesh_size"]
+    mesh = mesh[mesh["selection"] == FIG_SELECTION]
+    spec = mesh[mesh["level"] == "specimen"]
+    ages = mesh[mesh["level"] == "age"].sort_values("age_d")
+    pooled = mesh[mesh["level"] == "pooled_all_ages"].iloc[0]
+    casts = _cast_styles(spec["cast"].unique())
+    dark = COLOR_SINGLE[1]
+
+    fig, ax = new_figure("narrow")
+    x_max = spec["age_d"].max() + 2
+    mean, sd = pooled["xi_affine_nm_mean"], pooled["xi_affine_nm_sd"]
+    ax.axhspan(mean - sd, mean + sd, color=WINDOW_SHADE, lw=0, zorder=0)
+    ax.axhline(mean, color=dark, lw=1.5, zorder=1,
+               label=f"all ages, affine: {mean:.1f} ± {sd:.1f} nm (N = {pooled['N_specimens']:.0f})")
+    ax.axhline(pooled["xi_phantom_f4_nm_mean"], color="black", lw=1.2, ls=_DASH_THEORY, zorder=1,
+               label=f"all ages, phantom (f = 4): {pooled['xi_phantom_f4_nm_mean']:.1f} nm")
+    for _, row in spec.iterrows():
+        (c_base, c_dark), _ = casts[row["cast"]]
+        ax.plot(row["age_d"], row["xi_affine_nm_mean"], "o", ms=4, mfc=c_base, mec=c_dark, alpha=POINT_ALPHA, zorder=3)
+    ax.errorbar(ages["age_d"], ages["xi_affine_nm_mean"], yerr=ages["xi_affine_nm_sd"], fmt="D", ms=5,
+                mfc="#444444", mec="black", mew=0.8, ecolor="black", elinewidth=0.8, capsize=2.0, capthick=0.8,
+                zorder=4, label="mean ± SD per age")
+    for _, row in ages.iterrows():
+        ax.text(row["age_d"], 0.04, f"N = {row['N_specimens']:.0f}", transform=ax.get_xaxis_transform(),
+                ha="center", va="bottom", fontsize=8)
+    ax.set_xlim(0, x_max)
+    ax.set_ylim(0, 1.5 * np.nanmax(spec["xi_affine_nm_mean"]))
+    ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
+    ax.xaxis.set_minor_locator(mticker.MultipleLocator(1))
+    ax.set_xlabel("Gel age t (d)")
+    ax.set_ylabel("Mesh size ξ (nm)")
+    handles = ax.get_legend_handles_labels()[0]
+    handles += [Line2D([], [], marker="o", ls="", mfc=casts[c][0][0], mec=casts[c][0][1], ms=4, label=_cast_label(c))
+                for c in sorted(casts)]
+    ax.legend(handles=handles, loc="upper left", ncol=1)
+    save(fig, folder, "mesh_size_vs_age")
+
+
+def _clip_segment_to_unit_cube(p0: np.ndarray, p1: np.ndarray):
+    """Part of the segment p0-p1 inside [0, 1]^3 (Liang-Barsky), or None."""
+    d = p1 - p0
+    t0, t1 = 0.0, 1.0
+    for i in range(3):
+        for p, q in ((-d[i], p0[i]), (d[i], 1.0 - p0[i])):
+            if abs(p) < 1e-12:
+                if q < -1e-12:
+                    return None
+                continue
+            t = q / p
+            if p < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+    if t1 - t0 < 1e-9:
+        return None
+    return np.array([p0 + t0 * d, p0 + t1 * d])
+
+
+def plot_pore_size(cache: dict, folder: Path) -> None:
+    """Pore geometry of the phantom network (pooled over all ages, FIG_SELECTION).
+
+    A  diamond-lattice cell (f = 4) to scale for the pooled mean G': strands (d_f = 0),
+       junctions, and the cavity sphere
+    B  cavity and throat diameter vs. strand diameter d_f, diamond (f = 4, solid) and simple
+       cubic (f = 6, dashed) lattice, mean +- SD over specimens as band
+    """
+    pores = cache["tables"]["pore_size_phantom_network"]
+    pooled = pores[(pores["level"] == "pooled_all_ages") & (pores["selection"] == FIG_SELECTION)]
+    geo = cache["lattice_geometry"][4]
+    ref = pooled[(pooled["functionality"] == 4) & (pooled["strand_diameter_nm"] == 0)].iloc[0]
+    a = ref["cell_edge_nm_mean"]
+
+    fig = plt.figure(figsize=(WIDTH_IN["full"], 3.1))
+    ax_a = fig.add_subplot(1, 2, 1, projection="3d")
+    ax_b = fig.add_subplot(1, 2, 2)
+
+    # A: one cubic cell of the diamond lattice (periodic images clipped to the cell), lengths in nm
+    nodes = []
+    for shift in product((-1, 0, 1), repeat=3):
+        for p0, p1 in lattice_segments(4):
+            clipped = _clip_segment_to_unit_cube(p0 + np.array(shift), p1 + np.array(shift))
+            if clipped is not None:
+                ax_a.plot(*(clipped * a).T, color=COLOR_SINGLE[1], lw=1.2)
+                nodes += [p for p in (p0 + np.array(shift), p1 + np.array(shift)) if np.all((p >= -1e-9) & (p <= 1 + 1e-9))]
+    nodes = np.unique(np.round(np.array(nodes), 6), axis=0) * a
+    ax_a.scatter(*nodes.T, s=8, color=COLOR_SINGLE[1], depthshade=False)
+    for corner in product((0, 1), repeat=3):
+        for axis in range(3):
+            if corner[axis] == 0:
+                end = list(corner)
+                end[axis] = 1
+                ax_a.plot(*(np.array([corner, end]) * a).T, color="#9a9a9a", lw=0.6)
+    u, v = np.meshgrid(np.linspace(0, 2 * np.pi, 30), np.linspace(0, np.pi, 15))
+    r = ref["cavity_diameter_nm_mean"] / 2
+    c = geo["cavity_centre"] * a
+    ax_a.plot_surface(c[0] + r * np.cos(u) * np.sin(v), c[1] + r * np.sin(u) * np.sin(v), c[2] + r * np.cos(v),
+                      color=COLOR_CAST[0][0], alpha=0.35, lw=0)
+    ax_a.set_box_aspect((1, 1, 1))
+    ax_a.grid(False)
+    for axis in (ax_a.xaxis, ax_a.yaxis, ax_a.zaxis):
+        axis.pane.fill = False
+        axis.pane.set_edgecolor("none")
+        axis.set_ticks([0, round(a / 10) * 10])
+    ax_a.set_xlabel("x (nm)", labelpad=-8)
+    ax_a.set_ylabel("y (nm)", labelpad=-8)
+    ax_a.set_zlabel("z (nm)", labelpad=-8)
+    ax_a.tick_params(pad=-3)
+    ax_a.text2D(0.5, -0.04, f"cell edge a = {a:.1f} nm, strand length b = {ref['strand_length_nm_mean']:.1f} nm,\n"
+                f"cavity sphere d = {ref['cavity_diameter_nm_mean']:.1f} nm (d$_f$ = 0)",
+                transform=ax_a.transAxes, ha="center", va="top", fontsize=8)
+
+    # B: diameters vs. strand diameter
+    for f, ls, marker in ((4, "-", "o"), (6, _DASH_THEORY, "s")):
+        sub = pooled[pooled["functionality"] == f].sort_values("strand_diameter_nm")
+        lattice = sub["lattice"].iloc[0]
+        for kind, (base, dark) in (("cavity", COLOR_CAST[0]), ("throat", COLOR_CAST[1])):
+            m, s = sub[f"{kind}_diameter_nm_mean"], sub[f"{kind}_diameter_nm_sd"]
+            ax_b.fill_between(sub["strand_diameter_nm"], m - s, m + s, color=base, alpha=0.15, lw=0)
+            ax_b.plot(sub["strand_diameter_nm"], m, ls=ls, marker=marker, ms=4, lw=1.2, color=dark, mfc=base, mec=dark,
+                      label=f"{kind}, {lattice} (f = {f})")
+    ax_b.set_xlabel("Strand diameter d$_f$ (nm)")
+    ax_b.set_ylabel("Pore diameter (nm)")
+    ax_b.set_ylim(0, None)
+    ax_b.legend(loc="lower left")
+
+    ax_a.text2D(0.0, 1.02, "A", transform=ax_a.transAxes, fontsize=10, fontweight="bold")
+    ax_b.text(-0.16, 1.02, "B", transform=ax_b.transAxes, fontsize=10, fontweight="bold", va="bottom")
+    save(fig, folder, "pore_size_phantom_network")
+
+
 # ── Validation ─────────────────────────────────────────────────────────────────
 
 def plot_validation(cache: dict, folder: Path) -> None:
@@ -409,6 +554,8 @@ def main() -> None:
         plot_stability_summary(cache, figs / "stability", normalised=True)
         plot_stability_summary(cache, figs / "stability", normalised=False)
         plot_viscoelastic_mean(cache, figs / "stability")
+        plot_mesh_size(cache, figs / "mesh_size")
+        plot_pore_size(cache, figs / "mesh_size")
         plot_validation(cache, figs / "validation")
     print(f"Figures written to {figs}")
 

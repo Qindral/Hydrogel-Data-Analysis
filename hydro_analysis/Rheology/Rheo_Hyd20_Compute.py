@@ -55,7 +55,15 @@ Writes (unconditionally overwritten, always recomputed from the raw files):
     stability_summary.csv, stability_summary_by_cast.csv,
     stability_specimen_level.csv, mean_frequency_sweeps.csv (mean +- SD of G', G'',
     tan(delta) per age on a common frequency grid, log-log interpolated within
-    each sweep's valid range), quality_control.csv, measurement_metadata.csv,
+    each sweep's valid range), mesh_size.csv (network mesh size from rubber
+    elasticity, xi = (g k_B T / G')^(1/3), per specimen, per age and pooled over
+    all ages; affine g = 1 and phantom-network g = 0.5 per MESH_MODELS; this is the
+    elastically effective mesh size, not an SEM pore size),
+    pore_size_phantom_network.csv (cavity and throat diameters of the regular
+    lattice matching a phantom network of junction functionality f = 4 (diamond)
+    or 6 (simple cubic) with the measured G', for several strand diameters;
+    see network_geometry.py), quality_control.csv,
+    measurement_metadata.csv,
     fit_parameters.csv, tri_vs_xls_validation.csv
 Consumer: Rheo_Hyd20_Figures.py reads the pickle and draws all figures.
 """
@@ -85,6 +93,8 @@ from hydro_analysis.Rheology.rheo_analysis import (
     oscillation_quantities,
     point_artifacts,
 )
+from hydro_analysis.core.physics import calculate_network_mesh_size
+from hydro_analysis.Rheology.network_geometry import cell_edge_from_modulus, lattice_geometry, validate_cubic_lattice
 from hydro_analysis.Rheology.trios_tri_parser import TriRun, read_trios_xls, read_tri
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -135,6 +145,17 @@ TARGET_FREQUENCY_HZ = 0.5
 TARGET_TOLERANCE_DECADES = 0.05          # measured point counts as "at 0.5 Hz" within +-12 %
 REPRESENTATIVE_GP_ORDER = ("fit_at_target", "measured_at_target", "plateau_mean")
 LVR_CRITERIA = LVRCriteria(n_ref_points=4, deviation_levels=(0.05, 0.10), n_consecutive=2, max_ref_cv=0.05)
+# Network mesh size xi = (g k_B T / G')^(1/3) (core.physics.calculate_network_mesh_size) from the
+# representative G' per specimen; g = front factor of the network model.
+MESH_SIZE_MODULUS = "Gp_rep_Pa"
+MESH_MODELS = {"affine": 1.0, "phantom_f4": 0.5}     # phantom network: g = 1 - 2/f, f = 4
+
+# Pore geometry of the phantom network (network_geometry.py): junction functionality f selects the
+# lattice (4: diamond, primary model; 6: simple cubic, comparison); the strand diameter d_f is not
+# known from rheology and is therefore varied (0 nm = ideally thin strands, upper bound of the pore size).
+PORE_FUNCTIONALITIES = (4, 6)
+STRAND_DIAMETERS_NM = (0.0, 1.0, 2.0, 5.0)
+
 # Common grid for the mean frequency sweeps per age: 0.1-100 rad/s, 5 points per decade (TRIOS default grid)
 MEAN_CURVE_OMEGA_RAD_S = 10.0 ** np.arange(-1.0, 2.0 + 1e-9, 1 / 5)
 
@@ -481,7 +502,7 @@ SELECTIONS = ("all_analysable", "qc_filtered")
 META_COLUMNS = ["run", "batch", "cast", "age_d", "specimen_id", "position", "gap_um",
                 "run_datetime", "cracks_noted", "dilution_note"]
 FS_VALUES = ["Gp_rep_Pa", "Gp_mean_Pa", "Gpp_mean_Pa", "tan_delta_mean", "slope_m",
-             "Gpp_0p5Hz_interp_Pa", "tan_delta_0p5Hz_interp"]
+             "Gpp_0p5Hz_interp_Pa", "tan_delta_0p5Hz_interp", "temperature_K"]
 AS_VALUES = ["Gp_ref_Pa", "strain_5pct_pct", "strain_10pct_pct", "crossover_strain_pct", "crossover_stress_Pa"]
 
 
@@ -514,6 +535,7 @@ def frequency_sweep_row(meta: dict, res: dict, qc_status: str) -> dict:
         "Gp_0p5Hz_interp_Pa": res["Gp_0p5Hz_interp_Pa"],
         "Gpp_0p5Hz_interp_Pa": res["Gpp_0p5Hz_interp_Pa"],
         "tan_delta_0p5Hz_interp": res["tan_delta_0p5Hz_interp"],
+        "temperature_K": res["temperature_K"],
         "overall_slope_m": res["overall_slope"],
         "n_points": meta["n_points"],
         "n_valid_points": res["n_valid"],
@@ -617,6 +639,78 @@ def mean_frequency_sweeps(fs: pd.DataFrame, results: Dict[str, dict], metas: Dic
     return out.reset_index()
 
 
+def mesh_size_table(specimens: pd.DataFrame) -> pd.DataFrame:
+    """Network mesh size per specimen, per age and pooled over all ages (N = specimens).
+
+    xi is computed per specimen from its representative G' and measured temperature and then
+    averaged; the pooled row combines all specimens of all ages, which is justified only as
+    long as G' does not change systematically with age (see stability_summary).
+    Additionally, xi of the pooled mean G' is given for comparison.
+    """
+    spec = specimens[(specimens["sweep_type"] == "frequency_sweep")].dropna(subset=[MESH_SIZE_MODULUS]).copy()
+    for model, g in MESH_MODELS.items():
+        spec[f"xi_{model}_nm"] = calculate_network_mesh_size(spec[MESH_SIZE_MODULUS], spec["temperature_K"], g)
+    xi_cols = [f"xi_{m}_nm" for m in MESH_MODELS]
+    rows = []
+    for _, r in spec.iterrows():
+        rows.append({"level": "specimen", "selection": r["selection"], "age_d": r["age_d"], "cast": r["cast"],
+                     "specimen_id": r["specimen_id"], "N_specimens": 1, "runs": r["runs"],
+                     "Gp_Pa_mean": r[MESH_SIZE_MODULUS], "temperature_K": r["temperature_K"],
+                     **{f"{c}_mean": r[c] for c in xi_cols}})
+    for selection, sel in spec.groupby("selection"):
+        groups = [("age", age, g) for age, g in sel.groupby("age_d")] + [("pooled_all_ages", np.nan, sel)]
+        for level, age, g in groups:
+            row = {"level": level, "selection": selection, "age_d": age, "N_specimens": len(g),
+                   "cast": ", ".join(sorted(g["cast"].unique())),
+                   "ages_included_d": ", ".join(f"{a:g}" for a in sorted(g["age_d"].unique()))}
+            d = describe(g[MESH_SIZE_MODULUS].tolist())
+            row.update({"Gp_Pa_mean": d["mean"], "Gp_Pa_sd": d["sd"], "temperature_K": g["temperature_K"].mean()})
+            for model, gfac in MESH_MODELS.items():
+                d = describe(g[f"xi_{model}_nm"].tolist())
+                row.update({f"xi_{model}_nm_mean": d["mean"], f"xi_{model}_nm_sd": d["sd"],
+                            f"xi_{model}_nm_min": d["min"], f"xi_{model}_nm_max": d["max"],
+                            f"xi_{model}_nm_from_mean_Gp": float(calculate_network_mesh_size(
+                                row["Gp_Pa_mean"], row["temperature_K"], gfac))})
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def pore_size_table(specimens: pd.DataFrame, geometries: Dict[int, dict]) -> pd.DataFrame:
+    """Cavity and throat diameters of the phantom-network lattice per specimen, per age and pooled.
+
+    Per specimen: cell edge a from its representative G' and temperature, then
+    d = (dimensionless axis diameter) * a - d_f for every strand diameter d_f; values <= 0 are NaN
+    (strands too thick for the lattice). Group rows give mean +- SD over specimens (N = specimens).
+    """
+    spec = specimens[(specimens["sweep_type"] == "frequency_sweep")].dropna(subset=[MESH_SIZE_MODULUS])
+    rows = []
+    for f, geo in geometries.items():
+        a_nm = cell_edge_from_modulus(spec[MESH_SIZE_MODULUS], spec["temperature_K"], f) * 1e9
+        for d_f in STRAND_DIAMETERS_NM:
+            frame = spec[["selection", "cast", "age_d", "specimen_id", MESH_SIZE_MODULUS]].copy()
+            frame["cell_edge_nm"] = np.asarray(a_nm)
+            frame["strand_length_nm"] = frame["cell_edge_nm"] * geo["strand_length"]
+            for kind in ("cavity", "throat"):
+                d = frame["cell_edge_nm"] * geo[f"{kind}_axis_diameter"] - d_f
+                frame[f"{kind}_diameter_nm"] = d.where(d > 0)
+            frame["functionality"], frame["lattice"] = f, {4: "diamond", 6: "simple cubic"}[f]
+            frame["strand_diameter_nm"] = d_f
+            rows.append(frame.assign(level="specimen", N_specimens=1))
+    per_spec = pd.concat(rows, ignore_index=True)
+
+    value_cols = ["cell_edge_nm", "strand_length_nm", "cavity_diameter_nm", "throat_diameter_nm"]
+    keys = ["selection", "functionality", "lattice", "strand_diameter_nm"]
+    groups = []
+    for level, extra in (("age", ["age_d"]), ("pooled_all_ages", [])):
+        grouped = per_spec.groupby(keys + extra)
+        agg = grouped[value_cols].agg(["mean", "std"])
+        agg.columns = [f"{c}_{'sd' if s == 'std' else s}" for c, s in agg.columns]
+        agg["N_specimens"] = grouped.size()
+        groups.append(agg.reset_index().assign(level=level))
+    per_spec = per_spec.rename(columns={c: f"{c}_mean" for c in value_cols})
+    return pd.concat([per_spec] + groups, ignore_index=True)
+
+
 def stability_tables(fs: pd.DataFrame, amp: pd.DataFrame, metas: Dict[str, dict]
                      ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Specimen-level table, summary per batch and age (casts pooled) and per batch, cast and age."""
@@ -710,6 +804,7 @@ def main() -> None:
             continue
         if kind == "frequency_sweep":
             results[stem]["fs"] = analyse_frequency_sweep(derived)
+            results[stem]["fs"]["temperature_K"] = float(np.nanmedian(raw["temperature_C"])) + 273.15
             qc_frequency_sweep(qc, stem, results[stem]["fs"])
         elif kind == "amplitude_sweep":
             results[stem]["as"] = analyse_amplitude_sweep(derived)
@@ -742,6 +837,10 @@ def main() -> None:
         table["qc_codes"] = table["run"].map(lambda s: ", ".join(sorted(qc.codes_of(s))))
     stability, stability_by_cast, specimens = stability_tables(fs_table, as_table, metas)
     mean_sweeps = mean_frequency_sweeps(fs_table, results, metas)
+    mesh = mesh_size_table(specimens)
+    geometries = {f: lattice_geometry(f) for f in PORE_FUNCTIONALITIES}
+    geometry_check = validate_cubic_lattice()
+    pores = pore_size_table(specimens, geometries)
     fit_params = fit_parameter_table(fs_table.dropna(subset=["window_n_points"]))
     validation, validation_points = validate_against_xls(results)
 
@@ -779,6 +878,8 @@ def main() -> None:
         "stability_summary_by_cast": stability_by_cast,
         "stability_specimen_level": specimens,
         "mean_frequency_sweeps": mean_sweeps,
+        "mesh_size": mesh,
+        "pore_size_phantom_network": pores,
         "quality_control": qc_table,
         "measurement_metadata": meta_table,
         "fit_parameters": fit_params,
@@ -803,6 +904,8 @@ def main() -> None:
             "results": results,
             "tables": tables,
             "validation_points": validation_points,
+            "lattice_geometry": {f: {k: v for k, v in g.items() if k != "field"} for f, g in geometries.items()},
+            "lattice_geometry_check": geometry_check,
         }, fh)
 
     # ── Console summary ──
@@ -817,6 +920,19 @@ def main() -> None:
             "Gp_rep_norm_to_first_age", "tan_delta_mean_mean", "as_N_specimens", "strain_10pct_pct_mean"]
     print("\nStability summary (casts pooled):")
     print(stability[cols].to_string(index=False, float_format=lambda v: f"{v:.3g}"))
+    mesh_cols = ["selection", "level", "age_d", "N_specimens", "Gp_Pa_mean", "Gp_Pa_sd"] + \
+        [f"xi_{m}_nm_{s}" for m in MESH_MODELS for s in ("mean", "sd")]
+    print("\nNetwork mesh size xi = (g k_B T / G')^(1/3):")
+    print(mesh[mesh["level"] != "specimen"][mesh_cols].to_string(index=False, float_format=lambda v: f"{v:.3g}"))
+    print("\nPhantom-network lattice geometry (units of the cell edge a):")
+    for f, g in geometries.items():
+        print(f"  f = {f}: cavity {g['cavity_axis_diameter']:.4f} a, throat {g['throat_axis_diameter']:.4f} a, "
+              f"strand length {g['strand_length']:.4f} a")
+    print(f"  check simple cubic vs. analytic: {geometry_check}")
+    pooled = pores[(pores["level"] == "pooled_all_ages") & (pores["selection"] == "qc_filtered")]
+    print(pooled[["lattice", "strand_diameter_nm", "N_specimens", "cell_edge_nm_mean", "strand_length_nm_mean",
+                  "cavity_diameter_nm_mean", "cavity_diameter_nm_sd", "throat_diameter_nm_mean", "throat_diameter_nm_sd"]]
+          .to_string(index=False, float_format=lambda v: f"{v:.3g}"))
     print(f"\nTables: {dirs['tables']}\nCache:  {CACHE_PATH}")
 
 
