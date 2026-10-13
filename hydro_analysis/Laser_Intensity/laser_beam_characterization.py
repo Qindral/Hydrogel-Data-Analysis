@@ -21,8 +21,11 @@ Single-frame outliers (e.g. one over-range pixel) are replaced by the temporal m
 static hot pixels by the 5 x 5 median of the mean image.
 
 An axis-aligned 2D Gaussian, E0 exp(-2 ((x - x0)^2 / wx^2 + (y - y0)^2 / wy^2)), with
-1/e^2 radii wx, wy, is fitted to E. The x and y profiles through the fitted centre
-are averaged over PROFILE_AVG_PX rows / columns; the fit is averaged identically.
+1/e^2 radii wx, wy, is fitted to E. Profiles (user, 2026-10-07): the single pixel row and
+column nearest the fitted centre (x0, y0), without averaging over neighbouring rows or
+columns; a centre outside the visible area is clipped to the nearest edge row / column
+(514 nm and 514_2: x0 at about -31 / -33 µm, image +-30 µm). The fit is evaluated on the
+same row and column.
 
 Power per particle in the focus: P_particle = E_focus * pi d^2 / 4, the power
 incident on the geometric cross-section of a particle with the DLS diameter d
@@ -31,11 +34,15 @@ visible area: the beam centre (E0) if it lies inside, else the brightest point a
 particle in the image can reach. This is incident, not absorbed, power.
 
 Stage: compute stage. Reads the raw TIFF stacks and .rec files in DATA_DIR on every
-run and overwrites in OUTPUT_DIR (no pickle cache, no consumers):
+run and overwrites in OUTPUT_DIR (no pickle cache; irradiance_results.csv is read by
+spt_irradiance_overview.py):
   irradiance_results.csv              P (W), mean, focus and fitted peak irradiance (W/m^2), Gaussian parameters
   irradiance_power_per_particle.csv   per setting: P (W), E_mean and E_focus (W/m^2, W/cm^2),
                                       incident power per particle (W) for every DLS particle size
-  irradiance_<file stem>.pdf          irradiance map with 1/e^2 contour, x and y profiles with the fit
+  beam_profiles_through_centre.csv    the plotted profiles: E measured and fitted per pixel
+  laser_beam_exclusions.csv           per file: temporal outliers and hot pixels replaced
+  beam_profiles_all_settings.pdf      x and y profiles through the centre, all wavelengths and powers
+  beam_profiles_all_settings_fit.pdf  the same with the 2D Gaussian fit on the same row / column
 Related: laser_intensity_calibration.py (same raw data); not read or modified here.
 """
 import re
@@ -46,7 +53,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tifffile
-from matplotlib.patches import Ellipse
 from scipy.ndimage import median_filter
 from scipy.optimize import curve_fit
 
@@ -60,17 +66,17 @@ OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bild
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 
 VISIBLE_PX = (200, 150)                 # SPT camera image (x, y) at 4 x 4 binning, sensor-centred
-PROFILE_AVG_PX = 5
 TEMPORAL_OUTLIER_SIGMA = 8.0
 HOT_PIXEL_SIGMA = 8.0
 HOT_PIXEL_BOX_PX = 5
 BACKGROUND_SMOOTH_PX = 15
 BACKGROUND_PERCENTILE = 1.0
 
-FIG_SIZE_IN = (6.30, 3.4)
-COLOR_X = ("#3B8C8C", "#2A6666")        # category A
-COLOR_Y = ("#D98C3D", "#A6672D")        # category B
-COLOR_ACCENT = "#da00bd"
+FIG_SIZE_IN = (6.30, 3.6)               # width class "full"; two panels side by side, legend below
+# per wavelength, ordered by increasing power (light to dark): shades of the laser colours,
+# 488 nm cyan-blue, 514 nm green (user, 2026-10-07; deviates from the style guide palette)
+SETTING_COLORS = {488: ["#1c78c4", "#005db4", "#0B2A92"], 514: ["#2ad232", "#3ba521", "#499136"]}
+MEASURED_ALPHA_WITH_FIT = 0.45
 PANEL_LABEL_KW = dict(fontsize=10, fontweight="bold", va="bottom", ha="left")
 SAVE_RETRIES = 5
 
@@ -80,7 +86,8 @@ def load_measurement(tif_path: Path) -> dict:
     frames = tifffile.imread(tif_path).astype(np.float64)
     med = np.median(frames, axis=0)
     mad = 1.4826 * np.median(np.abs(frames - med), axis=0)
-    frames = np.where(np.abs(frames - med) > TEMPORAL_OUTLIER_SIGMA * np.maximum(mad, 1.0), med, frames)
+    outlier = np.abs(frames - med) > TEMPORAL_OUTLIER_SIGMA * np.maximum(mad, 1.0)
+    frames = np.where(outlier, med, frames)
     img = frames.mean(axis=0)
     local = median_filter(img, size=HOT_PIXEL_BOX_PX)
     diff = img - local
@@ -90,7 +97,9 @@ def load_measurement(tif_path: Path) -> dict:
             "wavelength_nm": int(re.search(r"_(\d{3})(?:_\d+)?\.tif$", tif_path.name).group(1)),
             "P_W": parse_rec_comment_metadata(rec_path)["laser_power_mW"] * 1e-3,
             "pixel_um": float(parse_rec_file(rec_path)["mpp"]), "img": img,
-            "dark_counts": float(np.percentile(median_filter(img, BACKGROUND_SMOOTH_PX), BACKGROUND_PERCENTILE))}
+            "dark_counts": float(np.percentile(median_filter(img, BACKGROUND_SMOOTH_PX), BACKGROUND_PERCENTILE)),
+            "n_values": int(frames.size), "n_temporal_outliers": int(outlier.sum()),
+            "n_pixels": int(img.size), "n_hot_pixels": int(hot.sum())}
 
 
 def irradiance_map(m: dict, background: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -120,71 +129,61 @@ def fit_gaussian(E: np.ndarray, x: np.ndarray, y: np.ndarray) -> dict:
             "R2": float(1.0 - np.sum((E - model) ** 2) / np.sum((E - E.mean()) ** 2)), "model": model}
 
 
-def line_profiles(E: np.ndarray, x: np.ndarray, y: np.ndarray, fit: dict) -> dict:
-    """Measured and fitted E along x and y through the fitted centre, averaged over PROFILE_AVG_PX rows / columns."""
-    h = PROFILE_AVG_PX // 2
-    iy = int(np.clip(np.argmin(np.abs(y - fit["y0"])), h, len(y) - 1 - h))
-    ix = int(np.clip(np.argmin(np.abs(x - fit["x0"])), h, len(x) - 1 - h))
-    rows, cols = slice(iy - h, iy + h + 1), slice(ix - h, ix + h + 1)
-    return {"x": (x, E[rows].mean(axis=0), fit["model"][rows].mean(axis=0), y[rows]),
-            "y": (y, E[:, cols].mean(axis=1), fit["model"][:, cols].mean(axis=1), x[cols])}
+def centre_profiles(E: np.ndarray, x: np.ndarray, y: np.ndarray, fit: dict) -> dict:
+    """Measured and fitted E along the single row and column nearest the fitted centre (no averaging).
+
+    The nearest index is always inside the image, so a centre outside it is clipped to the edge.
+    """
+    iy = int(np.argmin(np.abs(y - fit["y0"])))
+    ix = int(np.argmin(np.abs(x - fit["x0"])))
+    return {"x": (x, E[iy], fit["model"][iy], float(y[iy])),
+            "y": (y, E[:, ix], fit["model"][:, ix], float(x[ix]))}
 
 
-def _sci(value: float) -> str:
-    exponent = int(np.floor(np.log10(value)))
-    return rf"{value / 10.0 ** exponent:.2f} $\times$ $10^{{{exponent}}}$"
+def setting_label(m: dict) -> str:
+    return f"{m['wavelength_nm']} nm, {m['P_W'] * 1e3:g} mW"
 
 
-def plot_measurement(m: dict, E: np.ndarray, x: np.ndarray, y: np.ndarray, fit: dict, prof: dict) -> Path:
-    px = m["pixel_um"]
-    exponent = int(np.floor(np.log10(max(E.max(), fit["E0"]))))
-    scale = 10.0 ** exponent
-    unit = rf"($10^{{{exponent}}}$ W m$^{{-2}}$)"
-    ext = (x[0] - px / 2, x[-1] + px / 2, y[-1] + px / 2, y[0] - px / 2)
-
-    fig, axs = plt.subplot_mosaic([["A", "B"], ["A", "C"]], figsize=FIG_SIZE_IN, width_ratios=[1.15, 1.0])
-    ax = axs["A"]
-    im = ax.imshow(E / scale, extent=ext, cmap="viridis", vmin=0.0, interpolation="nearest", origin="upper")
-    ax.add_patch(Ellipse((fit["x0"], fit["y0"]), 2 * fit["wx"], 2 * fit["wy"], fill=False, ec=COLOR_ACCENT, lw=1.2))
-    band_y, band_x = prof["x"][3], prof["y"][3]
-    ax.axhspan(band_y[0] - px / 2, band_y[-1] + px / 2, color=COLOR_X[1], alpha=0.35, lw=0)
-    ax.axvspan(band_x[0] - px / 2, band_x[-1] + px / 2, color=COLOR_Y[1], alpha=0.35, lw=0)
-    ax.set_xlim(ext[:2])
-    ax.set_ylim(ext[2:])
-    ax.set_xlabel("x (µm)")
-    ax.set_ylabel("y (µm)")
-    ax.text(0.03, 0.04, rf"$P_\mathrm{{total}}$ = {_sci(m['P_W'])} W", transform=ax.transAxes, fontsize=8,
-            bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1.5))
-    cb = fig.colorbar(im, ax=ax, location="bottom", fraction=0.06, pad=0.02)
-    cb.set_label(f"Irradiance $E$ {unit}")
-
-    y_top = 1.15 * max(prof["x"][1].max(), prof["y"][1].max()) / scale
-    for key, colors in (("x", COLOR_X), ("y", COLOR_Y)):
-        ax = axs["B" if key == "x" else "C"]
-        pos, meas, model, _ = prof[key]
-        ax.plot(pos, meas / scale, color=colors[0], lw=1.0, label=f"Measured, {PROFILE_AVG_PX} px mean")
-        ax.plot(pos, model / scale, color=colors[1], lw=1.5,
-                label=rf"2D Gaussian fit, $w_{key}$ = {fit['w' + key]:.1f} µm")
-        ax.set_xlim(pos[0] - px / 2, pos[-1] + px / 2)
-        ax.set_ylim(0.0, y_top)
-        ax.set_xlabel(f"Position {key} (µm)")
-        ax.set_ylabel(f"$E$ {unit}")
-        ax.legend(loc="lower center", handlelength=1.6)
-    for label, ax in axs.items():
-        ax.text(0.0, 1.02, label, transform=ax.transAxes, **PANEL_LABEL_KW)
-
-    path = OUTPUT_DIR / f"irradiance_{m['stem']}.pdf"
+def save_figure(fig: plt.Figure, path: Path) -> None:
     # The external drive occasionally refuses to open a file that a viewer holds; retry briefly.
     for attempt in range(SAVE_RETRIES):
         try:
             fig.savefig(path)
-            break
+            return
         except OSError:
             if attempt == SAVE_RETRIES - 1:
                 raise
             time.sleep(1.0)
-    plt.close(fig)
-    return path
+
+
+def plot_profiles(entries: list[tuple[dict, dict]], with_fit: bool) -> plt.Figure:
+    """x and y profiles of all settings; entries = [(measurement, centre_profiles), ...] in plot order."""
+    exponent = int(np.floor(np.log10(max(max(pr[k][1].max(), pr[k][2].max()) for _, pr in entries for k in "xy"))))
+    scale = 10.0 ** exponent
+    fig, axs = plt.subplots(1, 2, figsize=FIG_SIZE_IN, sharey=True, layout="constrained")
+    n_seen = {}
+    for m, prof in entries:
+        i = n_seen[m["wavelength_nm"]] = n_seen.get(m["wavelength_nm"], -1) + 1
+        color = SETTING_COLORS[m["wavelength_nm"]][i]
+        for ax, key in zip(axs, "xy"):
+            pos, meas, model, _ = prof[key]
+            ax.plot(pos, meas / scale, color=color, lw=0.8 if with_fit else 1.0,
+                    alpha=MEASURED_ALPHA_WITH_FIT if with_fit else 1.0,
+                    label=None if with_fit else setting_label(m))
+            if with_fit:
+                ax.plot(pos, model / scale, color=color, lw=1.5, label=setting_label(m))
+    for ax, key, label in zip(axs, "xy", "AB"):
+        pos = entries[0][1][key][0]
+        px = pos[1] - pos[0]
+        ax.set_xlim(pos[0] - px / 2, pos[-1] + px / 2)
+        ax.set_ylim(0.0, None)
+        ax.set_xlabel(f"Position {key} (µm)")
+        ax.text(0.0, 1.02, label, transform=ax.transAxes, **PANEL_LABEL_KW)
+    axs[0].set_ylabel(rf"Irradiance $E$ ($10^{{{exponent}}}$ W m$^{{-2}}$)")
+    handles, labels = axs[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="outside lower center", ncols=2, frameon=False,
+               title="2D Gaussian fit (lines), measured (pale)" if with_fit else None, title_fontsize=8)
+    return fig
 
 
 def power_per_particle(results: pd.DataFrame) -> pd.DataFrame:
@@ -214,12 +213,19 @@ def main() -> None:
     background = min(m["dark_counts"] for m in ms)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    rows = []
+    rows, entries, profile_rows = [], [], []
     with plt.style.context(STYLE_PATH):
         for m in sorted(ms, key=lambda m: (m["wavelength_nm"], m["P_W"])):
             E, x, y = irradiance_map(m, background)
             fit = fit_gaussian(E, x, y)
-            plot_measurement(m, E, x, y, fit, line_profiles(E, x, y, fit))
+            prof = centre_profiles(E, x, y, fit)
+            entries.append((m, prof))
+            for key, other in (("x", "y"), ("y", "x")):
+                pos, meas, model, at = prof[key]
+                profile_rows += [{"file": m["file"], "wavelength_nm": m["wavelength_nm"], "P_total_W": m["P_W"],
+                                  "profile": key, f"{other}_um_of_profile": at, "position_um": float(q),
+                                  "E_measured_W_m2": float(e), "E_fit_W_m2": float(f)}
+                                 for q, e, f in zip(pos, meas, model)]
             A_px = (m["pixel_um"] * 1e-6) ** 2
             rows.append({"file": m["file"], "wavelength_nm": m["wavelength_nm"], "P_total_W": m["P_W"],
                          "visible_area_m2": E.size * A_px, "E_mean_W_m2": float(E.mean()),
@@ -228,6 +234,20 @@ def main() -> None:
                          "wy_um": fit["wy"], "wy_err_um": fit["wy_err"], "R2": fit["R2"],
                          "P_fit_visible_W": float(fit["model"].sum() * A_px), "background_counts": background})
 
+        for stem, with_fit in (("beam_profiles_all_settings", False), ("beam_profiles_all_settings_fit", True)):
+            fig = plot_profiles(entries, with_fit)
+            save_figure(fig, OUTPUT_DIR / f"{stem}.pdf")
+            plt.close(fig)
+
+    pd.DataFrame(profile_rows).to_csv(OUTPUT_DIR / "beam_profiles_through_centre.csv", index=False)
+    pd.DataFrame([row for m in ms for row in (
+        {"file": m["file"], "step": "temporal outlier", "parameter": f"{TEMPORAL_OUTLIER_SIGMA:g} x MAD",
+         "n_before": m["n_values"], "n_after": m["n_values"] - m["n_temporal_outliers"],
+         "reason": "pixel value replaced by its temporal median"},
+        {"file": m["file"], "step": "hot pixel", "parameter": f"{HOT_PIXEL_SIGMA:g} x MAD, {HOT_PIXEL_BOX_PX} px box",
+         "n_before": m["n_pixels"], "n_after": m["n_pixels"] - m["n_hot_pixels"],
+         "reason": "mean-image pixel replaced by the local median"}
+    )]).to_csv(OUTPUT_DIR / "laser_beam_exclusions.csv", index=False)
     results = pd.DataFrame(rows)
     results.to_csv(OUTPUT_DIR / "irradiance_results.csv", index=False)
     print(f"Background {background:.1f} counts; visible area {VISIBLE_PX[0]} x {VISIBLE_PX[1]} px")

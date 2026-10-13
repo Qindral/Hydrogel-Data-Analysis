@@ -1,0 +1,438 @@
+"""
+Printable fibrillar hydrogel network - generates a self-supporting, single-piece
+fibril network inside a cube and exports it as a watertight binary STL (mm).
+
+Construction, in this order:
+1. Fibrils: worm-like chains (persistence length LP_MM) grown inside the cube.
+   Near the walls the growth direction is bent smoothly inwards, so no fibril is
+   reflected with a kink or cut by a wall.
+2. Reactive ends: every fibril end is joined to a neighbouring fibril by a smooth
+   cubic Bezier bridge (tangent-continuous at the free end). No dangling ends.
+3. Contacts: wherever two fibril axes come closer than 2 r + MIN_GAP_MM, a short
+   bridge is placed. Near-misses therefore become solid junctions instead of thin
+   necks, and no slit narrower than MIN_GAP_MM remains between fibrils.
+4. Connectivity: the fibril graph is made connected and then 2-edge-connected,
+   i.e. every fibril cluster is held by at least two junctions (no part hangs on a
+   single joint).
+5. Surface: all centre lines are splatted into a voxel grid and convolved with a
+   Gaussian (convolution surface). The iso level is chosen so that an isolated
+   fibril has exactly FIBRIL_RADIUS_MM; junctions blend into rounded fillets.
+   Marching cubes on this field gives one closed, round surface without
+   overlapping tubes.
+6. Check: the solid is labelled (must be one piece) and eroded by
+   NECK_CHECK_FRACTION * r; if it still is one piece, every connection has a
+   cross-section of at least that inscribed radius.
+
+Synthetic geometry only; no measurement data is read. Output (STL, preview PNG
+and a parameter/statistics text file) is written to OUTPUT_DIR. No cache is read
+or written, no other script depends on this output.
+"""
+
+import os
+import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy import ndimage
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
+from scipy.spatial import cKDTree
+from skimage.measure import marching_cubes
+
+# ── Configuration ──
+OUTPUT_DIR = (r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
+              r"\Experiments and Results - Data\3D_Print_Hydrogel")
+OUTPUT_NAME = "hydrogel_fibril_network"
+SEED = 42
+
+BOX_MM = 120.0                # cube edge length, from the previous version
+FIBRIL_RADIUS_MM = 2       # 2 mm fibril diameter, from the previous version
+N_FIBRILS = 80              # from the previous version
+FIBRIL_LENGTH_MM = 90.0      # contour length per fibril, from the previous version
+LP_MM = 70.0                 # persistence length, PROPOSED, not approved
+STEP_MM = 0.5                # centre-line step of the chain growth, PROPOSED, not approved
+WALL_MARGIN_MM = 3.0         # minimum distance axis-wall (fibril surface 2 mm inside), PROPOSED
+WALL_STEER_MM = 8.0          # band near the walls in which growth bends inwards, PROPOSED
+
+MIN_GAP_MM = 0.8             # narrower gaps between fibril surfaces are fused, PROPOSED
+CONTACT_SPACING_MM = 1.0     # spacing of contact bridges along a parallel run, PROPOSED
+PARALLEL_COS = 0.7           # |cos| above which a neighbour counts as parallel (< 45 deg), PROPOSED
+AVOID_EXTRA_MM = 1.0         # avoidance acts up to 2 r + MIN_GAP_MM + this, PROPOSED
+AVOID_STRENGTH = 0.8         # weight of the avoidance in the growth direction, PROPOSED
+MAX_END_BRIDGE_MM = 25.0     # search radius for the partner of a free end, PROPOSED
+
+VOXEL_MM = 0.25              # grid resolution of the surface, PROPOSED
+BLEND_SIGMA_MM = 0.45        # Gaussian width; sets fillet radius at junctions, PROPOSED
+NECK_CHECK_FRACTION = 0.5    # erosion depth of the neck check, as fraction of r, PROPOSED
+
+SHOW_PREVIEW = True
+
+
+# ── Fibril centre lines ──
+
+def _normalize(v):
+    return v / np.linalg.norm(v, axis=-1, keepdims=True)
+
+
+def grow_fibrils(rng):
+    """Grow all worm-like chains in parallel. Returns array (N, M, 3) in mm."""
+    n_steps = int(round(FIBRIL_LENGTH_MM / STEP_MM))
+    lo, hi = WALL_MARGIN_MM, BOX_MM - WALL_MARGIN_MM
+    sigma_t = np.sqrt(2.0 * STEP_MM / LP_MM)
+
+    pts = np.empty((N_FIBRILS, n_steps + 1, 3))
+    pts[:, 0] = rng.uniform(lo + WALL_STEER_MM, hi - WALL_STEER_MM, (N_FIBRILS, 3))
+    tang = np.empty_like(pts)
+    t = _normalize(rng.normal(size=(N_FIBRILS, 3)))
+    tang[:, 0] = t
+    reach = 2.0 * FIBRIL_RADIUS_MM + MIN_GAP_MM + AVOID_EXTRA_MM
+    min_sep = int(np.ceil(np.pi * reach / STEP_MM))
+    n_clamped = 0
+    for k in range(1, n_steps + 1):
+        p = pts[:, k - 1]
+        # inward bias, ramping from 0 at the band edge to 1 at the margin
+        push = (np.clip((lo + WALL_STEER_MM - p) / WALL_STEER_MM, 0.0, 1.0)
+                - np.clip((p - (hi - WALL_STEER_MM)) / WALL_STEER_MM, 0.0, 1.0))
+        # bend away from nearly parallel neighbours; crossings are left alone
+        avoid = np.zeros_like(t)
+        old_p, old_t = pts[:, :k].reshape(-1, 3), tang[:, :k].reshape(-1, 3)
+        old_c, old_i = np.repeat(np.arange(N_FIBRILS), k), np.tile(np.arange(k), N_FIBRILS)
+        for c, nb in enumerate(cKDTree(old_p).query_ball_point(p, reach)):
+            nb = np.asarray(nb, dtype=int)
+            nb = nb[(old_c[nb] != c) | (old_i[nb] < k - 1 - min_sep)]
+            if nb.size == 0:
+                continue
+            par = np.abs(old_t[nb] @ t[c]) > PARALLEL_COS
+            if not par.any():
+                continue
+            v = p[c] - old_p[nb[par]]
+            v -= (np.einsum("ij,ij->i", v, old_t[nb[par]]))[:, None] * old_t[nb[par]]
+            d = np.maximum(np.linalg.norm(v, axis=1), 1e-6)
+            avoid[c] = ((reach - d) / reach / d) @ v
+        t = _normalize(t + sigma_t * rng.normal(size=t.shape) + 0.6 * push
+                       + AVOID_STRENGTH * avoid)
+        tang[:, k] = t
+        new = p + STEP_MM * t
+        clipped = np.clip(new, lo, hi)
+        n_clamped += int(np.any(clipped != new, axis=1).sum())
+        pts[:, k] = clipped
+    return pts, n_clamped
+
+
+# ── Bridges ──
+
+def bezier(p0, p1, p2, p3, step):
+    length = (np.linalg.norm(p1 - p0) + np.linalg.norm(p2 - p1)
+              + np.linalg.norm(p3 - p2))
+    n = max(int(np.ceil(length / step)), 2)
+    s = np.linspace(0.0, 1.0, n + 1)[:, None]
+    return ((1 - s) ** 3 * p0 + 3 * (1 - s) ** 2 * s * p1
+            + 3 * (1 - s) * s ** 2 * p2 + s ** 3 * p3)
+
+
+def _tangent(fibrils, c, i):
+    m = fibrils.shape[1]
+    a, b = max(i - 1, 0), min(i + 1, m - 1)
+    return _normalize(fibrils[c, b] - fibrils[c, a])
+
+
+def _perp_towards(q, tq, target):
+    """Unit vector at q, perpendicular to tq, pointing towards target."""
+    v = target - q
+    v = v - np.dot(v, tq) * tq
+    nv = np.linalg.norm(v)
+    if nv < 1e-9:
+        return _normalize(np.cross(tq, [0.3, 0.5, 0.8]))
+    return v / nv
+
+
+def connect_free_ends(fibrils, tree, owner, index):
+    """One smooth bridge from every fibril end to a point on another fibril."""
+    n, m, _ = fibrils.shape
+    bridges, edges = [], []
+    for c in range(n):
+        for i_end, i_in in ((0, 1), (m - 1, m - 2)):
+            p0 = fibrils[c, i_end]
+            t0 = _normalize(p0 - fibrils[c, i_in])
+            cand = tree.query_ball_point(p0, MAX_END_BRIDGE_MM)
+            cand = [j for j in cand if owner[j] != c]
+            if not cand:
+                raise RuntimeError(
+                    f"Fibril {c}: no other fibril within MAX_END_BRIDGE_MM = "
+                    f"{MAX_END_BRIDGE_MM} mm of its end. Increase N_FIBRILS or "
+                    f"MAX_END_BRIDGE_MM.")
+            cand = np.asarray(cand)
+            v = tree.data[cand] - p0
+            d = np.linalg.norm(v, axis=1)
+            cos = np.einsum("ij,j->i", v, t0) / np.maximum(d, 1e-9)
+            j = cand[np.argmin(d * (2.0 - cos))]   # prefer partners ahead of the end
+            q = tree.data[j]
+            cq, iq = owner[j], index[j]
+            dist = np.linalg.norm(q - p0)
+            a = max(dist / 3.0, 2.0 * FIBRIL_RADIUS_MM)
+            p1 = p0 + a * t0
+            p2 = q + a * _perp_towards(q, _tangent(fibrils, cq, iq), p1)
+            bridges.append(bezier(p0, p1, p2, q, STEP_MM))
+            edges.append((c, int(cq)))
+    return bridges, edges
+
+
+def contact_bridges(fibrils, tree, owner, index):
+    """Straight bridges wherever two axes are closer than 2 r + MIN_GAP_MM."""
+    reach = 2.0 * FIBRIL_RADIUS_MM + MIN_GAP_MM
+    pairs = tree.query_pairs(reach, output_type="ndarray")
+    if pairs.size == 0:
+        return [], []
+    a, b = pairs[:, 0], pairs[:, 1]
+    same = owner[a] == owner[b]
+    # on the same fibril only far-apart contour positions count as a contact
+    min_sep = int(np.ceil(np.pi * reach / STEP_MM))
+    keep = ~same | (np.abs(index[a] - index[b]) > min_sep)
+    a, b = a[keep], b[keep]
+    d = np.linalg.norm(tree.data[a] - tree.data[b], axis=1)
+    order = np.argsort(d)
+
+    bridges, edges = [], []
+    placed = {}   # grid cell -> bridge midpoints, cell size = CONTACT_SPACING_MM
+    for k in order:
+        mid = 0.5 * (tree.data[a[k]] + tree.data[b[k]])
+        cell = tuple(np.floor(mid / CONTACT_SPACING_MM).astype(int))
+        near = [p for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+                for p in placed.get((cell[0] + dx, cell[1] + dy, cell[2] + dz), ())]
+        if near and np.min(np.linalg.norm(np.asarray(near) - mid, axis=1)) < CONTACT_SPACING_MM:
+            continue
+        placed.setdefault(cell, []).append(mid)
+        bridges.append(np.vstack([tree.data[a[k]], tree.data[b[k]]]))
+        if owner[a[k]] != owner[b[k]]:
+            edges.append((int(owner[a[k]]), int(owner[b[k]])))
+    return bridges, edges
+
+
+def _closest_between(tree_pts, idx_a, idx_b):
+    ta = cKDTree(tree_pts[idx_a])
+    d, j = ta.query(tree_pts[idx_b])
+    k = np.argmin(d)
+    return idx_a[j[k]], idx_b[k]
+
+
+def _components(n, edges, skip=None):
+    """Connected-component label per fibril; edge key `skip` is left out."""
+    keys = [e for e in edges if e != skip]
+    if not keys:
+        return np.arange(n)
+    u, v = np.array(keys).T
+    adj = coo_matrix((np.ones(len(keys)), (u, v)), shape=(n, n))
+    return connected_components(adj, directed=False)[1]
+
+
+def _cut_edges(n, edges):
+    """Junctions whose removal splits the network (multiplicity 1 only)."""
+    return [e for e, k in edges.items() if k == 1
+            and _components(n, edges, skip=e).max() > _components(n, edges).max()]
+
+
+def reinforce(fibrils, tree, owner, index, edges):
+    """Connect all components, then remove every single-junction attachment.
+
+    `edges` maps (fibril_a, fibril_b), a < b, to the number of junctions.
+    """
+    pts = tree.data
+    n = fibrils.shape[0]
+    extra = []
+
+    def add_bridge(i, j):
+        ci, cj = int(owner[i]), int(owner[j])
+        p, q = pts[i], pts[j]
+        a = max(np.linalg.norm(q - p) / 3.0, 2.0 * FIBRIL_RADIUS_MM)
+        p1 = p + a * _perp_towards(p, _tangent(fibrils, ci, index[i]), q)
+        p2 = q + a * _perp_towards(q, _tangent(fibrils, cj, index[j]), p)
+        extra.append(bezier(p, p1, p2, q, STEP_MM))
+        key = (min(ci, cj), max(ci, cj))
+        edges[key] = edges.get(key, 0) + 1
+
+    labels = _components(n, edges)
+    n_comp_before = labels.max() + 1
+    while labels.max() > 0:
+        sizes = np.bincount(labels)
+        small = np.isin(owner, np.flatnonzero(labels == np.argmin(sizes)))
+        i, j = _closest_between(pts, np.flatnonzero(~small), np.flatnonzero(small))
+        add_bridge(j, i)
+        labels = _components(n, edges)
+
+    n_cut_before = None
+    for _ in range(10 * n):
+        cut = _cut_edges(n, edges)
+        if n_cut_before is None:
+            n_cut_before = len(cut)
+        if not cut:
+            break
+        u, v = cut[0]
+        labels = _components(n, edges, skip=(u, v))
+        in_side = labels[owner] == labels[u]
+        a_idx = np.flatnonzero(in_side & (owner != u))
+        b_idx = np.flatnonzero(~in_side & (owner != v))
+        if a_idx.size == 0 or b_idx.size == 0:
+            # one side is a single fibril: second junction between u and v
+            a_idx = np.flatnonzero(in_side)
+            b_idx = np.flatnonzero(~in_side)
+        i, j = _closest_between(pts, a_idx, b_idx)
+        add_bridge(i, j)
+    else:
+        raise RuntimeError("2-edge-connectivity not reached; check parameters.")
+    return extra, n_comp_before, n_cut_before
+
+
+# ── Surface ──
+
+def resample(line, step):
+    seg = np.linalg.norm(np.diff(line, axis=0), axis=1)
+    s = np.concatenate([[0.0], np.cumsum(seg)])
+    n = max(int(np.ceil(s[-1] / step)), 1)
+    si = np.linspace(0.0, s[-1], n + 1)
+    return np.column_stack([np.interp(si, s, line[:, k]) for k in range(3)])
+
+
+def convolution_field(lines):
+    """Gaussian convolution of all centre lines on a voxel grid (voxel units)."""
+    h = VOXEL_MM
+    ds = 0.25 * h
+    pad = int(np.ceil((FIBRIL_RADIUS_MM + 5 * BLEND_SIGMA_MM) / h))
+    n = int(np.ceil(BOX_MM / h)) + 1 + 2 * pad
+    origin = -pad * h
+
+    samples = np.vstack([resample(l, ds) for l in lines])
+    g = (samples - origin) / h
+    i0 = np.floor(g).astype(np.int64)
+    f = g - i0
+    field = np.zeros(n ** 3, dtype=np.float64)
+    for dx in (0, 1):
+        wx = f[:, 0] if dx else 1 - f[:, 0]
+        for dy in (0, 1):
+            wy = f[:, 1] if dy else 1 - f[:, 1]
+            for dz in (0, 1):
+                wz = f[:, 2] if dz else 1 - f[:, 2]
+                flat = ((i0[:, 0] + dx) * n + (i0[:, 1] + dy)) * n + (i0[:, 2] + dz)
+                field += np.bincount(flat, weights=wx * wy * wz, minlength=n ** 3)
+    field = ndimage.gaussian_filter(field.reshape(n, n, n).astype(np.float32),
+                                    BLEND_SIGMA_MM / h, truncate=4.0)
+
+    # iso level of an isolated straight line at distance r
+    s_v, r_v, ds_v = BLEND_SIGMA_MM / h, FIBRIL_RADIUS_MM / h, ds / h
+    iso = np.exp(-r_v ** 2 / (2 * s_v ** 2)) / (ds_v * 2 * np.pi * s_v ** 2)
+    return field, iso, origin
+
+
+def check_solid(field, iso):
+    solid = field > iso
+    _, n_parts = ndimage.label(solid)
+    depth_vox = NECK_CHECK_FRACTION * FIBRIL_RADIUS_MM / VOXEL_MM
+    core = ndimage.distance_transform_edt(solid) > depth_vox
+    _, n_core = ndimage.label(core)
+    vol_frac = solid.sum() * VOXEL_MM ** 3 / BOX_MM ** 3
+    return n_parts, n_core, vol_frac
+
+
+def write_binary_stl(path, verts, faces):
+    """Binary STL; zero-area triangles from marching cubes are not written."""
+    tri = verts[faces].astype(np.float32)
+    nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    area2 = np.linalg.norm(nrm, axis=1)
+    keep = area2 > 0
+    tri, nrm = tri[keep], nrm[keep] / area2[keep, None]
+    rec = np.zeros(len(tri), dtype=[("n", "<f4", 3), ("v", "<f4", (3, 3)),
+                                    ("attr", "<u2")])
+    rec["n"], rec["v"] = nrm, tri
+    with open(path, "wb") as fh:
+        fh.write(OUTPUT_NAME.encode().ljust(80, b" "))
+        fh.write(np.uint32(len(tri)).tobytes())
+        fh.write(rec.tobytes())
+    return len(tri), int((~keep).sum())
+
+
+def plot_preview(fibrils, bridges, path):
+    fig = plt.figure(figsize=(7, 7))
+    ax = fig.add_subplot(111, projection="3d")
+    for f in fibrils:
+        ax.plot(*f.T, lw=0.8, color="#3B6E8C")
+    for b in bridges:
+        ax.plot(*b.T, lw=1.2, color="#D98C3D")
+    for setter in (ax.set_xlim, ax.set_ylim, ax.set_zlim):
+        setter(0, BOX_MM)
+    ax.set_xlabel("x (mm)")
+    ax.set_ylabel("y (mm)")
+    ax.set_zlabel("z (mm)")
+    fig.savefig(path, dpi=200)
+    plt.show()
+
+
+def main():
+    if not os.path.isdir(os.path.dirname(OUTPUT_DIR)):
+        raise FileNotFoundError(f"Output parent folder not found: {OUTPUT_DIR}")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    rng = np.random.default_rng(SEED)
+    t_start = time.perf_counter()
+
+    fibrils, n_clamped = grow_fibrils(rng)
+    n, m, _ = fibrils.shape
+    owner = np.repeat(np.arange(n), m)
+    index = np.tile(np.arange(m), n)
+    tree = cKDTree(fibrils.reshape(-1, 3))
+
+    end_bridges, end_edges = connect_free_ends(fibrils, tree, owner, index)
+    con_bridges, con_edges = contact_bridges(fibrils, tree, owner, index)
+    edges = {}
+    for a, b in end_edges + con_edges:
+        key = (min(a, b), max(a, b))
+        edges[key] = edges.get(key, 0) + 1
+    extra, n_comp_before, n_cut_before = reinforce(fibrils, tree, owner, index, edges)
+    bridges = end_bridges + con_bridges + extra
+    t_graph = time.perf_counter() - t_start
+
+    field, iso, origin = convolution_field(list(fibrils) + bridges)
+    n_parts, n_core, vol_frac = check_solid(field, iso)
+    verts, faces, _, _ = marching_cubes(field, level=iso, spacing=(VOXEL_MM,) * 3)
+    verts += origin
+    stl_path = os.path.join(OUTPUT_DIR, f"{OUTPUT_NAME}.stl")
+    n_tri, n_degenerate = write_binary_stl(stl_path, verts, faces)
+    t_total = time.perf_counter() - t_start
+
+    degree = np.zeros(n, dtype=int)
+    for (a, b), k in edges.items():
+        degree[a] += k
+        degree[b] += k
+    stats = {
+        "seed": SEED,
+        "fibrils": n,
+        "end bridges": len(end_bridges),
+        "contact bridges": len(con_bridges),
+        "reinforcement bridges": len(extra),
+        "graph components before reinforcement": n_comp_before,
+        "single-junction attachments before reinforcement": n_cut_before,
+        "junctions per fibril (min / median)": f"{degree.min()} / {np.median(degree):.0f}",
+        "growth steps clamped at the wall margin": n_clamped,
+        "solid pieces": n_parts,
+        f"pieces after erosion by {NECK_CHECK_FRACTION:.2f} r": n_core,
+        "solid volume fraction": f"{vol_frac:.4f}",
+        "triangles (zero-area removed)": f"{n_tri} ({n_degenerate})",
+        "time graph (s)": f"{t_graph:.1f}",
+        "time total (s)": f"{t_total:.1f}",
+    }
+    params = {k: v for k, v in globals().items()
+              if k.isupper() and k not in ("OUTPUT_DIR",)}
+    with open(os.path.join(OUTPUT_DIR, f"{OUTPUT_NAME}_parameters.txt"), "w",
+              encoding="utf-8") as fh:
+        for k, v in list(params.items()) + list(stats.items()):
+            fh.write(f"{k}: {v}\n")
+    for k, v in stats.items():
+        print(f"{k}: {v}")
+    print(f"STL written (mm): {stl_path}")
+    if n_parts != 1 or n_core != 1:
+        print("Warning: solid is not one piece or has thin necks, see counts above.")
+
+    if SHOW_PREVIEW:
+        plot_preview(fibrils, bridges,
+                     os.path.join(OUTPUT_DIR, f"{OUTPUT_NAME}_centrelines.png"))
+
+
+if __name__ == "__main__":
+    main()

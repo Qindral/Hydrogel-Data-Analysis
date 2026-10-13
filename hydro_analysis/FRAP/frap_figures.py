@@ -1,5 +1,5 @@
 """
-FRAP v2, phase 2: publication figures for FITC-dextran 70 kDa in water vs. in 20 mg/mL
+FRAP v2, phase 2: publication figures for FITC-dextran 150 kDa in water vs. in 20 mg/mL
 eADF4(C16) hydrogel. Consumer stage: reads cache/frap_v2_phase1.pkl written by
 frap_analysis_v2.py (run that first and review its tables); nothing is refitted here. Only
 Fig. 1 reloads raw images (with frap_analysis_v2.load_measurement) because it shows them.

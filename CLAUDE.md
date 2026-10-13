@@ -54,7 +54,10 @@ them into new scripts, and list them in your end-of-task report whenever they af
 | Weighting of per-file results | `core.analysis.weighted_average_per_size` | weight = `num_tracks`, counted before the 10-frame filter | TO CONFIRM |
 | Localisation error from intercept | `core.analysis.perform_msd_analysis` | negative intercept becomes NaN and is left out of the mean | TO CONFIRM |
 | DLS polydispersity | `Litesizer/*` | measurements with PDI > 42 % excluded | TO CONFIRM |
-| Rheology QC | `Rheology/Rheo_Hyd20_Compute.py` | `group_outlier` (factor 2) left out of `qc_filtered` statistics | TO CONFIRM |
+| Rheology QC | `Rheology/Rheo_Hyd20_Compute.py` | runs with `axial_force` (> 0.5 N), `presheared`, `cracks`, `group_outlier` (factor 2) and FAIL runs left out of `qc_filtered` statistics | approved by user, 2026-10-08 (E008, E025) |
+| Rheology point exclusion | `Rheology/Rheo_Hyd20_Compute.py`, `POINT_CRITERIA` | points with inertia ratio > 1 or torque < 5e-8 N m left out of fits (kept in tables, shown grey) | approved by user, 2026-10-08 (E026) |
+| Rheology key figures | `Rheology/rheo_hyd20_key_figures.py` | only qc_filtered runs; 95 % t confidence interval over specimens; mesh and pore sizes pool specimens younger than 10 d; figure 1: 4 d specimen and 9 d amplitude sweep drawn at random (seed 20261008); pore error = 95 % CI and fibril diameter uniform 9-13 nm (1.96 x 4/sqrt(12) nm) in quadrature | approved by user, 2026-10-08 (E025, E027, E028) |
+| Autofluorescence decay | `Auto_fluorecence/autofluorescence_analysis.py` | dark level subtracted, I_0 = frame after the transition frame, transition frames not used, t1/2 = first frame with I_norm <= 0.5, all switch-ons; pause rise = I_0 after pause / frame (switch-off − 2) − 1 on raw counts; B1 wavelength 514 nm (not in .rec) | approved by user, 2026-10-07 (E011, E012) |
 
 Each TO CONFIRM row has an entry in `ENTSCHEIDUNGEN.md` (see 0.8). When the user confirms or
 rejects a row, update the status here with the date.

@@ -2,7 +2,7 @@
 
 Reads the raw XLSX directly and recomputes the reference statistics on every run.
 Reads/writes no pickle cache; no other script depends on these outputs.
-Writes only a 600 dpi PNG and an Excel results workbook to the dissertation
+Writes only a vector PDF figure and an Excel results workbook to the dissertation
 figure directory configured as OUTPUT_DIR.
 Run directly; paths, size selection and figure options are configured below.
 One measurement sheet is one replicate, irrespective of its processed-run count.
@@ -271,7 +271,7 @@ def make_figure(data, summary, heuristic_lines=True):
 
     Explicit task requirements retain categorical nominal diameters and jitter.
     Signed zeta potentials use a linear y-axis; the log-log diffusion convention
-    does not apply. Export remains PNG by the user's explicit format preference.
+    does not apply. Export as vector PDF (user, 2026-10-07).
     """
     with plt.style.context(STYLE_PATH):
         fig, ax = plt.subplots(figsize=FIG_SIZE, layout="constrained")
@@ -379,9 +379,10 @@ def main():
     caption = stability_message(data, summary).replace("\n", ". ") + ".\n\n" + caption
     fig = make_figure(data, summary, SHOW_HEURISTIC_REFERENCE)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUTPUT_DIR / f"{FIG_STEM}.png", dpi=600)
+    with plt.style.context(STYLE_PATH):
+        fig.savefig(OUTPUT_DIR / f"{FIG_STEM}.pdf")
     export_excel(data, summary, caption, OUTPUT_DIR / f"{FIG_STEM}_statistics.xlsx")
-    print(f"\nSaved PNG and Excel results to {OUTPUT_DIR}")
+    print(f"\nSaved PDF and Excel results to {OUTPUT_DIR}")
     if SHOW_FIGURE:
         plt.show()
     plt.close(fig)

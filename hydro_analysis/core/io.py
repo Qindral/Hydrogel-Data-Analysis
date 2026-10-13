@@ -223,6 +223,25 @@ def parse_rec_comment_metadata(rec_path: Optional[Path]) -> Dict[str, Any]:
     return meta
 
 
+_REC_INHERITANCE_CACHE_FILE = (Path(__file__).parent.parent / "Parameter_Check" / "cache"
+                               / "rec_metadata_inherited.pkl")
+
+
+def load_inherited_rec_metadata() -> pd.DataFrame:
+    """
+    Laser power (laser_power_mW) and depth (depth_um) of every .rec file with the lab
+    convention applied: a recording without a stated value used the setting of the
+    preceding recording in the same folder (inherited iteratively). Columns
+    <q>_status ('stated', 'inherited', 'unknown: ...'), <q>_inherited_from, <q>_origin
+    document the source. Indexed by str(rec_path.resolve()). Built by
+    Parameter_Check/rec_metadata_inheritance.py; the .rec files themselves are unchanged.
+    """
+    if not _REC_INHERITANCE_CACHE_FILE.exists():
+        raise FileNotFoundError(f"{_REC_INHERITANCE_CACHE_FILE} missing; run "
+                                f"Parameter_Check/rec_metadata_inheritance.py first.")
+    return pd.read_pickle(_REC_INHERITANCE_CACHE_FILE)
+
+
 # Chamber code on a 2x4 well plate, e.g. "A3", "B2" (not followed by another digit,
 # so "B12" doesn't get misread as chamber "B1").
 CHAMBER_RE = re.compile(r'([AB][1-4])(?!\d)')

@@ -16,6 +16,7 @@ from .io import (
     single_file_data,
     compare_xml,
     get_dls_diffusion_means,
+    load_inherited_rec_metadata,
 )
 
 # Analysis functions
@@ -60,6 +61,7 @@ __all__ = [
     'single_file_data',
     'compare_xml',
     'get_dls_diffusion_means',
+    'load_inherited_rec_metadata',
 
     # Analysis functions
     'calculate_step_sizes',

@@ -26,6 +26,9 @@ openpyxl
 xlrd>=2.0          # legacy .xls (TRIOS rheometer exports, Rheology/)
 
 
+# 3D rendering (Rheology/rheo_hyd20_key_figures.py, lattice figure)
+pyvista>=0.49
+
 # Optional: GUI packages
 magicgui>=0.7.0
 qtpy>=2.3.0

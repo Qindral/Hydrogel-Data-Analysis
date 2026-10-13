@@ -1,5 +1,5 @@
 """
-FRAP analysis v2, phase 1 (analysis and tables): FITC-dextran 70 kDa in water vs. in
+FRAP analysis v2, phase 1 (analysis and tables): FITC-dextran 150 kDa in water vs. in
 eADF4(C16) hydrogel, Leica SP8 point-bleach FRAP (8-bit, FITC in the green channel).
 Compute stage; figures are produced separately by frap_figures.py (phase 2) from the
 cache written here, and only after the phase-1 tables have been reviewed.
@@ -148,7 +148,7 @@ D_METHODS = ["D_propagation_um2_s", "D_profile_um2_s", "D_soumpasis_um2_s", "D_a
 # Reference and statistics
 TEMPERATURE_K = 293.15
 WATER_VISCOSITY_PA_S = 1.002e-3
-DEXTRAN_RH_NM = 6.5
+DEXTRAN_RH_NM = 9.0                     # 150 kDa FITC-dextran, 9.0 +- 0.6 nm, doi:10.1002/jps.23387 (user, 2026-10-07, E016)
 MAIN_REFERENCE = "Stokes-Einstein"      # main water reference for H (measured water reported for comparison)
 BOOTSTRAP_N = 10_000
 BOOTSTRAP_SEED = 20251001
