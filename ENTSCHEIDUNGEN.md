@@ -269,3 +269,11 @@ muss nicht weiter begründet werden.
 - Legende und Stern im Amplitudensweep: A: beide weglassen. B: beide behalten. C: Legende weg, Stern bleibt.
 - Mesh Size für die Caption: A: Proben < 10 d (N = 4, 17,5 ± 1,1 nm). B: alle qc-Proben (N = 8, ≈ 16,4 ± 1,1 nm).
 **Entscheidung:** Viskoelastizität nur Amplitudensweep (Hyd20), ohne Titel, schwarz, Legende und Stern A (weglassen), y 10–600 Pa; Stabilität ohne Legende, Symbole kleiner; Gitter ohne Fibrillendicke (Kavität und Throat mit Achsendurchmessern), auf eine Kavität zentriert und periodisch in alle Richtungen fortgesetzt; Kavität gegen f in Schwarz; Mesh Size keine Abbildung, Wert A für die Caption (Nutzer, 2026-10-08). Nachtrag: Gitter als beleuchtetes 3D-Rendering (pyvista/VTK) mit glatter, halbtransparenter Kavitätskugel, Nachbarzellen nur angedeutet, Stränge vor der Kavität blass, näher am Objekt (Nutzer, 2026-10-08).
+
+## E029 · OFFEN · 2026-10-14
+**Frage:** FRAP-Bildserie (Hydrogel oben, Wasser unten, t = 0/10/20 s): Welche Messung wird je Reihe gezeigt?
+**Stelle:** `FRAP/frap_recovery_image_panels.py`, `SELECTION_RULE` (nutzt `_representative` aus `FRAP/frap_figures.py`).
+**Wirkung heute:** Regel aus Fig. 1 von `frap_figures.py` übernommen: QC-bestandene (Profil) Messung mit der größten Bleichtiefe K0 → Hydrogel gel_B1_1 (K0 = 0,81, Kandidaten: 9 Bulk-Gel-Messungen A1/B1, 20 mg/mL), Wasser water_3 (K0 = 0,72; water_2 fällt an gesättigten Pixeln durch, water_1 hat K0 = 0,53). Für diese Regel ist keine Nutzerentscheidung vermerkt.
+- A: Regel „größtes K0“ beibehalten → Abbildung bleibt wie erzeugt (gel_B1_1, water_3).
+- B: Messungen vom Nutzer benannt (z. B. eine typische statt der tiefsten Bleiche) → nur die gezeigten Bilder ändern sich, keine Zahlenwerte.
+**Entscheidung:** offen
