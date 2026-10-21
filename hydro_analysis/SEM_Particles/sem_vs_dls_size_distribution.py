@@ -25,10 +25,18 @@ highest histogram bar -- a graphical normalisation only. Intensity weighting
 emphasises large particles and d_H is the hydrodynamic diameter in water, so
 the DLS curve is expected to lie above the dry, number-weighted SEM data.
 
+Platinum coating (user, 2026-10-14): the particles were sputter-coated with
+PT_COATING_NM of Pt, so 2 * PT_COATING_NM (2.6 nm) is subtracted from every SEM
+diameter (Feret and mean Feret) before histogram, statistics and annotation. The
+correction is written to sem_vs_dls_size_distribution_exclusions.csv (one row per
+size, no particle removed); the uncorrected means stay in the statistics workbook
+(columns *_raw_nm).
+
 Writes into SAVE_PATH:
   sem_vs_dls_size_distribution.pdf     2 x 3 panel figure
   sem_vs_dls_size_statistics.xlsx      per-size SEM statistics next to the
                                        unchanged LiteSizer statistics
+  sem_vs_dls_size_distribution_exclusions.csv   correction log
 No other script reads these outputs.
 
 Styling follows Styleguide_Figures_Dissertation.md (v2): plotting inside
@@ -58,13 +66,14 @@ from hydro_analysis.SEM_Particles.sem_feret_size_histogram import N_BINS, load_p
 # ── Configuration ──────────────────────────────────────────────────────────────
 SAVE_PATH: Path | None = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data"
-) / "SEM_particle_size"
+) / "Particle_Characterization"
 FIG_STEM = "sem_vs_dls_size_distribution"
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 SHOW_FIGURE = True
 
 SIZES = [20, 50, 100, 200, 500, 1000]
 SEM_COLUMN = "feret_max_nm"            # Feret diameter
+PT_COATING_NM = 1.3                    # Pt layer per side; decided by user, 2026-10-14
 FIG_SIZE_IN = (6.30, 4.20)             # width class "full"; multi-panel height (style guide §2)
 COLOR_DLS = "#da00bd"                  # DLS reference (style guide §11)
 Y_HEADROOM = 1.45                      # y limit / highest bar, leaves room for the statistics text
@@ -113,13 +122,33 @@ def plot_dls_curve(ax: plt.Axes, d: np.ndarray, y: np.ndarray, peak: float) -> N
 
 # ── Statistics ─────────────────────────────────────────────────────────────────
 
+def subtract_coating(particles: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """SEM diameters minus 2 * PT_COATING_NM; returns the corrected table and the correction log."""
+    corrected = particles.copy()
+    shift = 2.0 * PT_COATING_NM
+    for column in ("feret_max_nm", "feret_mean_nm"):
+        corrected[f"{column}_raw"] = corrected[column]
+        corrected[column] = corrected[column] - shift
+    log = pd.DataFrame([{
+        "file": f"cache/sem_feret_particles.pkl, nominal {nominal} nm",
+        "step": "Pt coating subtraction", "parameter": f"2 x PT_COATING_NM = {shift:g} nm",
+        "n_before": int((particles["nominal_nm"] == nominal).sum()),
+        "n_after": int((particles["nominal_nm"] == nominal).sum()),
+        "reason": "feret_max_nm and feret_mean_nm reduced by the Pt layer on both sides (user, 2026-10-14)",
+    } for nominal in SIZES])
+    return corrected, log
+
+
 def compare_statistics(particles: pd.DataFrame, dls_summary: pd.DataFrame) -> pd.DataFrame:
-    """SEM Feret statistics per size next to the LiteSizer statistics of litesizer_visualization.py."""
+    """SEM Feret statistics per size (coating subtracted; raw means kept) next to the LiteSizer statistics."""
     rows = []
     for nominal in SIZES:
         grp = particles[particles["nominal_nm"] == nominal]
         f_max, f_mean = grp["feret_max_nm"].to_numpy(), grp["feret_mean_nm"].to_numpy()
         rows.append({
+            "pt_coating_subtracted_nm": 2.0 * PT_COATING_NM,
+            "sem_feret_mean_raw_nm": grp["feret_max_nm_raw"].mean(),
+            "sem_mean_feret_mean_raw_nm": grp["feret_mean_nm_raw"].mean(),
             "nominal_nm": nominal,
             "label": size_label(nominal),
             "sem_n_images": grp["image"].nunique(),
@@ -179,14 +208,14 @@ def plot_comparison(particles: pd.DataFrame, dls_curves: dict[int, tuple[np.ndar
 
     handles = [Patch(facecolor="#bbbbbb", edgecolor="#555555", linewidth=0.5),
                Line2D([], [], color=COLOR_DLS, linewidth=1.2)]
-    fig.legend(handles, ["SEM, Feret diameter", "DLS, intensity-weighted (sum of replicates)"],
+    fig.legend(handles, [f"SEM, Feret diameter − {2 * PT_COATING_NM:g} nm Pt", "DLS, intensity-weighted (sum of replicates)"],
                loc="outside upper center", ncol=2, frameon=False)
     return fig
 
 
 def main(show: bool = SHOW_FIGURE):
     """Build the SEM vs. DLS comparison figure and statistics workbook."""
-    particles = load_particles()
+    particles, correction_log = subtract_coating(load_particles())
     dls_curves, dls_groups = combined_dls_curves(SIZES)
     stats = compare_statistics(particles, summarize_size_statistics(dls_groups))
 
@@ -195,7 +224,7 @@ def main(show: bool = SHOW_FIGURE):
         print(stats[["label", "sem_n_particles", "sem_feret_mean_nm", "sem_feret_sd_nm",
                      "sem_mean_feret_mean_nm", "sem_mean_feret_sd_nm", "n_measurements",
                      "dls_diameter_mean_nm", "dls_diameter_sd_nm", "pdi_mean_pct",
-                     "ratio_sem_feret_to_dls", "ratio_sem_mean_feret_to_dls"]].to_string(index=False))
+                     "ratio_sem_feret_to_dls", "ratio_sem_mean_feret_to_dls", "sem_feret_mean_raw_nm"]].to_string(index=False))
 
     with plt.style.context(STYLE_PATH):
         fig = plot_comparison(particles, dls_curves, stats)
@@ -205,6 +234,7 @@ def main(show: bool = SHOW_FIGURE):
             SAVE_PATH.mkdir(parents=True, exist_ok=True)
             fig.savefig(SAVE_PATH / f"{FIG_STEM}.pdf", format="pdf")
             stats.to_excel(SAVE_PATH / "sem_vs_dls_size_statistics.xlsx", index=False)
+            correction_log.to_csv(SAVE_PATH / f"{FIG_STEM}_exclusions.csv", index=False, encoding="utf-8-sig")
             print(f"Saved: {SAVE_PATH / FIG_STEM}.pdf and sem_vs_dls_size_statistics.xlsx")
     return stats
 

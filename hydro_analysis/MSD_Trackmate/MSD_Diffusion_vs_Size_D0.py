@@ -21,6 +21,15 @@ and the DLS label (get_dls_labels()) is shown on the axis -- never the
 nominal folder name ("20 nm" etc.), which is a rounded target, not the
 actual particle size.
 
+Dissertation version (Abb12; user, 2026-10-14; Styleguide v2, width class
+narrow, PDF, SAVE_PATH): x positions at the DLS diameters in full precision,
+DLS reference as a square #da00bd with x and y error bars, "Buffer" instead of
+"Water". Inset lower right, analogous to Dissertation_Figures/DLS_Diffusion_vs_Size.py:
+relative deviation from Stokes-Einstein, 100 * (D - D_SE(d)) / D_SE(d) in %, at the
+same DLS diameter d as in the main panel, for the SPT files (circles) and the
+DLS reference values of the main panel (squares). The lower y limit of the main
+panel (Y_MIN) leaves room for the inset below the data.
+
 Run MSD_FromTrackmate_D0.py first (or after any change to the raw data) to
 refresh msd_d0_results.pkl.
 """
@@ -38,15 +47,21 @@ from hydro_analysis.core.io import (
     get_dls_reference_maps, get_dls_sizes, get_dls_labels,
 )
 from hydro_analysis.core.physics import calculate_theoretical_diffusion
-from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC, _DASH_THEORY, _add_log_minor_ticks
+from matplotlib.ticker import FuncFormatter, LogLocator
+
+from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _DASH_THEORY, _add_log_minor_ticks
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
 SAVE_PATH: Path | None = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\SPT"
 )
+STYLE = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
+FIG_SIZE = (4.72, 4.72 / 1.42)       # Styleguide width class "narrow"
 
 X_MIN, X_MAX = 15.0, 1500.0
+Y_MIN, Y_MAX = 0.003, 60.0           # room for the lower-right inset below the data
+INSET_BOUNDS = [0.56, 0.06, 0.41, 0.30]
 
 # Same _RC/_DASH_THEORY/_add_log_minor_ticks and figsize as
 # MSD_Diffusion_vs_Size_20mg.py, for a consistent look across both charts.
@@ -101,8 +116,8 @@ def main() -> None:
         rows.append((float(size_nm), float(D), float(fit.get("D_error", np.nan))))
     print(f"{len(rows)} Dateien mit gültigem D-Wert, {n_skipped} übersprungen.")
 
-    with plt.rc_context(_RC):
-        fig, ax = plt.subplots(figsize=(7.15, 5.00), constrained_layout=True)
+    with plt.style.context(STYLE):
+        fig, ax = plt.subplots(figsize=FIG_SIZE)
 
         # ── Stokes-Einstein theory line for D0 ──────────────────────────────
         sizes_range = np.logspace(np.log10(X_MIN), np.log10(X_MAX), 200)
@@ -116,8 +131,8 @@ def main() -> None:
         dls_y    = [dls_D[s] for s in dls_ref_sizes]
         dls_xerr = [_sz_err(s) for s in dls_ref_sizes]
         dls_yerr = [dls_D_err.get(s, 0.0) for s in dls_ref_sizes]
-        ax.errorbar(dls_x, dls_y, xerr=dls_xerr, yerr=dls_yerr, fmt="*", markersize=10,
-                    markerfacecolor=COLOR_DLS, markeredgecolor=COLOR_DLS_DARK, markeredgewidth=0.8,
+        ax.errorbar(dls_x, dls_y, xerr=dls_xerr, yerr=dls_yerr, fmt="s", markersize=5,
+                    markerfacecolor=COLOR_DLS, markeredgecolor=COLOR_DLS_DARK, markeredgewidth=0.6,
                     ecolor=COLOR_DLS_DARK, elinewidth=0.8, capsize=2.0, capthick=0.8,
                     linestyle="None", zorder=8)
 
@@ -126,7 +141,7 @@ def main() -> None:
         xs    = [_map_size(s) for s, D, Derr in rows]
         ys    = [D for s, D, Derr in rows]
         yerrs = [Derr if np.isfinite(Derr) else 0.0 for s, D, Derr in rows]
-        ax.errorbar(xs, ys, yerr=yerrs, fmt="o", markersize=6, alpha=POINT_ALPHA,
+        ax.errorbar(xs, ys, yerr=yerrs, fmt="o", markersize=4, alpha=POINT_ALPHA,
                     markerfacecolor=COLOR_MEASURED, markeredgecolor=COLOR_MEASURED_DARK,
                     markeredgewidth=0.6, ecolor=COLOR_MEASURED_DARK, elinewidth=0.8,
                     capsize=2.0, linestyle="None", zorder=5)
@@ -135,7 +150,9 @@ def main() -> None:
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(X_MIN, X_MAX)
+        ax.set_ylim(Y_MIN, Y_MAX)
         _add_log_minor_ticks(ax)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:g}"))
 
         tick_nominal = sorted(dls_labels.keys())
         tick_pos     = [_map_size(s) for s in tick_nominal]
@@ -144,27 +161,53 @@ def main() -> None:
         ax.xaxis.set_major_formatter(FixedFormatter(tick_text))
 
         ax.set_xlabel("Particle size (nm)")
-        ax.set_ylabel(r"Diffusion coefficient $D$ (µm²/s)")
+        ax.set_ylabel(r"Diffusion coefficient $D$ (µm$^2$ s$^{-1}$)")
 
         legend_elements = [
             Line2D([0], [0], color=COLOR_THEORY, linewidth=1.2, linestyle=_DASH_THEORY,
-                   label="Stokes–Einstein theory (D0)"),
-            Line2D([0], [0], marker="*", color="w", markerfacecolor=COLOR_DLS,
-                   markeredgecolor=COLOR_DLS_DARK, markersize=10, markeredgewidth=0.8,
-                   label="DLS D0 (water)", linestyle="None"),
+                   label=r"Stokes–Einstein $D_0$"),
+            Line2D([0], [0], marker="s", color="w", markerfacecolor=COLOR_DLS,
+                   markeredgecolor=COLOR_DLS_DARK, markersize=5, markeredgewidth=0.6,
+                   label=r"DLS $D_0$ (buffer)", linestyle="None"),
             Line2D([0], [0], marker="o", color="w", markerfacecolor=COLOR_MEASURED,
-                   markeredgecolor=COLOR_MEASURED_DARK, markersize=7, markeredgewidth=0.6,
-                   label="MSD D0 (per file)", linestyle="None"),
+                   markeredgecolor=COLOR_MEASURED_DARK, markersize=4, markeredgewidth=0.6,
+                   label=r"SPT $D_0$ (buffer, per file)", linestyle="None"),
         ]
         ax.legend(handles=legend_elements, loc="upper right", frameon=False)
+
+        # ── Inset lower right: relative deviation from Stokes-Einstein ──────
+        spt_x = np.array(xs)
+        spt_dev = 100.0 * (np.array(ys) - np.array([calculate_theoretical_diffusion(x) for x in spt_x])) \
+            / np.array([calculate_theoretical_diffusion(x) for x in spt_x])
+        dls_dev = 100.0 * (np.array(dls_y) - np.array([calculate_theoretical_diffusion(x) for x in dls_x])) \
+            / np.array([calculate_theoretical_diffusion(x) for x in dls_x])
+        for size_nm, x, dev in zip(dls_ref_sizes, dls_x, dls_dev):
+            print(f"  DLS {dls_labels.get(size_nm, int(size_nm))} nm: Delta D / D_SE = {dev:+.1f} %")
+        for size_nm in sorted({s for s, D, Derr in rows}):
+            sel = np.array([s == size_nm for s, D, Derr in rows])
+            print(f"  SPT {dls_labels.get(size_nm, int(size_nm))} nm: {sel.sum()} files, Delta D / D_SE "
+                  f"{spt_dev[sel].min():+.0f} to {spt_dev[sel].max():+.0f} %, median {np.median(spt_dev[sel]):+.0f} %")
+        axin = ax.inset_axes(INSET_BOUNDS)
+        axin.axhline(0.0, color=COLOR_THEORY, linewidth=0.8, linestyle=_DASH_THEORY, zorder=1)
+        axin.scatter(spt_x, spt_dev, s=10, alpha=POINT_ALPHA, marker="o", facecolor=COLOR_MEASURED,
+                     edgecolor=COLOR_MEASURED_DARK, linewidth=0.5, zorder=3)
+        axin.scatter(dls_x, dls_dev, s=12, marker="s", facecolor=COLOR_DLS, edgecolor=COLOR_DLS_DARK,
+                     linewidth=0.5, zorder=4)
+        axin.set_xscale("log")
+        axin.set_xlim(min(tick_pos) * 0.7, max(tick_pos) * 1.4)
+        axin.xaxis.set_major_locator(FixedLocator(tick_pos))
+        axin.xaxis.set_major_formatter(FixedFormatter(tick_text))
+        axin.xaxis.set_minor_locator(FixedLocator([]))
+        axin.tick_params(which="both", labelsize=7, pad=1.5)
+        axin.set_ylabel(r"$\Delta D / D_\mathrm{SE}$ (%)", fontsize=7, labelpad=1)
 
         plt.show()
 
         if SAVE_PATH is not None:
             SAVE_PATH.mkdir(parents=True, exist_ok=True)
-            png_path = SAVE_PATH / "diffusion_vs_size_d0.png"
-            fig.savefig(png_path, dpi=600, bbox_inches="tight")
-            print(f"Plot gespeichert: {png_path}")
+            pdf_path = SAVE_PATH / "diffusion_vs_size_d0.pdf"
+            fig.savefig(pdf_path)
+            print(f"Plot gespeichert: {pdf_path}")
 
 
 if __name__ == "__main__":

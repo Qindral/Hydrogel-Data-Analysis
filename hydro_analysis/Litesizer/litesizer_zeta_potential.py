@@ -6,6 +6,9 @@ Writes only a vector PDF figure and an Excel results workbook to the dissertatio
 figure directory configured as OUTPUT_DIR.
 Run directly; paths, size selection and figure options are configured below.
 One measurement sheet is one replicate, irrespective of its processed-run count.
+Figure (Abb34; user, 2026-10-14): x axis = hydrodynamic diameter (DLS z-average,
+core.io.get_dls_sizes(), log axis labelled with get_dls_labels()); repeated
+measurements sit exactly at that x value (no horizontal offset).
 The exported instrument SD and distribution peak are NOT replicate statistics.
 
 Missing conditions remain blank. Configured conditions fill missing metadata
@@ -26,12 +29,15 @@ import openpyxl
 import pandas as pd
 from matplotlib.ticker import AutoMinorLocator
 
+from matplotlib.ticker import FixedFormatter, FixedLocator, NullLocator
+
+from hydro_analysis.core.io import get_dls_labels, get_dls_sizes
 from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
 
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 XLSX_PATH = Path(r"E:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Zeta_repitition_allparticles.xlsx")
-OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data") / "Zeta_potential"
+OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data") / "Particle_Characterization"
 SIZES = None  # All six nominal diameters; set a list to select a subset.
 # Confirmed by the experimenter; the instrument's Water model is kept separately.
 BUFFER = "TRIS-HCl"
@@ -269,10 +275,10 @@ def stability_message(data, summary):
 def make_figure(data, summary, heuristic_lines=True):
     """Use the dissertation style with the requested nominal-size replicate design.
 
-    Explicit task requirements retain categorical nominal diameters and jitter.
-    Signed zeta potentials use a linear y-axis; the log-log diffusion convention
-    does not apply. Export as vector PDF (user, 2026-10-07).
+    x = hydrodynamic diameter on a log axis, repeats exactly at x (user, 2026-10-14).
+    Signed zeta potentials use a linear y-axis. Export as vector PDF (user, 2026-10-07).
     """
+    dls_sizes, dls_labels = get_dls_sizes(), get_dls_labels()
     with plt.style.context(STYLE_PATH):
         fig, ax = plt.subplots(figsize=FIG_SIZE, layout="constrained")
         ax.axhline(0, color="0.65", linewidth=0.6, zorder=0)
@@ -285,18 +291,20 @@ def make_figure(data, summary, heuristic_lines=True):
                 if low - pad < reference < high + pad:
                     ax.axhline(reference, color="0.65", linewidth=0.6,
                                linestyle=(0, (4, 3)), zorder=0)
-        for x, row in enumerate(summary.itertuples()):
+        positions = []
+        for row in summary.itertuples():
             base, dark = SIZE_COLORS[row.nominal_size_nm]
+            x = dls_sizes[row.nominal_size_nm]
+            positions.append(x)
             values = data.loc[data.nominal_size_nm == row.nominal_size_nm, "zeta_mV"].to_numpy()
-            left_count = len(values) // 2
-            offsets = np.concatenate((np.linspace(-0.21, -0.12, left_count),
-                                      np.linspace(0.12, 0.21, len(values) - left_count)))
-            offsets = np.random.default_rng(1729 + x).permutation(offsets)
-            ax.scatter(x + offsets, values, s=10, facecolors=base, alpha=0.65,
-                       edgecolors=dark, linewidths=0.45, zorder=3)
-        ax.set_xticks(np.arange(len(summary)), [f"{x:g}" for x in summary.nominal_size_nm])
-        ax.set_xlim(-0.5, len(summary) - 0.5)
-        ax.set_xlabel("Nominal particle diameter (nm)")
+            ax.scatter(np.full(values.size, x), values, s=16, facecolors=base, alpha=0.6,
+                       edgecolors=dark, linewidths=0.6, zorder=3)
+        ax.set_xscale("log")
+        ax.xaxis.set_major_locator(FixedLocator(positions))
+        ax.xaxis.set_major_formatter(FixedFormatter([str(dls_labels[s]) for s in summary.nominal_size_nm]))
+        ax.xaxis.set_minor_locator(NullLocator())
+        ax.set_xlim(min(positions) / 1.4, max(positions) * 1.4)
+        ax.set_xlabel(r"Hydrodynamic diameter $d_\mathrm{H}$ (nm)")
         ax.set_ylabel(r"Zeta potential, $\zeta$ (mV)")
         ax.yaxis.set_minor_locator(AutoMinorLocator(2))
     return fig
@@ -305,7 +313,7 @@ def make_figure(data, summary, heuristic_lines=True):
 def caption_text(data, summary, heuristic_lines):
     parts = [
         "Zeta potential of fluorescent polystyrene particles at the indicated nominal diameters. "
-        "Points show individual measurement results. Horizontal offsets are for visibility only. "
+        "Points show individual measurement results at the hydrodynamic diameter (DLS). "
         "Means, sample SD (ddof = 1) and SEM are provided in the Statistics worksheet. "
         "The instrument's internal runs are not counted as independent replicates.",
         "Measurements per size: " + "; ".join(f"{r.nominal_size_nm:g} nm, n = {r.n_measurements}" for r in summary.itertuples()) + ".",

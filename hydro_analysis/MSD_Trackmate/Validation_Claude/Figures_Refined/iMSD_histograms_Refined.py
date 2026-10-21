@@ -21,32 +21,52 @@ msd_d0_results.pkl vs. per-track rows in track_length_bias_d0.pkl, to
 confirm the earlier fps-filter root cause against the CURRENT (post-fix)
 cache state, and writes the result to a text file alongside the figures.
 
-Outputs (own folder, PNG, 600 dpi): imsd_n_by_size.png, imsd_D_by_size.png,
-imsd_D_by_size_water_only.png, imsd_D_by_size_hydrogel_only.png,
-imsd_stepsize_by_size.png, imsd_tracklength_by_size.png,
-investigation_1000nm_water.txt.
+Dissertation figures (Abb17-19; user, 2026-10-14; Styleguide v2, width class
+full, PDF, SAVE_PATH), histogram + KDE per particle size:
+  imsd_n_by_size_kde.pdf          -- n, x axis -0.2 to 1.4
+  imsd_stepsize_by_size_kde.pdf   -- mean step size per track
+  imsd_tracklength_by_size_kde.pdf -- track length t_l = f_max - f_min (frames,
+                                     gaps included) from the cached tracks_df,
+                                     x axis 0-100. The column track_length_frames
+                                     of the TaskB1 cache counts detections instead;
+                                     both medians are printed and written to
+                                     imsd_tracklength_definition.csv.
+Colours: SIZE_COLORS of each size; buffer bars in the base colour, hydrogel
+bars in the dark colour (hydrogel darker); KDE lines in the dark colour, for
+hydrogel darkened further so the two curves stay distinguishable. The grid is
+drawn here (per-size colours) with _size_grid_utils.compute_axis_spec and
+_panel_hist, which are not modified.
+Other outputs (D grids, plain-count variants, the 1000 nm investigation) are not
+used in the dissertation and go to SCRATCH_PATH (PNG).
 """
 from __future__ import annotations
 
 import pickle
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgb
 
 from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
 from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_savefig
+from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
 from hydro_analysis.MSD_Trackmate.Validation_Claude.iMSD_histograms import (
-    build_track_table, CACHE_TRACKLENGTH_D0, CACHE_MSD_D0,
+    build_track_table, CACHE_TRACKLENGTH_D0, CACHE_MSD_D0, CACHE_MSD_20MG,
 )
 from hydro_analysis.MSD_Trackmate.Validation_Claude.Figures_Refined._size_grid_utils import (
-    compute_axis_spec, plot_count_grid_by_size,
+    compute_axis_spec, plot_count_grid_by_size, _panel_hist, _scaled_kde,
 )
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
-) / "Figures_Refined" / "iMSD_Histograms"
+RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
+SAVE_PATH = RESULTS / "SPT"
+SCRATCH_PATH = RESULTS / "_scratch" / "iMSD_histograms_Refined"
+STYLE = Path(__file__).resolve().parents[3] / "thesis.mplstyle"
+WIDTH_FULL_IN = 6.30
+KDE_DARKEN_HYDROGEL = 0.6   # hydrogel KDE line = dark colour x 0.6 (display only)
 
 RAW_1000NM_WATER_FOLDER = Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_1000")
 
@@ -58,6 +78,64 @@ _METRICS = [
     ("step_um", "Mean step size per track (µm)", False, None, "imsd_stepsize_by_size.png"),
     ("track_length_frames", "Track length (frames)", False, (0.0, 200.0), "imsd_tracklength_by_size.png"),
 ]
+# Dissertation versions (user, 2026-10-14): metric, x label, x range, file stem
+_DISSERTATION_METRICS = [
+    ("exponent", r"Anomalous exponent $n$", (-0.2, 1.4), "imsd_n_by_size_kde"),
+    ("step_um", "Mean step size per track (µm)", None, "imsd_stepsize_by_size_kde"),
+    ("track_length_tl", r"Track length $t_l$ (frames)", (0.0, 100.0),
+     "imsd_tracklength_by_size_kde"),
+]
+
+
+def add_track_length_tl(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds track_length_tl = f_max - f_min (frames, gaps included) per
+    (xml_path, particle_id), read from the tracks_df of the MSD caches."""
+    lookup: dict[tuple, float] = {}
+    for cache in (CACHE_MSD_D0, CACHE_MSD_20MG):
+        with open(cache, "rb") as f:
+            results = pickle.load(f)
+        for r in results.values():
+            tracks = r.get("tracks_df")
+            if tracks is None or tracks.empty:
+                continue
+            frames = tracks.groupby("particle")["frame"]
+            span = frames.max() - frames.min()
+            for pid, value in span.items():
+                lookup[(r.get("xml_path"), pid)] = float(value)
+    df = df.copy()
+    df["track_length_tl"] = [lookup.get((row.xml_path, row.particle_id), np.nan) for row in df.itertuples()]
+    return df
+
+
+def plot_grid_size_colors(df: pd.DataFrame, metric: str, xlabel: str, dls_labels: dict[float, int],
+                          spec) -> plt.Figure:
+    """One panel per size, buffer (base colour) and hydrogel (dark colour) overlaid,
+    histogram + KDE scaled to counts, shared bins and y limit from spec."""
+    sizes = sorted(df["particle_size_nm"].dropna().unique())
+    ncols = 3
+    nrows = int(np.ceil(len(sizes) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(WIDTH_FULL_IN, 1.75 * nrows + 0.35),
+                              squeeze=False, sharex=True, sharey=True)
+    ax_flat = axes.flatten()
+    for ax in ax_flat[len(sizes):]:
+        ax.set_visible(False)
+    for ax, size_nm in zip(ax_flat, sizes):
+        base, dark = SIZE_COLORS[size_nm]
+        darker = tuple(c * KDE_DARKEN_HYDROGEL for c in to_rgb(dark))
+        water = df.loc[(df["condition"] == "water") & (df["particle_size_nm"] == size_nm), metric]
+        hydrogel = df.loc[(df["condition"] == "hydrogel") & (df["particle_size_nm"] == size_nm), metric]
+        _panel_hist(ax, water, hydrogel, spec,
+                    dict(face=base, edge=dark, label="Buffer"), dict(face=dark, edge=darker, label="Hydrogel"),
+                    overlay_kde=True)
+        ax.set_title(f"{dls_labels.get(size_nm, int(size_nm))} nm")
+        if len(hydrogel.dropna()):
+            ax.legend(loc="upper right")
+        ax.label_outer()
+    for ax in ax_flat[:len(sizes)]:
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Counts")
+        ax.label_outer()
+    return fig
 
 
 def investigate_1000nm_water() -> str:
@@ -104,52 +182,56 @@ def investigate_1000nm_water() -> str:
 
 
 def main() -> None:
-    df = build_track_table()
+    df = add_track_length_tl(build_track_table())
     n_water = int((df["condition"] == "water").sum())
     n_hydrogel = int((df["condition"] == "hydrogel").sum())
-    print(f"Per-track table: {len(df)} tracks ({n_water} water, {n_hydrogel} hydrogel)")
+    print(f"Per-track table: {len(df)} tracks ({n_water} water, {n_hydrogel} hydrogel); "
+          f"{int(df['track_length_tl'].isna().sum())} without t_l lookup")
 
     dls_labels = get_dls_labels()
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
+    SCRATCH_PATH.mkdir(parents=True, exist_ok=True)
 
+    definition = (df.groupby(["condition", "particle_size_nm"])
+                  .agg(n_tracks=("track_length_tl", "size"),
+                       median_detections=("track_length_frames", "median"),
+                       mean_detections=("track_length_frames", "mean"),
+                       median_tl=("track_length_tl", "median"),
+                       mean_tl=("track_length_tl", "mean")).reset_index())
+    definition.insert(2, "label_nm", definition["particle_size_nm"].map(lambda s: dls_labels.get(s, int(s))))
+    definition.to_csv(SAVE_PATH / "imsd_tracklength_definition.csv", index=False)
+    print("Track length before (detections per track) and after (t_l = f_max - f_min):")
+    print(definition.to_string(index=False))
+
+    with plt.style.context(STYLE):
+        for metric, xlabel, x_range, stem in _DISSERTATION_METRICS:
+            spec, n_out = compute_axis_spec(df, metric, log_x=False, x_range=x_range)
+            print(f"  {stem}: x range {x_range or (round(spec.bin_edges[0], 3), round(spec.bin_edges[-1], 3))}, "
+                  f"{n_out} track(s) outside the displayed range (counted, not shown)")
+            fig = plot_grid_size_colors(df, metric, xlabel, dls_labels, spec)
+            fig.savefig(SAVE_PATH / f"{stem}.pdf")
+            plt.close(fig)
+            print(f"Plot gespeichert: {SAVE_PATH / (stem + '.pdf')}")
+
+    # exploratory outputs, not used in the dissertation
+    style_water = dict(face="#009900", edge="#006600", label="Water")
+    style_hydrogel = dict(face="#0000da", edge="#000099", label="Hydrogel")
     with plt.rc_context(_RC):
         for metric, xlabel, log_x, x_range, filename in _METRICS:
-            spec, n_out = compute_axis_spec(df, metric, log_x=log_x, x_range=x_range)
-            if n_out:
-                print(f"  [NOTE] {metric}: {n_out} track(s) outside displayed range {x_range} "
-                      "-- counted, not shown, not dropped from the underlying data.")
-            stem = filename[:-4]
-            for overlay_kde, suffix in ((False, ""), (True, "_kde")):
-                fig = plot_count_grid_by_size(df, metric, xlabel, dls_labels, spec,
-                                               style_water=STYLE_WATER, style_hydrogel=STYLE_HYDROGEL,
-                                               overlay_kde=overlay_kde)
-                fig_path = SAVE_PATH / f"{stem}{suffix}.png"
-                safe_savefig(fig, fig_path, dpi=600, bbox_inches="tight")
-                plt.close(fig)
-                print(f"Plot gespeichert: {fig_path}")
-
-        # D: combined grid + water-only/hydrogel-only sharing the same axis spec.
-        d_spec, d_n_out = compute_axis_spec(df, "D_um2_per_s", log_x=True, x_range=None)
-        d_xlabel = r"$D$ ($\mathrm{\mu m^2/s}$)"
-        for condition_filter, stem in ((None, "imsd_D_by_size"),
-                                        ("water", "imsd_D_by_size_water_only"),
+            spec, _n_out = compute_axis_spec(df, metric, log_x=log_x, x_range=x_range)
+            fig = plot_count_grid_by_size(df, metric, xlabel, dls_labels, spec,
+                                           style_water=style_water, style_hydrogel=style_hydrogel)
+            safe_savefig(fig, SCRATCH_PATH / filename, dpi=600, bbox_inches="tight")
+            plt.close(fig)
+        d_spec, _ = compute_axis_spec(df, "D_um2_per_s", log_x=True, x_range=None)
+        for condition_filter, stem in ((None, "imsd_D_by_size"), ("water", "imsd_D_by_size_water_only"),
                                         ("hydrogel", "imsd_D_by_size_hydrogel_only")):
-            for overlay_kde, suffix in ((False, ""), (True, "_kde")):
-                fig = plot_count_grid_by_size(df, "D_um2_per_s", d_xlabel, dls_labels, d_spec,
-                                               condition_filter=condition_filter,
-                                               style_water=STYLE_WATER, style_hydrogel=STYLE_HYDROGEL,
-                                               overlay_kde=overlay_kde)
-                fig_path = SAVE_PATH / f"{stem}{suffix}.png"
-                safe_savefig(fig, fig_path, dpi=600, bbox_inches="tight")
-                plt.close(fig)
-                print(f"Plot gespeichert: {fig_path}")
-
-    print("\n1000 nm / water file-count investigation:")
-    report = investigate_1000nm_water()
-    print(report)
-    report_path = SAVE_PATH / "investigation_1000nm_water.txt"
-    report_path.write_text(report, encoding="utf-8")
-    print(f"Bericht gespeichert: {report_path}")
+            fig = plot_count_grid_by_size(df, "D_um2_per_s", r"$D$ ($\mathrm{\mu m^2/s}$)", dls_labels, d_spec,
+                                           condition_filter=condition_filter,
+                                           style_water=style_water, style_hydrogel=style_hydrogel)
+            safe_savefig(fig, SCRATCH_PATH / f"{stem}.png", dpi=600, bbox_inches="tight")
+            plt.close(fig)
+    (SCRATCH_PATH / "investigation_1000nm_water.txt").write_text(investigate_1000nm_water(), encoding="utf-8")
 
 
 if __name__ == "__main__":

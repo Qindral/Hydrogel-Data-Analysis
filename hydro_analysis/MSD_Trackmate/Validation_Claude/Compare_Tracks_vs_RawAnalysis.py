@@ -110,7 +110,7 @@ DATASETS: list[dict[str, Any]] = [
 ]
 
 SAVE_PATH_BASE = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 )
 
 IMAGE_DATA_TAIL_BYTES = 200_000

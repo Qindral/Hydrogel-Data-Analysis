@@ -13,12 +13,22 @@ re-derived here, by calling the SAME functions the original main() calls for
 that purpose, in the same order -- not a reimplementation, no new filtering
 logic, no change to which tracks qualify.
 
-Outputs (own folder, PNG only, 600 dpi, English labels):
-  A_sigma_loc_combined_by_size.png   -- y: "Sigma Log Error (nm)", x: "Particle
-                                         Size (nm)" (DLS-labeled ticks)
-  B_trajectories_overlay_by_size.png -- no suptitle, all-black uniform alpha,
-                                         shared x/y limits+ticks+aspect,
-                                         outer-only axis labels
+Dissertation figures (Styleguide v2, PDF, SAVE_PATH):
+  A_sigma_loc_combined_by_size.pdf   -- Abb04, narrow. Boxes: sigma_loc of the
+                                         immobilised particles per (size, mpp).
+                                         Diamonds: median of sigma_loc from the
+                                         intercept of the buffer MSD fits
+                                         (fit_results_MSD["sigma_loc_nm"] in
+                                         cache/msd_d0_results.pkl, read only).
+                                         Files with a negative intercept carry
+                                         NaN there and are not averaged; "n/N"
+                                         under each diamond gives files with a
+                                         value / files of that size (E005 open).
+  B_trajectories_overlay_by_size.pdf -- Abb06, full. Unchanged content; pixel
+                                         size in the panel titles; trajectory
+                                         lines rasterised.
+  D_expected_locerror_by_size.csv    -- table D below.
+Not used in the dissertation (written to SCRATCH_PATH, PNG):
   C_locerror_vs_stepsize_ratio_pct.png -- ratio as percent (not a dimensionless
                                          fraction), gray boxes, 100% reference
                                          line (replaces the ratio=1 line)
@@ -40,6 +50,7 @@ from matplotlib.lines import Line2D
 
 from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
+from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
 from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_savefig
 from hydro_analysis.MSD_Trackmate.Validation_Claude.Loc_Error_Analyse_immob_particle import (
     IMMOB_FOLDERS, CACHE_FILE, TRAJECTORY_WINDOW_NM,
@@ -48,9 +59,12 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Loc_Error_Analyse_immob_part
 )
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
-) / "Figures_Refined" / "LocError"
+RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
+SAVE_PATH = RESULTS / "SPT"
+SCRATCH_PATH = RESULTS / "_scratch" / "LocError_Refined"
+CACHE_D0 = Path(__file__).resolve().parents[2] / "cache" / "msd_d0_results.pkl"
+STYLE = Path(__file__).resolve().parents[3] / "thesis.mplstyle"
+WIDTH_NARROW_IN, WIDTH_FULL_IN, RATIO = 4.72, 6.30, 1.42
 
 COLOR_GRAY = "#808080"
 COLOR_GRAY_DARK = "#4d4d4d"
@@ -95,14 +109,32 @@ def build_trajectory_by_group() -> dict[tuple[float, float], list[pd.DataFrame]]
 
 # ── A: sigma_loc combined by size ───────────────────────────────────────────────
 
+def buffer_intercept_sigma(d0_cache: dict) -> dict[float, dict]:
+    """{nominal_nm: {"values": positive-intercept sigma_loc (nm), "n": files with a
+    value, "N": files of that size}} from the buffer MSD fits, as stored."""
+    out: dict[float, dict] = {}
+    for rd in d0_cache.values():
+        size = rd.get("particle_size_nm")
+        fit = rd.get("fit_results_MSD")
+        if size is None:
+            continue
+        entry = out.setdefault(float(size), {"values": [], "n": 0, "N": 0})
+        entry["N"] += 1
+        sigma = fit.get("sigma_loc_nm", np.nan) if isinstance(fit, dict) else np.nan
+        if sigma is not None and np.isfinite(sigma):
+            entry["values"].append(float(sigma))
+            entry["n"] += 1
+    return out
+
+
 def plot_sigma_combined_by_size(df: pd.DataFrame, qualifying: list[tuple[float, float]],
-                                 dls_labels: dict[float, int]) -> plt.Figure:
-    labels = [f"{dls_labels.get(s, int(s))} nm\n(mpp={m:.3g})" for s, m in qualifying]
+                                 dls_labels: dict[float, int], intercept: dict[float, dict]) -> plt.Figure:
+    labels = [f"{dls_labels.get(s, int(s))}\n{m:.3g} µm px$^{{-1}}$" for s, m in qualifying]
     groups = [df.loc[(df["particle_size_nm"] == s) & (df["mpp"] == m), "sigma_xy_static_nm"].dropna().to_numpy()
               for s, m in qualifying]
     positions = np.arange(len(qualifying), dtype=float)
 
-    fig, ax = plt.subplots(figsize=(7.15, 5.00), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(WIDTH_NARROW_IN, WIDTH_NARROW_IN / RATIO))
     bp = ax.boxplot(groups, positions=positions, widths=0.5, patch_artist=True, showfliers=False,
                      manage_ticks=False)
     for box in bp["boxes"]:
@@ -112,10 +144,27 @@ def plot_sigma_combined_by_size(df: pd.DataFrame, qualifying: list[tuple[float, 
     for element in ("whiskers", "caps", "medians"):
         for line in bp[element]:
             line.set_color(COLOR_GRAY_DARK)
+    for pos, (s, _m) in zip(positions, qualifying):
+        entry = intercept.get(s, {"values": [], "n": 0, "N": 0})
+        if entry["values"]:
+            face, edge = SIZE_COLORS[s]
+            ax.plot(pos, np.median(entry["values"]), marker="D", markersize=5, color=face,
+                    markeredgecolor=edge, markeredgewidth=0.6, linestyle="none", zorder=4)
+        ax.text(pos, 0.02, f"{entry['n']}/{entry['N']}", transform=ax.get_xaxis_transform(),
+                ha="center", va="bottom", fontsize=8)
     ax.set_xticks(positions)
-    ax.set_xticklabels(labels, fontsize=7.5)
-    ax.set_ylabel("Sigma Log Error (nm)")
-    ax.set_xlabel("Particle Size (nm)")
+    ax.set_xticklabels(labels)
+    ax.set_xlim(positions[0] - 0.6, positions[-1] + 0.6)
+    ymax = ax.get_ylim()[1]
+    ax.set_ylim(-0.1 * ymax, 1.22 * ymax)   # headroom for the legend
+    ax.set_ylabel(r"Localisation error $\sigma_\mathrm{loc}$ (nm)")
+    ax.set_xlabel("Particle size (nm)")
+    ax.legend(handles=[
+        plt.Rectangle((0, 0), 1, 1, facecolor=COLOR_GRAY, edgecolor=COLOR_GRAY_DARK, alpha=0.6,
+                      label="Immobilised particles"),
+        Line2D([0], [0], marker="D", markersize=5, color="0.6", markeredgecolor="0.3", linestyle="none",
+               label="Buffer MSD intercept (median)"),
+    ], loc="upper right")
     return fig
 
 
@@ -127,8 +176,8 @@ def plot_trajectories_by_size(by_group: dict[tuple[float, float], list[pd.DataFr
     n = len(qualifying)
     ncols = 3 if n > 3 else n
     nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 7.15 / 3, nrows * 5.00 / 2.5),
-                              constrained_layout=True, squeeze=False, sharex=True, sharey=True)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(WIDTH_FULL_IN, nrows * WIDTH_FULL_IN / ncols * 0.95),
+                              squeeze=False, sharex=True, sharey=True)
     ax_flat = axes.flatten()
     for ax in ax_flat[n:]:
         ax.set_visible(False)
@@ -141,14 +190,14 @@ def plot_trajectories_by_size(by_group: dict[tuple[float, float], list[pd.DataFr
                 g = g.sort_values("frame")
                 x_nm = g["x"].to_numpy(dtype=float) * mpp * 1000.0
                 y_nm = g["y"].to_numpy(dtype=float) * mpp * 1000.0
-                ax.plot(x_nm - x_nm[0], y_nm - y_nm[0], color="black", linewidth=0.6, alpha=0.5,
+                ax.plot(x_nm - x_nm[0], y_nm - y_nm[0], color="black", linewidth=0.5, alpha=0.5,
                         rasterized=True)
         ax.set_xlim(-half, half)
         ax.set_ylim(-half, half)
         ax.set_xticks([-half, -half / 2, 0, half / 2, half])
         ax.set_yticks([-half, -half / 2, 0, half / 2, half])
         ax.set_aspect("equal")
-        ax.set_title(f"{dls_labels.get(size_nm, int(size_nm))} nm", fontsize=10, fontweight="semibold")
+        ax.set_title(f"{dls_labels.get(size_nm, int(size_nm))} nm ({mpp:.3g} µm px$^{{-1}}$)")
         if row == nrows - 1 or (row == nrows - 2 and (idx + ncols) >= n):
             ax.set_xlabel(r"$\Delta x$ (nm)")
         if col == 0:
@@ -280,24 +329,34 @@ def main() -> None:
     print("Rekonstruiere Trajektorien (gleiche Funktionen wie im Original-Skript, nicht gecacht)...")
     trajectory_by_group = build_trajectory_by_group()
 
+    d0_cache = _load_pickle(CACHE_D0, "MSD_FromTrackmate_D0.py")
+    intercept = buffer_intercept_sigma(d0_cache)
+    for size in sorted(intercept):
+        v = intercept[size]
+        med = f"{np.median(v['values']):.1f} nm" if v["values"] else "--"
+        print(f"  Buffer MSD intercept {dls_labels.get(size, int(size))} nm: n/N = {v['n']}/{v['N']}, median {med}")
+
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
-    with plt.rc_context(_RC):
+    SCRATCH_PATH.mkdir(parents=True, exist_ok=True)
+    with plt.style.context(STYLE):
         for fig, filename in (
-            (plot_sigma_combined_by_size(df, qualifying, dls_labels), "A_sigma_loc_combined_by_size.png"),
+            (plot_sigma_combined_by_size(df, qualifying, dls_labels, intercept), "A_sigma_loc_combined_by_size.pdf"),
             (plot_trajectories_by_size(trajectory_by_group, qualifying, dls_labels),
-             "B_trajectories_overlay_by_size.png"),
-            (plot_ratio_percent(df, qualifying, step_size_nm, dls_labels), "C_locerror_vs_stepsize_ratio_pct.png"),
+             "B_trajectories_overlay_by_size.pdf"),
         ):
-            safe_savefig(fig, SAVE_PATH / filename, dpi=600, bbox_inches="tight")
+            fig.savefig(SAVE_PATH / filename)
             plt.close(fig)
             print(f"Plot gespeichert: {SAVE_PATH / filename}")
+    with plt.rc_context(_RC):
+        fig = plot_ratio_percent(df, qualifying, step_size_nm, dls_labels)
+        safe_savefig(fig, SCRATCH_PATH / "C_locerror_vs_stepsize_ratio_pct.png", dpi=600, bbox_inches="tight")
+        plt.close(fig)
 
         table = build_locerror_table(df, qualifying, step_size_nm, dls_labels)
         print(table.to_string(index=False))
         fig = render_locerror_table(table)
-        safe_savefig(fig, SAVE_PATH / "D_expected_locerror_by_size.png", dpi=600, bbox_inches="tight")
+        safe_savefig(fig, SCRATCH_PATH / "D_expected_locerror_by_size.png", dpi=600, bbox_inches="tight")
         plt.close(fig)
-        print(f"Plot gespeichert: {SAVE_PATH / 'D_expected_locerror_by_size.png'}")
     csv_path = SAVE_PATH / "D_expected_locerror_by_size.csv"
     table.to_csv(csv_path, index=False)
     print(f"Tabelle gespeichert: {csv_path}")

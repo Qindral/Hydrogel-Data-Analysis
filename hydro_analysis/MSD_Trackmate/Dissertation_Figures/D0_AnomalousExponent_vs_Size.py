@@ -44,7 +44,7 @@ from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC, _DASH_THE
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_FILE = Path(__file__).parent.parent / "cache" / "msd_d0_results.pkl"
 SAVE_PATH_BASE = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 )
 SAVE_PATH: Path | None = SAVE_PATH_BASE / "D0_AnomalousExponent_vs_Size"
 

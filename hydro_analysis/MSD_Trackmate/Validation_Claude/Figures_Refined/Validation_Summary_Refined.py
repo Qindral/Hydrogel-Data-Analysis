@@ -55,7 +55,7 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Figures_Refined.PSF_Refined 
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 BASE = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 )
 LOCERR_PKL = Path(__file__).parent.parent.parent / "cache" / "localization_error_immobilized.pkl"
 STEPSIZE_PKL = Path(__file__).parent.parent.parent / "cache" / "imsd_median_stepsize_by_size.pkl"

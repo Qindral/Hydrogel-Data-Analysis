@@ -102,7 +102,7 @@ RAW_DIR = Path(r"H:\Daten Promotion Sicherung\Rheo")
 TRI_GLOB = "Hyd*.tri"
 XLS_GLOB = "Hyd*.xls"
 OUTPUT_ROOT = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Rheology_Hyd20"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Rheology\Rheology_Hyd20"
 )
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "rheo_hyd20_results.pkl"
 

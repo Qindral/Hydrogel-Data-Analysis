@@ -268,7 +268,7 @@ muss nicht weiter begründet werden.
 **Wirkung heute:** Mit y = 10–600 Pa liegen 2 von 42 Punkten des Amplitudensweeps Hyd20 außerhalb (G' = 5,8 und 2,0 Pa bei den größten Dehnungen) und sind nicht sichtbar.
 - Legende und Stern im Amplitudensweep: A: beide weglassen. B: beide behalten. C: Legende weg, Stern bleibt.
 - Mesh Size für die Caption: A: Proben < 10 d (N = 4, 17,5 ± 1,1 nm). B: alle qc-Proben (N = 8, ≈ 16,4 ± 1,1 nm).
-**Entscheidung:** Viskoelastizität nur Amplitudensweep (Hyd20), ohne Titel, schwarz, Legende und Stern A (weglassen), y 10–600 Pa; Stabilität ohne Legende, Symbole kleiner; Gitter ohne Fibrillendicke (Kavität und Throat mit Achsendurchmessern), auf eine Kavität zentriert und periodisch in alle Richtungen fortgesetzt; Kavität gegen f in Schwarz; Mesh Size keine Abbildung, Wert A für die Caption (Nutzer, 2026-10-08). Nachtrag: Gitter als beleuchtetes 3D-Rendering (pyvista/VTK) mit glatter, halbtransparenter Kavitätskugel, Nachbarzellen nur angedeutet, Stränge vor der Kavität blass, näher am Objekt (Nutzer, 2026-10-08).
+**Entscheidung:** Viskoelastizität nur Amplitudensweep (Hyd20), ohne Titel, schwarz, Legende und Stern A (weglassen), y 10–600 Pa; Stabilität ohne Legende, Symbole kleiner; Gitter ohne Fibrillendicke (Kavität und Throat mit Achsendurchmessern), auf eine Kavität zentriert und periodisch in alle Richtungen fortgesetzt; Kavität gegen f in Schwarz; Mesh Size keine Abbildung, Wert A für die Caption (Nutzer, 2026-10-08). Nachtrag: Gitter als beleuchtetes 3D-Rendering (pyvista/VTK) mit glatter, halbtransparenter Kavitätskugel, Nachbarzellen nur angedeutet, Stränge vor der Kavität blass, näher am Objekt (Nutzer, 2026-10-08). Nachtrag (Nutzer, 2026-10-14): Viskoelastizität mit Legende G′ (gefüllt) / G″ (offen) und ohne die senkrechten Linien bei γ5% und γ10%; ersetzt für diese Abbildung „Legende weglassen“ (die Dehnungswerte bleiben in Tabelle 1).
 
 ## E029 · OFFEN · 2026-10-14
 **Frage:** FRAP-Bildserie (Hydrogel oben, Wasser unten, t = 0/10/20 s): Welche Messung wird je Reihe gezeigt?
@@ -276,4 +276,47 @@ muss nicht weiter begründet werden.
 **Wirkung heute:** Regel aus Fig. 1 von `frap_figures.py` übernommen: QC-bestandene (Profil) Messung mit der größten Bleichtiefe K0 → Hydrogel gel_B1_1 (K0 = 0,81, Kandidaten: 9 Bulk-Gel-Messungen A1/B1, 20 mg/mL), Wasser water_3 (K0 = 0,72; water_2 fällt an gesättigten Pixeln durch, water_1 hat K0 = 0,53). Für diese Regel ist keine Nutzerentscheidung vermerkt.
 - A: Regel „größtes K0“ beibehalten → Abbildung bleibt wie erzeugt (gel_B1_1, water_3).
 - B: Messungen vom Nutzer benannt (z. B. eine typische statt der tiefsten Bleiche) → nur die gezeigten Bilder ändern sich, keine Zahlenwerte.
+**Entscheidung:** offen
+
+## E030 · OFFEN · 2026-10-21
+**Frage:** Ist die Pixelgröße 0,130 µm/px für 800 px breite Filme (Binning ×1) richtig, oder müsste sie nach dem Binning 0,075 µm/px sein?
+**Stelle:** `core.io` (Auswertung der `.rec`-Datei, Zeile 147: `x == 800 → mpp = 0.130`, Kommentar „mpp measured via Thorlab Grid 10µm“); gleiche Tabelle `MPP_BY_IMAGE_WIDTH_PX` in `Validation_Claude/snr_signal_profile.py`.
+**Wirkung heute:** Dieselbe Kamera (pco.pixelfly USB, Seriennummer 1401) hat am 30.01.2026 `500 nm_2.tif` mit 400 × 300 px, Binning ×2 (→ 0,15 µm/px) und drei Minuten später `500 nm_3.tif` mit 800 × 600 px, Binning ×1 aufgenommen. Bei 0,30 µm/px für Binning ×4 und 0,15 µm/px für Binning ×2 ergäbe Binning ×1 0,075 µm/px. Betroffen: immobilisierte 560-nm-Filme `500 nm_3` und `500 nm_4` (42 Tracks in Abb20; FWHM-Median 1092 nm gegen 659 nm bei 0,15 µm/px und 736 nm bei 0,30 µm/px; mit 0,075 µm/px wären es 1092 × 0,075/0,130 ≈ 630 nm) und die Gruppe 560 nm / 0,13 µm/px der Lokalisationsfehler-Tabelle (σ_loc 50 ± 16 nm). Die Umrechnung 0,15 gegen 0,30 µm/px (240/560/1370 nm gegen 35–100 nm) ist dagegen mit dem Binning konsistent. Abb20 zeigt die Werte unverändert.
+- A: 0,130 µm/px bleibt (eigene Kalibrierung mit dem 10-µm-Gitter für diese Einstellung) → keine Änderung; Kalibrieraufnahme im Methodenteil nennen.
+- B: 0,075 µm/px aus dem Binning → `core.io` ändern, `Particle_Size_SNR_Compute.py` und `Loc_Error_Analyse_immob_particle.py` neu laufen lassen; 560-nm-FWHM und σ_loc der zwei Filme sinken um den Faktor 0,58.
+- C: die beiden 800-px-Filme aus Abb20 und der σ_loc-Tabelle herausnehmen, bis die Pixelgröße geklärt ist → 560 nm nur aus 222 Tracks bei 0,15 und 0,30 µm/px.
+**Entscheidung:** offen
+
+## E031 · OFFEN · 2026-10-21
+**Frage:** Wie werden mehrfach analysierte Filme in den MSD-Caches behandelt (Buffer `msd_d0_results.pkl` und Hydrogel `msd_20mg_files.pkl`)?
+**Stelle:** `MSD_FromTrackmate_D0.py` und `MSD_FromTrackmate_20mg.py` (Dateisuche); Folgeskripte Abb05, Abb08–Abb12, Abb14, Abb15, Abb17–Abb19.
+**Wirkung heute:** Buffer 35 nm (nominal 20 nm) zählt 9 Einträge, aber nur 4 verschiedene Filme: `20 nm water_4` viermal (je eine Kopie in `D_0 Wassermessung\20 nm\Tracks` und `2026.01.16\Tracks_20` mit identischem Ergebnis D = 13,06 µm²/s, dazu `filtered_20 nm water_4` D = 13,01 und `Resultof20 nm water_4` D = 11,79), `20 nm_water_02` und `20 nm_water_03` je zweimal (beide Ordner, identische Ergebnisse), dazu `20 nm_water` (0,15 µm/px, 40 fps, D = 1,6). Hydrogel 35 nm zählt 21 Einträge für 19 Filme: `20nm_1d_B4_04` und `20nm_1d_B4_04_processed` (D = 3,05 / 2,95), `20nm_1d_A4_01` und `Resultof20nm_1d_A4_01` (D = 2,94 / 6,27). Alle Einträge gehen heute einzeln in Abbildungen und gewichtete Mittel ein; nichts wurde entfernt.
+- A: so lassen → jede Analyse zählt als eigene Messung; Doppelungen im Methodenteil nennen.
+- B: je Film nur eine Analyse behalten (Regel vom Nutzer, z. B. „Originalordner, unbearbeitete Tracks“) → Buffer 35 nm 4 statt 9 Werte, Hydrogel 35 nm 19 statt 21; Neulauf der Compute-Skripte und aller Folgeabbildungen.
+- C: identische Kopien (gleiches Ergebnis, zwei Ordner) entfernen, bearbeitete Varianten (`filtered_`, `Resultof`, `_processed`) behalten → Buffer 35 nm 6 statt 9.
+**Entscheidung:** offen
+
+## E032 · OFFEN · 2026-10-21
+**Frage:** Welche DLS-Referenzwerte gelten in den SPT-Abbildungen (D₀ und Größenfehler)?
+**Stelle:** `core.io.get_dls_reference_maps()` (fest eingetragene Werte) gegen `core.io.get_dls_diffusion_means()` / `get_dls_sizes()` (DLS-Cache, laut Docstring maßgeblich); benutzt in Abb09–Abb12.
+**Wirkung heute:** Die x-Position kommt aus dem Cache (z. B. 557,9 und 1366,9 nm), D₀, D₀-Fehler und Größenfehler aus den fest eingetragenen Werten, die zu älteren Durchmessern gehören (621,5 und 1266,5 nm). Für 35–240 nm stimmen beide überein; für 560 nm D₀ = 0,700 (fest) gegen 0,774 µm²/s (Cache), für 1370 nm 0,341 gegen 0,314 µm²/s. Dadurch weicht die DLS-Referenz in Abb12 bei 560/1370 nm um −8,9 / +8,8 % von Stokes–Einstein ab, bei 35–240 nm um 0,0 %. Größenfehler fest 21,8 / 47,0 nm gegen DLS-Tabelle (Abb35) ± 51,1 / ± 38,3 nm.
+- A: so lassen → Abbildungen unverändert; Mischung im Methodenteil begründen.
+- B: alle Referenzwerte aus dem DLS-Cache (`get_dls_diffusion_means()`, Größenfehler aus derselben Auswertung) → DLS-Punkte 560/1370 nm verschieben sich, Abb09 unverändert (nur 35/50 nm).
+**Entscheidung:** offen
+
+## E033 · OFFEN · 2026-10-21
+**Frage:** Welche Messungen sind für 560 nm (nominal 500 nm) die „drei Referenzmessungen“ in Abb35/Abb36?
+**Stelle:** `Litesizer/litesizer_visualization_chapter.py` (über `litesizer_visualization.group_accepted_measurements`), Quelle `Size_repitition_All Sizes.xlsx`.
+**Wirkung heute:** Für 500 nm enthält die Referenzdatei 12 Messungen, davon 6 mit PDI ≤ 42 % (zwei Serien „500 nm 1–3“: d_H 500,8 / 558,3 / 533,8 nm und 516,5 / 620,7 / 617,6 nm). Alle 6 werden gezeigt und gemittelt (d_H 557,9 ± 51,1 nm); alle anderen Größen haben genau 3. Nichts wurde entfernt.
+- A: alle 6 behalten → wie heute; im Text „3 bzw. 6 Wiederholungen“ nennen.
+- B: nur eine Serie (vom Nutzer benannt) → 3 Messungen; d_H, D₀ und PDI für 560 nm ändern sich und damit die x-Position von 560 nm in allen SPT-Abbildungen, wenn der DLS-Cache neu erzeugt wird.
+**Entscheidung:** offen
+
+## E034 · OFFEN · 2026-10-21
+**Frage:** Welche Feret-Definition zeigen Abb31 (50 nm) und Abb32 (240 nm) gemeinsam?
+**Stelle:** `SEM_Particles/sem_feret_size_histogram.py` (`DIAMETER_VARIANTS`); ausgewählt sind derzeit `sem_feret_diameter_50nm.pdf` (Feret_max) und `sem_mean_feret_diameter_200nm.pdf` (mittlerer Feret = (Feret_max + Feret_min)/2).
+**Wirkung heute:** Beide Varianten werden für jede Größe erzeugt. 50 nm: Feret_max 39,4 ± 8,4 nm, mittlerer Feret 36,6 ± 8,4 nm; 240 nm: Feret_max 244,5 ± 17,8 nm, mittlerer Feret 228,2 ± 20,1 nm (n = 1000 / 1010, ohne Pt-Abzug). Abb33 nutzt Feret_max.
+- A: Feret_max für beide → Abb32 als `sem_feret_diameter_200nm.pdf`; einheitlich mit Abb33.
+- B: mittlerer Feret für beide → Abb31 als `sem_mean_feret_diameter_50nm.pdf`; Abb33 nutzt dann eine andere Definition, außer sie wird ebenfalls umgestellt.
+- C: zusätzlich Pt-Abzug (2 × 1,3 nm wie in Abb33) auch in Abb31/32 → Werte um 2,6 nm kleiner.
 **Entscheidung:** offen

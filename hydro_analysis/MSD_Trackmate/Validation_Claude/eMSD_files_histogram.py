@@ -42,7 +42,7 @@ CACHE_MSD_D0 = Path(__file__).parent.parent / "cache" / "msd_d0_results.pkl"
 CACHE_MSD_20MG = Path(__file__).parent.parent / "cache" / "msd_20mg_files.pkl"
 
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "eMSD_Histograms"
 
 N_BINS = 30

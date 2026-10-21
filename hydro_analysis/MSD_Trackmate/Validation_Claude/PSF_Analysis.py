@@ -89,7 +89,7 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_save
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "PSF_Analysis"
 
 CACHE_FILE = Path(__file__).parent.parent / "cache" / "psf_analysis_fits.pkl"

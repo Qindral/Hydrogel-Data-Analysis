@@ -56,7 +56,7 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Figures_Refined._size_grid_u
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "Figures_Refined" / "eMSD_Histograms"
 
 STYLE_WATER = dict(face="#009900", edge="#006600", label="Water")

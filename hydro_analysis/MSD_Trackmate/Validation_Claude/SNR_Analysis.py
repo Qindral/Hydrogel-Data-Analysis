@@ -37,7 +37,7 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_save
 # ── Configuration ──────────────────────────────────────────────────────────────
 PSS_CACHE = Path(__file__).resolve().parent.parent / "cache" / "particle_size_snr.pkl"
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "SNR_Analysis"
 
 

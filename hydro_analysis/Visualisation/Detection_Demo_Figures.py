@@ -39,7 +39,7 @@ from hydro_analysis.Trajectory.trajectory_plotter import (
 
 SAVE_PATH = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
-    r"\Experiments and Results - Data\Auswertungsbilder\Detection_Demo"
+    r"\Experiments and Results - Data\_scratch\Auswertungsbilder\Detection_Demo"
 )
 
 SCALEBAR_UM = 5.0

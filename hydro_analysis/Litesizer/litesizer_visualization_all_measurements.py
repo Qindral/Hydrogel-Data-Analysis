@@ -48,8 +48,8 @@ from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _DASH_THEORY, 
 # ── Configuration ──────────────────────────────────────────────────────────────
 REFERENCE_XLSX = Path(r"E:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
 RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
-EXTENDED_CSV = RESULTS / "DLS_measurement_inventory" / "dls_size_table_extended.csv"
-SAVE_PATH = RESULTS / "DLS_particle_size_reference_appendix"
+EXTENDED_CSV = RESULTS / "Particle_Characterization" / "DLS_measurement_inventory" / "dls_size_table_extended.csv"
+SAVE_PATH = RESULTS / "Particle_Characterization"
 FIG_STEM = "dls_particle_size_reference_all_measurements"
 PDI_FIG_STEM = "dls_polydispersity_all_measurements"
 PREVIEW_PATH: Path | None = RESULTS / "_scratch" / "DLS_particle_size_reference_appendix"  # PNG check copies

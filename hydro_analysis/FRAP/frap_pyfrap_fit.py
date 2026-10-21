@@ -69,7 +69,7 @@ from hydro_analysis.FRAP.frap_pyfrap_inputs import disk_mean
 # ── Configuration ──────────────────────────────────────────────────────────────
 INPUT_CACHE = Path(__file__).resolve().parent / "cache" / "frap_pyfrap_inputs.pkl"
 RESULT_CACHE = Path(__file__).resolve().parent / "cache" / "frap_pyfrap_result_{version}.pkl"
-OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP_v2\pyfrap_fit")
+OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP\FRAP_v2\pyfrap_fit")
 VERSIONS = ("2d", "thin3d", "slab03")             # decided by user, 2026-10-08 (E024 and follow-up)
 Z_HEIGHT_UM = 1.0                                 # decided by user, 2026-10-08 (E022, E024)
 SLAB_UM = 0.3                                     # decided by user, 2026-10-08: bleach height of slab03

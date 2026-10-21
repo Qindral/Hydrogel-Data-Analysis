@@ -1,6 +1,12 @@
 """Select an illustrative weak tracked 20 nm hydrogel particle and show raw/DoG.
 Selection is intentionally for improvement, not a representative SNR estimate.
 Filtering and radius conventions are shared with snr_signal_profile.py.
+
+Figure (Abb16, Styleguide v2, width class full, PNG 600 dpi): A full raw frame,
+as tall as B (raw cutout) and C (DoG cutout) together; only panel labels and
+scalebars (lower right, grey box). The local SNR values are printed, not drawn.
+Writes the figure, the candidate table and the selection JSON to OUT; the raw
+and DoG frames as float TIFF to SCRATCH. No other script reads these outputs.
 """
 from pathlib import Path
 import json
@@ -9,15 +15,42 @@ import numpy as np
 import pandas as pd
 import tifffile
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, ConnectionPatch
+from matplotlib.patches import Rectangle
+from matplotlib_scalebar.scalebar import ScaleBar
 from hydro_analysis.MSD_Trackmate.Validation_Claude.snr_signal_profile import (
-    FILES, find_session_and_tif, dog_filter, MPP_BY_IMAGE_WIDTH_PX, _RC)
+    FILES, find_session_and_tif, dog_filter, MPP_BY_IMAGE_WIDTH_PX)
 
-OUT = Path(__file__).resolve().parents[4] / "analysis_results" / "snr_hydrogel_20nm_example"
+# ── Configuration ──────────────────────────────────────────────────────────────
+RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
+OUT = RESULTS / "SPT"
+SCRATCH = RESULTS / "_scratch" / "snr_hydrogel_20nm_example"
+FIG_NAME = "hydrogel_20nm_weak_particle_dog"
+STYLE = Path(__file__).resolve().parents[3] / "thesis.mplstyle"
+FIG_WIDTH_IN = 6.30          # Styleguide width class "full"
+PANEL_GAP_IN = 0.06
+SCALEBAR_FRAME_UM = 5.0
+SCALEBAR_CUTOUT_UM = 1.0
+COLOR_MARK = "#e69f00"       # cutout box in A and centre brackets in B/C (unchanged)
+
+
+def _scalebar(ax, mpp, length_um):
+    """Scalebar lower right, white bar and 8 pt text on a grey box (as Abb01/Abb02)."""
+    ax.add_artist(ScaleBar(
+        mpp, units="um", dimension="si-length", fixed_value=length_um, fixed_units="um",
+        location="lower right", width_fraction=0.02, sep=2, pad=0.4, border_pad=0.5,
+        frameon=True, color="white", box_color="#555555", box_alpha=0.85, scale_loc="top",
+        font_properties={"size": 8, "family": "Open Sans"},
+        scale_formatter=lambda value, unit: f"{value:g} {unit}"))
+
+
+def _panel_label(ax, letter):
+    ax.text(0.03, 0.97, letter, transform=ax.transAxes, ha="left", va="top",
+            fontsize=10, fontweight="bold", color="white")
 
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    SCRATCH.mkdir(parents=True, exist_ok=True)
     session, tif = find_session_and_tif(Path(FILES[("hydrogel", 20.0)]))
     root = ET.parse(session).getroot()
     detector = root.find("Settings/DetectorSettings").attrib
@@ -73,7 +106,7 @@ def main():
                     raw_snr=raw_snr,dog_snr=dog_snr,gain=dog_snr/raw_snr if raw_snr>0 else np.nan,
                     raw_mu=raw_mu,raw_sd=raw_sd,dog_mu=dog_mu,dog_sd=dog_sd,n_bg=int(bg.sum())))
     table = pd.DataFrame(rows)
-    table.to_csv(OUT / "candidate_metrics.csv",index=False)
+    table.to_csv(OUT / f"{FIG_NAME}_candidates.csv",index=False)
     weak = table[(table.raw_snr >= 2) & (table.raw_snr <= 5) & (table.dog_snr >= 5) & (table.gain >= 1.5)]
     if weak.empty:
         raise RuntimeError("No weak-to-clear example met the stated selection criteria; inspect candidate_metrics.csv")
@@ -86,47 +119,49 @@ def main():
     filtered,small,large=dog_filter(image,(radius/py,radius/px))
     mpp = MPP_BY_IMAGE_WIDTH_PX[image.shape[1]]
     selected.update(mpp=mpp,sigma_small_yx=small.tolist(),sigma_large_yx=large.tolist())
-    (OUT/"selected_example.json").write_text(json.dumps(selected,indent=2))
+    (OUT/f"{FIG_NAME}_selected.json").write_text(json.dumps(selected,indent=2))
     xi,yi=int(round(selected["x"])),int(round(selected["y"]))
     half=15
     raw=image[yi-half:yi+half+1,xi-half:xi+half+1]
     dog=filtered[yi-half:yi+half+1,xi-half:xi+half+1]
-    tifffile.imwrite(OUT/"raw_frame.tif",image.astype(np.float32))
-    tifffile.imwrite(OUT/"dog_frame.tif",filtered.astype(np.float32))
+    tifffile.imwrite(SCRATCH/"raw_frame.tif",image.astype(np.float32))
+    tifffile.imwrite(SCRATCH/"dog_frame.tif",filtered.astype(np.float32))
     # Same mapping in background-SD units for both cutouts: no separate auto contrast.
     zraw=(raw-selected["raw_mu"])/selected["raw_sd"]
     zdog=(dog-selected["dog_mu"])/selected["dog_sd"]
     vmax=max(8.,float(np.ceil(selected["dog_snr"])))
-    with plt.rc_context(_RC):
-        fig=plt.figure(figsize=(10,7),layout="constrained")
-        grid=fig.add_gridspec(2,2,width_ratios=[1.3,1])
-        ax=fig.add_subplot(grid[:,0]); ar=fig.add_subplot(grid[0,1]); ad=fig.add_subplot(grid[1,1])
+    # Geometry: A has the frame aspect and the height of B + gap + C (square cutouts).
+    h_img, w_img = image.shape
+    aspect = w_img / h_img
+    side = (FIG_WIDTH_IN - PANEL_GAP_IN - aspect * PANEL_GAP_IN) / (2 * aspect + 1)
+    height = 2 * side + PANEL_GAP_IN
+    width_a = aspect * height
+    with plt.style.context(STYLE):
+        fig = plt.figure(figsize=(FIG_WIDTH_IN, height), layout="none")
+        W, H = FIG_WIDTH_IN, height
+        ax = fig.add_axes((0, 0, width_a / W, 1))
+        x_bc = (width_a + PANEL_GAP_IN) / W
+        ar = fig.add_axes((x_bc, (side + PANEL_GAP_IN) / H, side / W, side / H))
+        ad = fig.add_axes((x_bc, 0, side / W, side / H))
         ax.imshow(image,cmap="gray",vmin=np.percentile(image,1),vmax=np.percentile(image,99.8),interpolation="nearest")
-        ax.add_patch(Rectangle((xi-half-.5,yi-half-.5),2*half+1,2*half+1,fill=False,edgecolor="#e69f00",lw=1.3))
-        ax.set_title(f"A  Raw frame {int(selected['frame'])+1}",loc="left",fontsize=11)
+        ax.add_patch(Rectangle((xi-half-.5,yi-half-.5),2*half+1,2*half+1,fill=False,edgecolor=COLOR_MARK,lw=1.0))
         extent=(-half-.5,half+.5,half+.5,-half-.5)
         ar.imshow(zraw,cmap="gray",vmin=-2,vmax=vmax,extent=extent,interpolation="nearest")
-        im=ad.imshow(zdog,cmap="gray",vmin=-2,vmax=vmax,extent=extent,interpolation="nearest")
-        ar.set_title(f"B  Raw cutout | local SNR {selected['raw_snr']:.1f}",loc="left",fontsize=11)
-        ad.set_title(f"C  DoG cutout | local SNR {selected['dog_snr']:.1f}",loc="left",fontsize=11)
+        ad.imshow(zdog,cmap="gray",vmin=-2,vmax=vmax,extent=extent,interpolation="nearest")
         for a in (ar,ad):
             # Small brackets mark the tracked center without obscuring the signal.
-            a.plot([-5,-3],[0,0],color="#e69f00",lw=1)
-            a.plot([0,0],[-5,-3],color="#e69f00",lw=1)
-            a.plot([5-1/mpp,5],[12,12],color="white",lw=2)
-            a.text(5-.5/mpp,10.8,"1 µm",color="white",ha="center",fontsize=8)
-        ax.plot([image.shape[1]*.08,image.shape[1]*.08+5/mpp],[image.shape[0]*.92]*2,color="white",lw=2)
-        ax.text(image.shape[1]*.08+2.5/mpp,image.shape[0]*.89,"5 µm",color="white",ha="center",fontsize=8)
-        for a in (ax,ar,ad):
-            a.set_xticks([]);a.set_yticks([])
-        cb=fig.colorbar(im,ax=[ar,ad],shrink=.8,pad=.02)
-        cb.set_label("Local background-normalized intensity (σ)",fontsize=9)
-        fig.suptitle("20 nm particles in hydrogel",fontsize=13)
-        fig.supxlabel(f"Same 31 × 31 pixel cutout | local SNR {selected['gain']:.2f}× after DoG\n"
-                      "Cutouts share the same scale in background σ units; full frame uses raw contrast.",fontsize=9)
-        fig.savefig(OUT/"hydrogel_20nm_weak_particle_dog.png",dpi=600,bbox_inches="tight")
-        fig.savefig(OUT/"preview.png",dpi=150,bbox_inches="tight")
+            a.plot([-5,-3],[0,0],color=COLOR_MARK,lw=1)
+            a.plot([0,0],[-5,-3],color=COLOR_MARK,lw=1)
+            _scalebar(a, mpp, SCALEBAR_CUTOUT_UM)
+        _scalebar(ax, mpp, SCALEBAR_FRAME_UM)
+        for a, letter in ((ax, "A"), (ar, "B"), (ad, "C")):
+            a.set_axis_off()
+            _panel_label(a, letter)
+        fig.savefig(OUT/f"{FIG_NAME}.png",dpi=600)
         plt.close(fig)
+    print(f"Frame {int(selected['frame'])+1} (index {int(selected['frame'])}), cutout {2*half+1} x {2*half+1} px; "
+          f"local SNR raw {selected['raw_snr']:.2f}, DoG {selected['dog_snr']:.2f}, factor {selected['gain']:.2f}; "
+          f"display: A percentiles 1-99.8 of the frame, B/C -2 to {vmax:g} background sigma")
     print(json.dumps(selected,indent=2))
 
 if __name__ == "__main__":

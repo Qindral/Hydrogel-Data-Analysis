@@ -86,7 +86,7 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Loc_Error_Analyse_immob_part
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_FILE = Path(__file__).parent.parent / "cache" / "trackmate_settings_inventory.pkl"
 SAVE_PATH_BASE = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 )
 SAVE_PATH = SAVE_PATH_BASE / "TrackMate_Settings_Inventory"
 

@@ -94,7 +94,7 @@ DATA_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Laser_Intensity")
 FILE_PATTERN = "Mirror_SizeofFWHM_*.tif"
 FILENAME_RE = re.compile(r"_(?P<wavelength>\d{3})(?:_(?P<index>\d+))?\.tif$", re.IGNORECASE)
 OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
-                  r"\Experiments and Results - Data\Laser_Intensity_Calibration")
+                  r"\Experiments and Results - Data\Laser_Characterization\Laser_Intensity_Calibration")
 RESULT_JSON = OUTPUT_DIR / "laser_intensity.json"
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 

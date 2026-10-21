@@ -43,10 +43,13 @@ DLS 100-1370 nm; n 0.5-1.3 for all sizes. Values outside a range stay in the box
 are not marked in the figure (user, 2026-10-12); their number per box is written to
 A_correction_deviation_refined_values_outside_axes.csv and printed.
 
-Style: figure style guide v2 (thesis.mplstyle, width classes full/half, water = category A,
-hydrogel = category B colours, no bbox_inches="tight").
-Outputs (own folder, each as PDF and PNG 600 dpi): C_D_vs_n_scatter_refined(_zoom_0to4),
-B_length_bin_water_<size>nm, B_length_bin_hydrogel, A_correction_deviation_refined.
+Style: figure style guide v2 (thesis.mplstyle, width class full, no bbox_inches="tight").
+Colours (user, 2026-10-14): each particle size keeps its SIZE_COLORS pair; buffer in the
+base colour, hydrogel in the dark colour of that size, so hydrogel is always darker.
+Dissertation outputs (PDF, SAVE_PATH): A_correction_deviation_refined (Abb03, top-row
+x tick labels removed because the x axis is shared), C_D_vs_n_scatter_refined (Abb07).
+Not used in the dissertation (PDF and PNG, SCRATCH_PATH): C_D_vs_n_scatter_refined_zoom_0to4,
+B_length_bin_water_<size>nm, B_length_bin_hydrogel. The values-outside-axes table of Abb03 goes to SAVE_PATH.
 """
 from __future__ import annotations
 
@@ -55,6 +58,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerTuple
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import MaxNLocator, NullFormatter, ScalarFormatter
@@ -70,19 +74,40 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import (
 )
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
-) / "Figures_Refined" / "Correlations"
+RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
+SAVE_PATH = RESULTS / "SPT"
+SCRATCH_PATH = RESULTS / "_scratch" / "Correlations_Refined"
 
 LENGTH_BIN_CSV = ORIG_SAVE_PATH / "length_bin_comparison.csv"
 
 # Figure style v2 (Styleguide_Figures_Dissertation.md): rcParams, width classes, colours
 STYLE_FILE = Path(__file__).resolve().parents[3] / "thesis.mplstyle"
 WIDTH_IN = {"full": 6.30, "narrow": 4.72, "half": 3.07, "third": 2.01}
-# Style guide section 11: water/buffer = category A, hydrogel = category B (local override of the
-# older colours in Correlations.py, which is not modified)
-STYLE_WATER = dict(face="#3B8C8C", edge="#2A6666", label="Water")
-STYLE_HYDROGEL = dict(face="#D98C3D", edge="#A6672D", label="Hydrogel")
+# Style guide section 11 (user, 2026-10-14): buffer = base, hydrogel = dark colour of the
+# particle size (SIZE_COLORS); edges always in the dark colour
+LEGEND_SIZES_NM = (20.0, 50.0)      # sizes measured in both media, shown in the legend swatches
+
+
+def condition_colors(size_nm: float, condition: str) -> tuple[str, str]:
+    """(face, edge) of one particle size in one medium."""
+    base, dark = SIZE_COLORS[size_nm]
+    return (base if condition == "water" else dark), dark
+
+
+def _condition_handles(marker: str | None) -> list:
+    """Legend entries Buffer / Hydrogel showing the colours of LEGEND_SIZES_NM."""
+    handles = []
+    for condition in ("water", "hydrogel"):
+        parts = []
+        for size_nm in LEGEND_SIZES_NM:
+            face, edge = condition_colors(size_nm, condition)
+            if marker is None:
+                parts.append(Patch(facecolor=face, edgecolor=edge, alpha=0.85))
+            else:
+                parts.append(Line2D([0], [0], marker=marker, linestyle="none", markerfacecolor=face,
+                                    markeredgecolor=edge, markersize=5, alpha=0.8))
+        handles.append(tuple(parts))
+    return handles
 D_LABEL = r"Diffusion coefficient $D$ (µm$^2$ s$^{-1}$)"
 N_LABEL = r"Anomalous exponent $n$"
 
@@ -124,19 +149,20 @@ def plot_d_vs_n_refined(file_standard: pd.DataFrame, dls_labels: dict[float, int
     for ax, size_nm in zip(ax_flat, sizes):
         ax.axhline(1.0, color="black", linewidth=1.2, linestyle=_DASH_THEORY, zorder=2)
         sub = file_standard[file_standard["particle_size_nm"] == size_nm]
-        for condition, style in (("water", STYLE_WATER), ("hydrogel", STYLE_HYDROGEL)):
+        for condition in ("water", "hydrogel"):
             g = sub[sub["condition"] == condition]
             if g.empty:
                 continue
+            face, edge = condition_colors(size_nm, condition)
             d_vals = g["D_um2_per_s"].to_numpy(dtype=float)
             is_clipped = d_vals > d_upper
             d_clipped = np.clip(d_vals, None, d_upper)
-            ax.scatter(d_clipped[~is_clipped], g["exponent"].to_numpy(dtype=float)[~is_clipped], s=16, alpha=0.6,
-                       facecolor=style["face"], edgecolor=style["edge"], linewidth=0.6, zorder=3)
+            ax.scatter(d_clipped[~is_clipped], g["exponent"].to_numpy(dtype=float)[~is_clipped], s=16, alpha=0.8,
+                       facecolor=face, edgecolor=edge, linewidth=0.6, zorder=3)
             if is_clipped.any():
                 ax.scatter(np.full(is_clipped.sum(), d_upper),
                            g["exponent"].to_numpy(dtype=float)[is_clipped], s=20, alpha=0.9,
-                           facecolor=style["face"], edgecolor="black", linewidth=0.6, marker=">", zorder=4)
+                           facecolor=face, edgecolor="black", linewidth=0.6, marker=">", zorder=4)
         ax.set_xlim(0.0, d_upper)
         ax.set_ylim(*n_range)
         ax.set_title(f"{dls_labels.get(size_nm, int(size_nm))} nm")
@@ -148,16 +174,15 @@ def plot_d_vs_n_refined(file_standard: pd.DataFrame, dls_labels: dict[float, int
     for ax in ax_flat[:n_panels]:
         ax.label_outer()
 
-    legend_handles = [
-        Line2D([0], [0], color="black", linewidth=1.2, linestyle=_DASH_THEORY, label="n = 1"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=STYLE_WATER["face"],
-               markeredgecolor=STYLE_WATER["edge"], markersize=4, label="Water"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=STYLE_HYDROGEL["face"],
-               markeredgecolor=STYLE_HYDROGEL["edge"], markersize=4, label="Hydrogel"),
-        Line2D([0], [0], marker=">", color="w", markerfacecolor="#888888", markeredgecolor="black",
-               markersize=4, label=rf"$D$ > {d_upper:g} µm$^2$ s$^{{-1}}$ (clipped)"),
-    ]
-    fig.legend(handles=legend_handles, loc="outside lower center", ncol=4, frameon=False)
+    legend_handles = [Line2D([0], [0], color="black", linewidth=1.2, linestyle=_DASH_THEORY)]
+    legend_handles += _condition_handles("o")
+    legend_labels = ["n = 1", "Buffer", "Hydrogel"]
+    if n_out_of_range:
+        legend_handles.append(Line2D([0], [0], marker=">", color="w", markerfacecolor="#888888",
+                                     markeredgecolor="black", markersize=4))
+        legend_labels.append(rf"$D$ > {d_upper:g} µm$^2$ s$^{{-1}}$ (clipped)")
+    fig.legend(legend_handles, legend_labels, loc="outside lower center", ncol=len(legend_handles), frameon=False,
+               handler_map={tuple: HandlerTuple(ndivide=None, pad=0.2)})
     diag = {"d_upper_um2_s": d_upper, "n_out_of_range": n_out_of_range}
     return fig, diag
 
@@ -327,17 +352,18 @@ def plot_correction_before_after(table: pd.DataFrame, dls_labels: dict[float, in
             positions, box_data, colors, edges, alphas = [], [], [], [], []
             xtick_pos, xtick_labels = [], []
             pos = 0.0
-            for condition, style in (("water", STYLE_WATER), ("hydrogel", STYLE_HYDROGEL)):
+            for condition in ("water", "hydrogel"):
                 g = sub[sub["condition"] == condition]
                 if g.empty:
                     continue
+                face, edge = condition_colors(size_nm, condition)
                 before_vals = g[before_col].dropna().to_numpy()
                 after_vals = g[after_col].dropna().to_numpy()
                 for vals, stage, alpha, has in ((before_vals, "Before", 0.35, before_vals.size > 0),
                                                 (after_vals, "After", 0.85, after_vals.size > 0)):
                     if has:
-                        box_data.append(vals); positions.append(pos); colors.append(style["face"])
-                        edges.append(style["edge"]); alphas.append(alpha)
+                        box_data.append(vals); positions.append(pos); colors.append(face)
+                        edges.append(edge); alphas.append(alpha)
                         n_above, n_below = int((vals > hi).sum()), int((vals < lo).sum())
                         outside.append({"particle_size_nm": size_nm, "condition": condition, "stage": stage,
                                         "quantity": "D" if row == 0 else "n", "axis_min": lo, "axis_max": hi,
@@ -362,25 +388,29 @@ def plot_correction_before_after(table: pd.DataFrame, dls_labels: dict[float, in
                         line.set_linewidth(0.8)
             ax.set_ylim(lo, hi)
             ax.set_xticks(xtick_pos)
-            ax.set_xticklabels(xtick_labels, rotation=90)
+            # shared x axis: tick labels only in the bottom row
+            ax.set_xticklabels(xtick_labels if row == 1 else [], rotation=90)
             if row == 0:
                 ax.set_title(f"{dls_labels.get(size_nm, int(size_nm))} nm")
             if col == 0:
                 ax.set_ylabel(ylabel)
 
-    handles = [Patch(facecolor=STYLE_WATER["face"], edgecolor=STYLE_WATER["edge"], alpha=0.6, label="Water"),
-               Patch(facecolor=STYLE_HYDROGEL["face"], edgecolor=STYLE_HYDROGEL["edge"], alpha=0.6, label="Hydrogel"),
-               Patch(facecolor="#888888", alpha=0.35, label="Without log-error correction"),
-               Patch(facecolor="#888888", alpha=0.85, label="After correction")]
-    fig.legend(handles=handles, loc="outside lower center", ncol=2, frameon=False)
+    handles = _condition_handles(None) + [Patch(facecolor="#888888", alpha=0.35), Patch(facecolor="#888888", alpha=0.85)]
+    labels = ["Buffer", "Hydrogel", "Without log-error correction", "After correction"]
+    fig.legend(handles, labels, loc="outside lower center", ncol=4, frameon=False,
+               handler_map={tuple: HandlerTuple(ndivide=None, pad=0.2)})
     return fig, pd.DataFrame(outside)
 
 
-def _save(fig: plt.Figure, stem: str) -> None:
-    """Style guide v2: plots as PDF; PNG (600 dpi) kept as before. Never bbox_inches='tight'."""
-    for ext in ("pdf", "png"):
-        path = SAVE_PATH / f"{stem}.{ext}"
-        safe_savefig(fig, path, format=ext, dpi=600)
+def _save(fig: plt.Figure, stem: str, dissertation: bool = False) -> None:
+    """Style guide v2, never bbox_inches='tight'. Dissertation figures: PDF to SAVE_PATH;
+    all others: PDF and PNG (600 dpi) to SCRATCH_PATH."""
+    if dissertation:
+        targets = [SAVE_PATH / f"{stem}.pdf"]
+    else:
+        targets = [SCRATCH_PATH / f"{stem}.{ext}" for ext in ("pdf", "png")]
+    for path in targets:
+        safe_savefig(fig, path, format=path.suffix[1:], dpi=600)
         print(f"Plot gespeichert: {path}")
     plt.close(fig)
 
@@ -391,6 +421,7 @@ def main() -> None:
     locerr_df = _load_pickle(CACHE_LOCERR, "Loc_Error_Analyse_immob_particle.py")
     dls_labels = get_dls_labels()
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
+    SCRATCH_PATH.mkdir(parents=True, exist_ok=True)
 
     with plt.style.context(str(STYLE_FILE)):
         # Item 7: main (0-15 um^2/s) + zoomed (0-4 um^2/s, for the hydrogel cluster)
@@ -400,7 +431,7 @@ def main() -> None:
             print(f"D vs n{suffix}: linear D-range = (0, {diag7['d_upper_um2_s']:g}) um^2/s, "
                   f"n-range = {N_AXIS_RANGE_D_VS_N}. {diag7['n_out_of_range']} file(s) above the upper "
                   "bound -- marked with a triangle, not dropped.")
-            _save(fig7, f"C_D_vs_n_scatter_refined{suffix}")
+            _save(fig7, f"C_D_vs_n_scatter_refined{suffix}", dissertation=(suffix == ""))
 
         # Item 8: water split into one plot per size, hydrogel as its own
         # correctly-centered plot -- both share the same D-scale.
@@ -424,7 +455,7 @@ def main() -> None:
               f"{n_missing} without a sigma_loc reference (Before shown, After explicitly marked missing).")
         fig9, outside9 = plot_correction_before_after(correction_table, dls_labels)
         print(f"Correction deviation axis ranges: {_correction_ylims(correction_table)}")
-        _save(fig9, "A_correction_deviation_refined")
+        _save(fig9, "A_correction_deviation_refined", dissertation=True)
         outside_path = SAVE_PATH / "A_correction_deviation_refined_values_outside_axes.csv"
         outside9.to_csv(outside_path, index=False)
         shown = outside9[(outside9["n_above_axis"] > 0) | (outside9["n_below_axis"] > 0)]

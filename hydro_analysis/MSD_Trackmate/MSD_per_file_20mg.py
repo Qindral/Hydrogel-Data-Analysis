@@ -1,11 +1,10 @@
 """
 Per-file publication MSD figures — 20 mg/mL C16 hydrogel.
 
-Same figure layout as MSD_per_file_publication.py (D₀ reference):
-  Main   iMSD · eMSD · Stokes-Einstein D₀ · power-law fit
-  Inset (upper-right)  normalised MSD
-  Inset (lower-right)  raw trajectories, plain, scale bar only
-  Annotation  d = <label> nm
+Dissertation layout (Abb24; user, 2026-10-14): same A|B layout as the buffer
+figure, from MSD_perfile_D0.plot_msd_dissertation() (hydrogel eMSD markers in the
+dark size colour). Files named in DISSERTATION_FILES are written to SAVE_PATH,
+all other files to SCRATCH_PATH; the per-file summary table goes to SAVE_PATH.
 
 Reads the per-file results already computed by MSD_FromTrackmate_20mg.py
 (msd_20mg_files.pkl) instead of reprocessing the raw TrackMate XML files —
@@ -26,20 +25,18 @@ from hydro_analysis.core.io import (
 )
 from hydro_analysis.core.analysis import DEFAULT_MSD_FIT_POINTS
 from hydro_analysis.core.physics import calculate_theoretical_diffusion
-from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import clip_msd_points, plot_msd_single_file
+from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import clip_msd_points
+from hydro_analysis.MSD_Trackmate.MSD_perfile_D0 import plot_msd_dissertation, RESULTS
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_files.pkl"
 
-SAVE_PATH = Path(
-    rf"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16"
-    rf"\PerFile_{pd.Timestamp.now().strftime('%Y%m%d')}")
+SAVE_PATH = RESULTS / "SPT"
+SCRATCH_PATH = RESULTS / "_scratch" / "MSD_per_file_20mg"
+# file shown in the dissertation -> output name (user selection, SPT_ausgewaehlt_Abbildungen.docx)
+DISSERTATION_FILES = {"50 nm B2_1d_01_processed_Tracks.xml": "emsd_hydrogel_50nm_B2_1d_01"}
 MSD_FIT_POINTS   = DEFAULT_MSD_FIT_POINTS
-MSD_MAX_POINTS   = 22    # plot only the first N lag points (iMSD, eMSD, theory, fit); None = all
-SHOW_IMSD        = False  # draw individual MSD curves
-XLIM             = (0.01, 5.0)    # lag time (s), particles < 200 nm
-XLIM_200         = (0.04, 5.0)    # lag time (s), particles >= 200 nm
-YLIM             = (0.01, 100.0)  # MSD (µm²)
+MSD_MAX_POINTS   = 22    # plot only the first N lag points (eMSD, theory, fit); None = all
 
 
 # ── Main ────────────────────────────────────────────────────────────────────────
@@ -57,8 +54,8 @@ def main() -> None:
     dls_labels    = get_dls_labels()
     size_override = get_dls_reference_maps()["size_override_nm"]
 
-    if SAVE_PATH is not None:
-        SAVE_PATH.mkdir(parents=True, exist_ok=True)
+    SAVE_PATH.mkdir(parents=True, exist_ok=True)
+    SCRATCH_PATH.mkdir(parents=True, exist_ok=True)
 
     summary_rows: list[dict] = []
     n_processed = 0
@@ -128,27 +125,19 @@ def main() -> None:
 
         rd_plot = clip_msd_points(rd, MSD_MAX_POINTS)
         suffix  = f"_first{MSD_MAX_POINTS}" if MSD_MAX_POINTS is not None else ""
-        # Nominal size, not the DLS label: >= 200 nm is the 20 fps recording regime.
-        xlim    = XLIM_200 if size_nm >= 200 else XLIM
-        plot_msd_single_file(
-            rd=rd_plot,
-            D_theo=D_theo,
-            label_nm=label_nm,
-            n_fit=MSD_FIT_POINTS,
-            save_path=SAVE_PATH,
-            filename=f"{base}_{int(size_nm)}nm{suffix}",
-            xlim=xlim,
-            ylim=YLIM,
-            show_imsd=SHOW_IMSD,
-            sample_label="20 mg/mL C16",
-        )
+        if base in DISSERTATION_FILES:
+            out_file = SAVE_PATH / f"{DISSERTATION_FILES[base]}.pdf"
+        else:
+            out_file = SCRATCH_PATH / f"{base}_{int(size_nm)}nm{suffix}.pdf"
+        plot_msd_dissertation(rd_plot, D_theo, label_nm, MSD_FIT_POINTS, "hydrogel",
+                              "20 mg mL$^{-1}$ C16", out_file)
         n_processed += 1
 
     # ── per-file summary CSV ──────────────────────────────────────────────────
     # sep=";" / decimal="," so Excel (German locale) opens this directly with
     # columns already split and numbers recognized, instead of dumping everything
     # into one column. utf-8-sig BOM so Excel auto-detects the encoding.
-    if summary_rows and SAVE_PATH is not None:
+    if summary_rows:
         csv_path = SAVE_PATH / "per_file_summary_20mg.csv"
         summary_df = pd.DataFrame(summary_rows)
         summary_df.to_csv(csv_path, index=False, sep=";", decimal=",", encoding="utf-8-sig")

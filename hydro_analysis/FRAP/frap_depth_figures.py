@@ -13,17 +13,22 @@ anchor depth, with z the z-wide ZPosition (identical for all series of a measure
 The gel/glass interface measurements ("C16 shallow") are set to SHALLOW_DEPTH_UM by the user;
 their planar depth is written to the CSV for comparison. water_2 (failed, 97 % saturated pixels)
 is left out of every figure (EXCLUDE_IDS, user 2026-10-06) and logged in the exclusion CSV.
-In the figures the depth is shown by the marker only: square = SHALLOW_DEPTH_UM, circle = deep.
+Figures (user, 2026-10-14): shallow (SHALLOW_DEPTH_UM) and deep hydrogel measurements are one
+group "Hydrogel" -- one recovery mean curve, one column of D points and one D_eff/D0 point (mean +- SD
+over all QC-passed hydrogel measurements). "Water" is labelled "Buffer"; hydrogel is drawn in a darker
+colour than buffer. The depth of every measurement stays in frap_depth_values.csv. Only the three
+plotting functions below use the pooled grouping and the DISS_* constants; load_values(), _points() and
+the constants COLORS, MARKERS, X_POS, FIG_SIZE, RATIO_SUB_OFFSET are unchanged because
+frap_pyfrap_figures.py imports them.
 
 D: D_propagation_um2_s (user, 2026-10-06), gate qc_propagation: filled symbols pass, open symbols
 fail (shown, never hidden). No theoretical value is shown (user, 2026-10-06).
 D0 for D_eff/D0 = arithmetic mean of the QC-passed deep water measurements (user, 2026-10-06).
 
-Figures (OUTPUT_ROOT/figures/, narrow width class, PDF, each with a sidecar JSON):
-  frap_d_vs_depth.pdf        D of every water and hydrogel measurement, x = water | hydrogel
-  frap_deff_d0_vs_depth.pdf  D_eff / D0, mean +- SD of the QC-passed measurements per sample and depth only
-      (user, 2026-10-07)
-  frap_recovery_full_scale.pdf (full, linear time axis)  recovery curves, full-scale normalised: (F - F(0)) / (1 - F(0))
+Figures (FIGURE_DIR, PDF, each with a sidecar JSON; D figures half, recovery narrow):
+  frap_d_vs_depth.pdf        D of every buffer and hydrogel measurement, x = buffer | hydrogel
+  frap_deff_d0_vs_depth.pdf  D_eff / D0, mean +- SD of the QC-passed measurements per sample type
+  frap_recovery_full_scale.pdf (narrow, linear time axis)  recovery curves, full-scale normalised: (F - F(0)) / (1 - F(0))
       of the double-normalised curve, F(0) = first post-bleach frame (user, 2026-10-06: start at 0); pre-bleach
       frames and the noFITC controls shown, x and y range fixed (user, 2026-10-07). The controls have no bleach
       (1 - F(0) ~ 0), so they are shown as the double-normalised curve F_norm, not full-scale normalised.
@@ -50,8 +55,7 @@ from hydro_analysis.FRAP.frap_analysis_v2 import double_normalised_curve, load_m
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "frap_v2_phase1.pkl"
 DATA_ROOT = Path(r"E:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF")
-OUTPUT_ROOT = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP_v2")
-FIGURE_DIR = OUTPUT_ROOT / "figures"
+FIGURE_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP")
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 
 D_COLUMN, D_GATE = "D_propagation_um2_s", "qc_propagation"   # decided by user, 2026-10-06
@@ -62,14 +66,23 @@ OUTER_LAYER_IDS: list[str] = []                               # water_2 was the 
 EXCLUDE_IDS = {"water_2": "water measurement that failed (97 % saturated pixels); left out of every figure"}  # decided by user, 2026-10-06
 SAMPLE_TYPE = {"water": "Water", "gel": "Hydrogel", "gel_interface": "Hydrogel"}   # noFITC not shown
 
-FIG_SIZE = (4.72, 4.72 / 1.42)       # width class "narrow"
+FIG_SIZE = (4.72, 4.72 / 1.42)       # width class "narrow" (used by frap_pyfrap_figures.py)
 COLORS = {"Water": ("#3B8C8C", "#2A6666"), "Hydrogel": ("#D98C3D", "#A6672D")}   # style guide §11
 MARKERS = {"shallow": "s", "deep": "o"}                       # decided by user, 2026-10-06
 X_POS = {"Water": 0, "Hydrogel": 1}
 SUB_OFFSET = {"shallow": -0.15, "deep": 0.15}                 # fixed sub-position per depth, not jitter
 RATIO_SUB_OFFSET = {"shallow": -0.07, "deep": 0.07}           # D_eff/D0 figure: closer (user, 2026-10-07)
+# Dissertation figures (Abb25-27; user, 2026-10-14)
+DISS_FIG_SIZE = (3.07, 3.07 / 1.42)           # width class "half" (Abb26, Abb27)
+RECOVERY_FIG_SIZE = (4.72, 4.72 / 1.42)       # width class "narrow" (Abb25)
+DISPLAY_LABEL = {"Water": "Buffer", "Hydrogel": "Hydrogel"}
+# Buffer: light tint of the style-guide single-series colour (§11) with #3B6E8C as dark; hydrogel:
+# #2A4F66 with dark = #2A4F66 x 0.71 (base-to-dark ratio of §11), so hydrogel is clearly darker;
+# PROPOSED, not approved
+DISS_COLORS = {"Water": ("#86AECA", "#3B6E8C"), "Hydrogel": ("#2A4F66", "#1E3848")}
+MARKER = "o"                                                  # shallow and deep pooled (user, 2026-10-14)
 ALPHA = 0.7
-CONTROL_COLOR = "#555555"                                      # noFITC control lines
+CONTROL_COLOR = "#9a9a9a"                                      # noFITC control lines
 RECOVERY_XLIM = (-15.0, 150.0)   # user, 2026-10-07: 0 to 150 s; left end -15 s so all pre-bleach frames (from -13.9 s) show
 RECOVERY_YLIM = (0.0, 1.1)       # user, 2026-10-08: above 1 so the pre-bleach frames are visible
 
@@ -194,6 +207,24 @@ def _points(ax, df, column):
     return handles
 
 
+def _points_pooled(ax, df, column):
+    """Dissertation version: depths pooled, one column per sample type, buffer / hydrogel colours."""
+    for stype, sub in df.groupby("sample_type"):
+        base, dark = DISS_COLORS[stype]
+        for ok in (True, False):
+            v = sub[sub.qc_pass == ok]
+            ax.plot(np.full(len(v), X_POS[stype]), v[column], MARKER, ms=4, mfc=base if ok else "none", mec=dark,
+                    mew=0.6, ls="none", alpha=ALPHA, zorder=3)
+    ax.set_xticks(list(X_POS.values()), [DISPLAY_LABEL[k] for k in X_POS])
+    ax.set_xlim(-0.6, len(X_POS) - 0.4)
+    ax.tick_params(axis="x", which="both", top=False, bottom=False)
+    handles = []
+    if (~df.qc_pass).any():
+        handles.append(Line2D([], [], marker=MARKER, ms=4, mfc="none", mec="#555555", mew=0.6, ls="none",
+                              label="Fails QC"))
+    return handles
+
+
 def save(fig, stem, meta):
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
     path = FIGURE_DIR / f"{stem}.pdf"
@@ -206,40 +237,39 @@ def save(fig, stem, meta):
 
 def plot_d(df):
     with plt.style.context(STYLE_PATH):
-        fig, ax = plt.subplots(figsize=FIG_SIZE)
-        handles = _points(ax, df, "D_um2_s")
+        fig, ax = plt.subplots(figsize=DISS_FIG_SIZE)
+        handles = _points_pooled(ax, df, "D_um2_s")
         ax.set_ylim(0, 1.25 * df.D_um2_s.max())
         ax.set_ylabel(r"Diffusion coefficient $D$ (µm$^2$ s$^{-1}$)")
-        ax.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=7, handletextpad=0.3,
-                  columnspacing=0.8)
+        if handles:
+            ax.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=7, handletextpad=0.3,
+                      columnspacing=0.8)
         save(fig, "frap_d_vs_depth", {"value": D_COLUMN, "gate": D_GATE, "depth_anchor": DEPTH_ANCHOR,
                                       "shallow_depth_um": SHALLOW_DEPTH_UM, "left_out": list(EXCLUDE_IDS)})
 
 
 def plot_ratio(df):
-    """Mean +- SD (ddof = 1) of D_eff/D0 over the QC-passed measurements per sample type and depth."""
+    """Mean +- SD (ddof = 1) of D_eff/D0 over the QC-passed measurements per sample type (depths pooled)."""
     d0 = df.attrs["D0"]
     df = df[~df.outer_layer]
     groups = {}
     with plt.style.context(STYLE_PATH):
-        fig, ax = plt.subplots(figsize=FIG_SIZE)
+        fig, ax = plt.subplots(figsize=DISS_FIG_SIZE)
         ax.axhline(1.0, color="0.65", lw=0.8, zorder=1)
-        for (stype, pos), sub in df.groupby(["sample_type", "position"]):
-            base, dark = COLORS[stype]
+        for stype, sub in df.groupby("sample_type"):
+            base, dark = DISS_COLORS[stype]
             v = sub.loc[sub.qc_pass, "Deff_D0"]
             mean, sd = float(v.mean()), float(v.std(ddof=1)) if len(v) > 1 else np.nan
-            ax.errorbar(X_POS[stype] + RATIO_SUB_OFFSET[pos], mean, yerr=sd, fmt=MARKERS[pos], ms=4, mfc=base,
+            ax.errorbar(X_POS[stype], mean, yerr=sd, fmt=MARKER, ms=4, mfc=base,
                         mec=dark, mew=0.6, ecolor=dark, elinewidth=0.8, capsize=2.0, capthick=0.8, zorder=3)
-            groups[f"{stype} {pos}"] = {"n": len(v), "mean": mean, "SD": sd, "measurements": list(sub.loc[sub.qc_pass, "measurement_id"]),
-                                        "qc_failed_not_in_mean": list(sub.loc[~sub.qc_pass, "measurement_id"])}
-        ax.set_xticks(list(X_POS.values()), list(X_POS.keys()))
+            groups[DISPLAY_LABEL[stype]] = {"n": len(v), "mean": mean, "SD": sd, "measurements": list(sub.loc[sub.qc_pass, "measurement_id"]),
+                             "positions": sorted(set(sub.loc[sub.qc_pass, "position"])),
+                             "qc_failed_not_in_mean": list(sub.loc[~sub.qc_pass, "measurement_id"])}
+        ax.set_xticks(list(X_POS.values()), [DISPLAY_LABEL[k] for k in X_POS])
         ax.set_xlim(-0.6, len(X_POS) - 0.4)
         ax.tick_params(axis="x", which="both", top=False, bottom=False)
         ax.set_ylim(0, 1.25)
         ax.set_ylabel(r"$D_\mathrm{eff}\,/\,D_0$")
-        handles = [Line2D([], [], marker=MARKERS[p], ms=4, mfc="#bbbbbb", mec="#555555", mew=0.6, ls="none",
-                          label=p.capitalize()) for p in ("shallow", "deep")]
-        ax.legend(handles=handles, loc="center right", handletextpad=0.2, borderaxespad=0.3, handlelength=1.0)
         save(fig, "frap_deff_d0_vs_depth", {"value": f"{D_COLUMN} / D0", "gate": D_GATE,
                                             "shown": "mean +- SD (ddof = 1) of the QC-passed measurements",
                                             "D0_um2_s": d0, "D0_from": df.attrs.get("D0_ids"), "groups": groups,
@@ -270,10 +300,10 @@ def plot_recovery(df, curves, pre, controls):
     with depth markers, noFITC controls as double-normalised F_norm in grey."""
     outside = {}
     with plt.style.context(STYLE_PATH):
-        fig, ax = plt.subplots(figsize=(6.30, 6.30 / 1.42))   # width class "full"
+        fig, ax = plt.subplots(figsize=RECOVERY_FIG_SIZE)
         handles, meta = [], {}
-        for (stype, pos), sub in df.groupby(["sample_type", "position"], sort=False):
-            base, dark = COLORS[stype]
+        for stype, sub in df.groupby("sample_type", sort=False):
+            base, dark = DISS_COLORS[stype]
             shown = []
             for row in sub.itertuples():
                 t, f = curves[row.measurement_id]
@@ -289,12 +319,12 @@ def plot_recovery(df, curves, pre, controls):
             outer = bool(sub.outer_layer.any())
             lo, hi = sub.depth_um.min(), sub.depth_um.max()
             depth = f"{lo:.0f} µm" if np.isclose(lo, hi) else f"{lo:.0f}–{hi:.0f} µm"
-            label = f"{stype}, {'outer layer' if outer else depth}"
+            label = f"{DISPLAY_LABEL[stype]}, {'outer layer' if outer else depth}"
             if shown:
                 grid, mean = _mean_curve(shown)
-                ax.plot(grid, mean, color=dark, lw=1.5, marker=MARKERS[pos], ms=4, mfc=base, mec=dark, mew=0.6,
+                ax.plot(grid, mean, color=dark, lw=1.5, marker=MARKER, ms=4, mfc=base, mec=dark, mew=0.6,
                         markevery=20, zorder=3)
-                handles.append(Line2D([], [], color=dark, lw=1.5, marker=MARKERS[pos], ms=4, mfc=base, mec=dark,
+                handles.append(Line2D([], [], color=dark, lw=1.5, marker=MARKER, ms=4, mfc=base, mec=dark,
                                       mew=0.6, label=f"{label} (n = {len(shown)})"))
             else:
                 handles.append(Line2D([], [], color=base, lw=0.8, ls="--", label=f"{label} (fails QC, n = {len(sub)})"))
@@ -330,8 +360,8 @@ def main():
     cols = ["measurement_id", "sample_type", "position", "outer_layer", "file", "z_um", "depth_planar_um",
             "depth_um", "depth_source", "D_um2_s", "Deff_D0", "qc_pass"]
     print(df[cols].round(3).to_string(index=False))
-    for (t, p), g in df[df.qc_pass].groupby(["sample_type", "position"]):
-        print(f"{t} {p}: n = {len(g)}, D = {g.D_um2_s.mean():.2f} +- {g.D_um2_s.std(ddof=1):.2f}, "
+    for t, g in df[df.qc_pass].groupby("sample_type"):
+        print(f"{t} (depths pooled): n = {len(g)}, D = {g.D_um2_s.mean():.2f} +- {g.D_um2_s.std(ddof=1):.2f}, "
               f"Deff/D0 = {g.Deff_D0.mean():.3f} +- {g.Deff_D0.std(ddof=1):.3f}")
     pre, controls = load_pre_bleach(df)
     plot_d(df)

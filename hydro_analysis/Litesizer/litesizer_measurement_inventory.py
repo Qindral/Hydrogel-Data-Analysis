@@ -59,7 +59,7 @@ REFERENCE_XLSX_NAME = "Size_repitition_All Sizes.xlsx"        # the DLS table re
 REFERENCE_ZETA_XLSX_NAME = "Zeta_repitition_allparticles.xlsx"  # read by litesizer_zeta_potential.py
 OUTPUT_DIR = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data"
-) / "DLS_measurement_inventory"
+) / "Particle_Characterization" / "DLS_measurement_inventory"
 STEM = "dls_measurement_inventory"
 LOCAL_TZ = ZoneInfo("Europe/Berlin")  # .apkw start times are UTC; file names and xlsx use local time
 

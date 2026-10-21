@@ -71,7 +71,7 @@ CATEGORIES = {   # key: legend title, hydrogel file, glass control file
 }
 SAVE_PATH = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data"
-) / "AFM_force_distance"
+) / "AFM_FluidFM"
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 SHOW_FIGURE = True
 

@@ -63,7 +63,7 @@ from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "PSF_Analysis_Immobilized"
 
 NUMERICAL_APERTURE = 1.2

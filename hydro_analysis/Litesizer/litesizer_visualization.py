@@ -64,7 +64,7 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COL
 # ── Configuration ──────────────────────────────────────────────────────────────
 XLSX_PATH  = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
 SAVE_PATH_BASE = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 )
 SAVE_PATH: Path | None = SAVE_PATH_BASE / "DLS_particle_size_reference"
 FIG_STEM   = "dls_particle_size_reference"

@@ -42,7 +42,7 @@ from hydro_analysis.SEM_Particles.sem_feret_size_histogram import HIST_RANGES, N
 # ── Configuration ──────────────────────────────────────────────────────────────
 SAVE_PATH: Path | None = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data"
-) / "SEM_particle_size"
+) / "_scratch" / "SEM_particle_size_review"
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 SHOW_FIGURE = True
 

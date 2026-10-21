@@ -54,7 +54,7 @@ CACHE_MSD_20MG = Path(__file__).parent.parent / "cache" / "msd_20mg_files.pkl"
 CACHE_MEDIAN_STEPSIZE = Path(__file__).parent.parent / "cache" / "imsd_median_stepsize_by_size.pkl"
 
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "iMSD_Histograms"
 
 N_BINS = 30

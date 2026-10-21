@@ -48,7 +48,18 @@ universal "Particle diameter (nm)" per user request.
 Pure consumer; imports WAVELENGTH_NM, NUMERICAL_APERTURE, COLOR_FIT,
 COLOR_XML, COLOR_THEORY from PSF_Analysis.py unchanged.
 
-Outputs (own folder, PNG, 600 dpi):
+Dissertation figure (Abb20; user, 2026-10-14; Styleguide v2, narrow, PDF, SAVE_PATH):
+  psf_scatter_vs_size.pdf  measured FWHM per track (same values as below),
+      SIZE_COLORS, points at the exact category position (no jitter, alpha),
+      no mean lines, no detection diameter, no right axis, English labels;
+      theoretical diffraction-limited PSF (FWHM_FACTOR * calculate_theoretical_psf_sigma,
+      237 nm) as one black dashed line.
+  Unit conversion of the measured width: FWHM_nm = FWHM_FACTOR * mean(sigma_x_px,
+  sigma_y_px) * mpp * 1000 with the mpp of each movie (Particle_Size_SNR_Compute.py).
+  Open point E030: core.io assigns 0.130 um/px to 800 px wide movies (binning x1),
+  0.15 um/px to 400 px (binning x2) of the same camera; shown unchanged.
+
+Not used in the dissertation (SCRATCH_PATH, PNG):
   psf_scatter_vs_theory_all_sizes.png  one point per track (median of its
       accepted fits), plus detection diameter 2R and the theory line
   psf_fwhm_all_fits.png                every accepted single-frame fit as a
@@ -70,6 +81,7 @@ from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.core.physics import calculate_theoretical_psf_sigma
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
 from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_savefig
+from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
 from hydro_analysis.MSD_Trackmate.Validation_Claude.PSF_Analysis import (
     WAVELENGTH_NM, NUMERICAL_APERTURE, DIFFRACTION_LIMITED_SIZES_NM,
     COLOR_FIT, COLOR_XML, COLOR_THEORY,
@@ -80,9 +92,11 @@ PSS_CACHE = Path(__file__).resolve().parents[2] / "cache" / "particle_size_snr.p
 CONDITION = "immobilized"
 MIN_ACCEPTED_FITS = 3
 
-SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
-) / "Figures_Refined" / "PSF_Analysis"
+RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
+SAVE_PATH = RESULTS / "SPT"
+SCRATCH_PATH = RESULTS / "_scratch" / "PSF_Refined"
+STYLE = Path(__file__).resolve().parents[3] / "thesis.mplstyle"
+WIDTH_NARROW_IN, RATIO = 4.72, 1.42
 
 FWHM_FACTOR = 2.0 * np.sqrt(2.0 * np.log(2.0))   # FWHM = FWHM_FACTOR * sigma, for a Gaussian
 
@@ -164,6 +178,29 @@ def plot_psf_fwhm_all_fits(det: pd.DataFrame, dls_labels: dict[float, int]) -> p
     return fig
 
 
+def plot_psf_dissertation(df: pd.DataFrame, dls_labels: dict[float, int]) -> plt.Figure:
+    """Abb20: measured FWHM per track at the category position of its size, theoretical
+    diffraction-limited FWHM as one dashed black line."""
+    sizes = sorted(df["particle_size_nm"].dropna().unique())
+    diffraction_fwhm_nm = FWHM_FACTOR * calculate_theoretical_psf_sigma(WAVELENGTH_NM, NUMERICAL_APERTURE)
+    fig, ax = plt.subplots(figsize=(WIDTH_NARROW_IN, WIDTH_NARROW_IN / RATIO))
+    for x0, size in enumerate(sizes):
+        values = df.loc[df["particle_size_nm"] == size, "fwhm_nm"].dropna().to_numpy()
+        face, edge = SIZE_COLORS[size]
+        ax.scatter(np.full(values.size, x0), values, s=16, alpha=0.5, facecolor=face, edgecolor=edge,
+                   linewidth=0.6, zorder=3)
+    ax.axhline(diffraction_fwhm_nm, color="black", linewidth=1.2, linestyle=(0, (4, 3)), zorder=2)
+    ax.set_xticks(range(len(sizes)))
+    ax.set_xticklabels([str(dls_labels.get(s, int(s))) for s in sizes])
+    ax.set_xlim(-0.6, len(sizes) - 0.4)
+    ax.set_xlabel("Particle size (nm)")
+    ax.set_ylabel("FWHM of the particle signal (nm)")
+    ax.legend(handles=[Line2D([0], [0], color="black", linewidth=1.2, linestyle=(0, (4, 3)),
+                              label=f"Theoretical PSF (FWHM {diffraction_fwhm_nm:.0f} nm)")], loc="upper right")
+    ax.set_ylim(0.0, None)
+    return fig
+
+
 def load_pickle(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Nicht gefunden: {path}\nBitte zuerst Particle_Size_SNR_Compute.py --mode all ausführen.")
@@ -202,6 +239,16 @@ def main(pss_cache: Path = PSS_CACHE, output_dir: Path = SAVE_PATH) -> None:
               f"measured median = {measured.median():.1f} nm (n = {len(measured)} tracks)")
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    SCRATCH_PATH.mkdir(parents=True, exist_ok=True)
+    for (size_nm, mpp), g in df.groupby(["particle_size_nm", "mpp"]):
+        print(f"  {dls_labels.get(size_nm, int(size_nm))} nm, mpp {mpp}: {len(g)} tracks, "
+              f"median FWHM {g['fwhm_nm'].median():.1f} nm")
+    with plt.style.context(STYLE):
+        fig = plot_psf_dissertation(df, dls_labels)
+        fig.savefig(output_dir / "psf_scatter_vs_size.pdf")
+        plt.close(fig)
+        print(f"Plot gespeichert: {output_dir / 'psf_scatter_vs_size.pdf'}")
+    output_dir = SCRATCH_PATH
     with plt.rc_context(_RC):
         fig = plot_psf_scatter_theory_all_sizes(df, dls_labels)
         fig_path = output_dir / "psf_scatter_vs_theory_all_sizes.png"

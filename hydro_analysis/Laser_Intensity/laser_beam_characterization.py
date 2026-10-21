@@ -62,7 +62,7 @@ from hydro_analysis.core.io import get_dls_labels, parse_rec_comment_metadata, p
 DATA_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Laser_Intensity")
 FILE_PATTERN = "Mirror_SizeofFWHM_*.tif"
 OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
-                  r"\Experiments and Results - Data\Laser_Beam_Characterization")
+                  r"\Experiments and Results - Data\Laser_Characterization\Laser_Beam_Characterization")
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 
 VISIBLE_PX = (200, 150)                 # SPT camera image (x, y) at 4 x 4 binning, sensor-centred

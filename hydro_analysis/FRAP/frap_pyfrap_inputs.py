@@ -42,7 +42,7 @@ from hydro_analysis.FRAP.frap_analysis_v2 import bleach_centroid, load_measureme
 DATA_ROOT = Path(r"E:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF")
 MEASUREMENTS_CSV = Path(__file__).resolve().parent / "measurements.csv"
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "frap_pyfrap_inputs.pkl"
-OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP_v2\pyfrap_inputs")
+OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP\FRAP_v2\pyfrap_inputs")
 
 CONDITIONS = ("water", "gel", "gel_interface")          # FITC measurements; noFITC has no bleach
 EXCLUDE_IDS = {"water_2": "97 % saturated pixels"}      # decided by user, 2026-10-06 (E017)

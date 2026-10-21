@@ -36,7 +36,7 @@ from hydro_analysis.core.io import DATETIME_RE, POWER_RE, find_rec_tif_files, sc
 SPT_ROOT = Path(r"E:\PhD Data Analysis\SPT 2025 II")
 CACHE_PKL = Path(__file__).resolve().parent / "cache" / "rec_metadata_inherited.pkl"
 RESULT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
-                  r"\Experiments and Results - Data\REC_Metadata_Inheritance")
+                  r"\Experiments and Results - Data\_scratch\REC_Metadata_Inheritance")
 LOG_XLSX = RESULT_DIR / "rec_metadata_inheritance.xlsx"
 
 DEPTH_RE = re.compile(r"tiefe\b[^\d\r\n,|]{0,25}(\d+(?:[.,]\d+)?)\s*(mm|[µμu]m)?"

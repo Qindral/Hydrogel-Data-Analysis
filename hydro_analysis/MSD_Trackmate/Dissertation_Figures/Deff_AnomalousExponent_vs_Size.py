@@ -15,9 +15,11 @@ nothing is averaged here -- one point per file.
 Run MSD_FromTrackmate_20mg.py first (or after any raw-data change) to refresh
 msd_20mg_files.pkl.
 
-Shows the figure first (plt.show(), blocking); only after the window is
-closed does it save into its own Auswertungsbilder\\Deff_AnomalousExponent_vs_Size\\
-subfolder.
+Dissertation version (Abb08; user, 2026-10-14; Styleguide v2, width class
+narrow, PDF, SAVE_PATH): x positions at the DLS diameters in full precision,
+every hydrogel point in the dark SIZE_COLORS colour of its size (surface
+loading "o", injection "s"). Shows the figure first (plt.show(), blocking);
+only after the window is closed does it save.
 """
 from __future__ import annotations
 
@@ -40,14 +42,16 @@ from matplotlib.ticker import FixedLocator, FixedFormatter
 from hydro_analysis.core.io import (
     get_dls_reference_maps, get_dls_sizes, get_dls_labels, condition_label_from_filename,
 )
-from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC, _DASH_THEORY
+from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _DASH_THEORY
+from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_FILE = Path(__file__).parent.parent / "cache" / "msd_20mg_files.pkl"
-SAVE_PATH_BASE = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+SAVE_PATH: Path | None = Path(
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\SPT"
 )
-SAVE_PATH: Path | None = SAVE_PATH_BASE / "Deff_AnomalousExponent_vs_Size"
+STYLE = Path(__file__).resolve().parents[2] / "thesis.mplstyle"
+FIG_SIZE = (4.72, 4.72 / 1.42)       # Styleguide width class "narrow"
 
 SPLIT_BY_CONDITION = True   # False -> one plain color for all n_eff points instead
 
@@ -60,11 +64,12 @@ COLOR_OTHER, COLOR_OTHER_DARK         = "#999999", "#555555"   # no A/B token in
 COLOR_PLAIN, COLOR_PLAIN_DARK         = "#3B8C8C", "#2A6666"   # SPLIT_BY_CONDITION = False
 COLOR_THEORY                          = "black"
 
+# Hydrogel points in the dark SIZE_COLORS colour of their size; the marker shows the loading type
 CONDITION_STYLE = {
-    "Surface loading": {"face": COLOR_SURFACE,   "edge": COLOR_SURFACE_DARK,   "marker": "o"},
-    "Injection":       {"face": COLOR_INJECTION, "edge": COLOR_INJECTION_DARK, "marker": "s"},
+    "Surface loading": {"marker": "o"},
+    "Injection":       {"marker": "s"},
 }
-POINT_ALPHA = 0.5
+POINT_ALPHA = 0.7
 
 
 def load_results() -> dict:
@@ -102,15 +107,15 @@ def main() -> None:
         rows.append((float(size_nm), float(n_exp), float(fit.get("exponent_error", np.nan)), condition))
     print(f"{len(rows)} Dateien mit gültigem n-Wert, {n_skipped} übersprungen.")
 
-    with plt.rc_context(_RC):
-        fig, ax = plt.subplots(figsize=(7.15, 5.00), constrained_layout=True)
+    with plt.style.context(STYLE):
+        fig, ax = plt.subplots(figsize=FIG_SIZE)
 
         # ── Reference: free diffusion (n = 1) ───────────────────────────────
         ax.axhline(1.0, color=COLOR_THEORY, linewidth=1.2, linestyle=_DASH_THEORY, zorder=3)
 
         legend_elements = [
             Line2D([0], [0], color=COLOR_THEORY, linewidth=1.2, linestyle=_DASH_THEORY,
-                   label="Free diffusion (n = 1)"),
+                   label="Free diffusion ($n$ = 1)"),
         ]
 
         if SPLIT_BY_CONDITION:
@@ -122,13 +127,13 @@ def main() -> None:
                     continue
                 xs = [_map_size(s) for s, n_exp, n_err, c in group]
                 ys = [n_exp for s, n_exp, n_err, c in group]
-                ax.scatter(xs, ys, s=36, alpha=POINT_ALPHA, marker=style["marker"],
-                           facecolor=style["face"], edgecolor=style["edge"],
-                           linewidth=0.6, zorder=5)
+                darks = [SIZE_COLORS[s][1] for s, n_exp, n_err, c in group]
+                ax.scatter(xs, ys, s=16, alpha=POINT_ALPHA, marker=style["marker"],
+                           facecolor=darks, edgecolor=darks, linewidth=0.6, zorder=5)
                 legend_elements.append(
-                    Line2D([0], [0], marker=style["marker"], color="w", markerfacecolor=style["face"],
-                           markeredgecolor=style["edge"], markersize=7, markeredgewidth=0.6,
-                           label=label, linestyle="None")
+                    Line2D([0], [0], marker=style["marker"], color="w", markerfacecolor="0.3",
+                           markeredgecolor="0.3", markersize=4, markeredgewidth=0.6,
+                           label=f"Hydrogel, {label.lower()}", linestyle="None")
                 )
 
             other = [row for row in rows if row[3] is None]
@@ -171,16 +176,16 @@ def main() -> None:
         ax.xaxis.set_major_formatter(FixedFormatter(tick_text))
 
         ax.set_xlabel("Particle size (nm)")
-        ax.set_ylabel(r"Anomalous exponent $n_{eff}$  (MSD $\propto \tau^{n_{eff}}$)")
+        ax.set_ylabel(r"Anomalous exponent $n$")
         ax.legend(handles=legend_elements, loc="upper right", frameon=False)
 
         plt.show()
 
         if SAVE_PATH is not None:
             SAVE_PATH.mkdir(parents=True, exist_ok=True)
-            png_path = SAVE_PATH / "deff_anomalous_exponent_vs_size.png"
-            fig.savefig(png_path, dpi=600, bbox_inches="tight")
-            print(f"Plot gespeichert: {png_path}")
+            pdf_path = SAVE_PATH / "deff_anomalous_exponent_vs_size.pdf"
+            fig.savefig(pdf_path)
+            print(f"Plot gespeichert: {pdf_path}")
 
 
 if __name__ == "__main__":

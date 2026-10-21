@@ -20,7 +20,7 @@ import tifffile
 DATA_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Autofluoreszenz")
 OUTPUT_DIR = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
-    r"\Experiments and Results - Data\autofluorescence\inspection"
+    r"\Experiments and Results - Data\Autofluorescence\inspection"
 )
 STYLE_PATH = Path(__file__).resolve().parent / "hydro_analysis" / "thesis.mplstyle"
 WIDTH_IN = {"full": 6.30, "narrow": 4.72, "half": 3.07, "third": 2.01}

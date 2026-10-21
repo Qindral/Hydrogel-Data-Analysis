@@ -185,7 +185,7 @@ CACHE_STEPSIZE_DEFF = Path(__file__).parent.parent / "cache" / "stepsize_20mg_re
 CACHE_MEDIAN_STEPSIZE = Path(__file__).parent.parent / "cache" / "imsd_median_stepsize_by_size.pkl"
 
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "LocError_Immobilized"
 
 NEW_ANALYSIS_SUBFOLDER = "Analysis_immob_NEW"   # current/authoritative reanalysis, 2026.01.31_immobilized only

@@ -28,7 +28,7 @@ from hydro_analysis.core.analysis import MIN_TRACK_LENGTH
 CACHE_DIR = PROJECT_ROOT / "hydro_analysis" / "MSD_Trackmate" / "cache"
 SAVE_PATH = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
-    r"\Experiments and Results - Data\Auswertungsbilder\TrackLength_Audit"
+    r"\Experiments and Results - Data\_scratch\Auswertungsbilder\TrackLength_Audit"
 )
 
 

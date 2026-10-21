@@ -42,9 +42,9 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COL
 # ── Configuration ──────────────────────────────────────────────────────────────
 REFERENCE_XLSX = lzp.XLSX_PATH
 RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
-INVENTORY_XLSX = RESULTS / "DLS_measurement_inventory" / "dls_measurement_inventory.xlsx"
+INVENTORY_XLSX = RESULTS / "Particle_Characterization" / "DLS_measurement_inventory" / "dls_measurement_inventory.xlsx"
 ZETA_FOLDER = Path(r"E:\Daten Promotion Sicherung\Zeta Potential")
-SAVE_PATH = RESULTS / "Zeta_potential_appendix"
+SAVE_PATH = RESULTS / "_scratch" / "Zeta_potential_appendix"
 FIG_STEM = "zeta_potential_particle_stability_all_measurements"
 
 SIZES = [20, 50, 100, 200, 500, 1000]

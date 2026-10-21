@@ -136,7 +136,7 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Compare_Tracks_vs_RawAnalysi
 from hydro_analysis.MSD_Trackmate.Validation_Claude.PSF_Analysis import read_detector_values
 from hydro_analysis.Trajectory.trajectory_plotter import (
     load_tiff_stack, average_frames, render_frame_on_ax, render_tracks_on_ax,
-    highlight_current_particles, _make_fig, D_MAX,
+    highlight_current_particles, _make_fig, _history_frames_from_fps, D_MAX,
 )
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -144,8 +144,8 @@ CACHE_MSD_D0 = Path(__file__).parent.parent / "MSD_Trackmate" / "cache" / "msd_d
 CACHE_20MG = Path(__file__).parent.parent / "MSD_Trackmate" / "cache" / "msd_20mg_files.pkl"
 
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
-) / "Random_Condition_Frames"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch"
+) / "Random_Condition_Frames"   # exploratory variants (RENDER_ALL_CONDITIONS)
 
 RANDOM_SEED = 42
 MIN_TRACK_LENGTH = 5          # user requirement: "at least 5 trajectory length"
@@ -165,6 +165,37 @@ TRAIL_HISTORY_SECONDS = 5.0   # trajectory-history window shown in v3/v4;
                                # the fixed-size cutout
 DEFAULT_MARKER_RADIUS_PX = 4.0  # fallback circle radius only when no matching session XML is found
 SAVE_DPI = 600
+
+# Dissertation versions of the two frames chosen by the user (Abb01 / Abb02,
+# SPT_ausgewaehlt_Abbildungen.docx). Both are rendered with the same field of
+# view, contrast rule, scalebar and colours (Styleguide v2, section 9).
+DISSERTATION_SAVE_PATH = Path(
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\SPT"
+)
+# (cache, Tracks.xml base name, frame of the user-selected image, output file);
+# frames come from the RANDOM_SEED = 42 run that produced the selected images, decided by user, 2026-10-14
+DISSERTATION_TARGETS = (
+    ("water", "50 nm water_06_Tracks.xml", 615, "50_wat_trj_hist.png"),
+    ("hydrogel", "50 nm B2_2d_01_Tracks.xml", 598, "50_hyd_inj_trj_hist.png"),
+)
+DISSERTATION_WIDTH_IN = 4.72        # Styleguide width class "narrow"
+DISSERTATION_FOV_UM = 27.0          # common cutout width for both images; PROPOSED, not approved
+DISSERTATION_TRAIL_SECONDS = 0.5    # common trajectory history (caption Abb02: 0.5 s); PROPOSED, not approved
+# If the tracked particles of the selected frame cannot be centred inside the
+# image, the same movie is searched (RANDOM_SEED order) for the first sharp
+# frame where they can; PROPOSED, not approved
+DISSERTATION_RECENTER_SEARCH = True
+# Display window in units of the cutout's background noise (median +- k * sigma,
+# sigma = 1.4826 * MAD), same rule for both images, so the background has the same
+# grey level and the hydrogel image is not shown brighter than the buffer image.
+# A per-cutout percentile window (0.5-99.9 %) showed the hydrogel brighter; PROPOSED, not approved
+DISPLAY_NOISE_WINDOW = (-3.0, 9.0)
+DISPLAY_GAMMA = 0.6                 # PowerNorm gamma, as in Hydrogel_Best_Frames / Injection_Spot
+COLOR_DETECTION = "#da00bd"         # Styleguide section 9
+COLOR_TRAJECTORY = "#004cff"        # Styleguide section 9
+SCALEBAR_LENGTH_UM = 5.0
+ANNOTATION_LW = 1.2                 # Styleguide section 9: annotation line width (pt)
+RENDER_ALL_CONDITIONS = False       # True also regenerates the four exploratory variants of every condition
 
 
 # ============================================================================
@@ -505,10 +536,184 @@ def save_condition_variants(candidate: dict, out_dir: Path, key: tuple) -> None:
 
 
 # ============================================================================
+# Dissertation frames (Abb01 / Abb02)
+# ============================================================================
+
+def _content_box_px(tracks_df, frame_index: int, history_frames: int) -> Optional[tuple[float, float, float, float]]:
+    """Bounding box (x_min, x_max, y_min, y_max, px) of everything drawn for
+    frame_index: each detection present in that frame plus its trajectory
+    history within history_frames."""
+    present = tracks_df.loc[tracks_df["frame"] == frame_index, "particle"].unique()
+    if present.size == 0:
+        return None
+    sub = tracks_df[tracks_df["particle"].isin(present)
+                    & (tracks_df["frame"] <= frame_index)
+                    & (tracks_df["frame"] >= frame_index - history_frames)]
+    return float(sub["x"].min()), float(sub["x"].max()), float(sub["y"].min()), float(sub["y"].max())
+
+
+def _centred_box(content: tuple[float, float, float, float], mpp: float, image_shape: tuple[int, int],
+                 fov_um: float) -> tuple[Optional[tuple[float, float, float, float]], tuple[float, float, float, float]]:
+    """Cutout of width fov_um and ratio CUTOUT_RATIO centred on the content box.
+    Returns (box if it lies inside the image and holds the content with
+    MARGIN_UM clearance, else None; box shifted to the image bounds)."""
+    x_lo, x_hi, y_lo, y_hi = content
+    half_w = (fov_um / 2.0) / mpp
+    half_h = half_w / CUTOUT_RATIO
+    margin = MARGIN_UM / mpp
+    cx, cy = (x_lo + x_hi) / 2.0, (y_lo + y_hi) / 2.0
+    box = (cx - half_w, cx + half_w, cy - half_h, cy + half_h)
+    h, w = image_shape
+    fits_content = (x_hi - x_lo + 2 * margin <= 2 * half_w) and (y_hi - y_lo + 2 * margin <= 2 * half_h)
+    inside = box[0] >= -0.5 and box[1] <= w - 0.5 and box[2] >= -0.5 and box[3] <= h - 0.5
+    sx = min(max(box[0], -0.5), w - 0.5 - 2 * half_w) - box[0]
+    sy = min(max(box[2], -0.5), h - 0.5 - 2 * half_h) - box[2]
+    shifted = (box[0] + sx, box[1] + sx, box[2] + sy, box[3] + sy)
+    return (box if fits_content and inside else None), shifted
+
+
+def _find_centrable_frame(rd: dict, stack: np.ndarray, history_frames: int,
+                          rng: random.Random) -> Optional[int]:
+    """First sharp frame (RANDOM_SEED order) of this movie in which at least
+    MIN_PARTICLES_IN_VIEW detections of tracks >= MIN_TRACK_LENGTH are present
+    and everything drawn fits a centred DISSERTATION_FOV_UM cutout inside the image."""
+    tracks_df, mpp = rd["tracks_df"], rd["mpp"]
+    lengths = tracks_df.groupby("particle").size()
+    valid = set(lengths[lengths >= MIN_TRACK_LENGTH].index)
+    scores = compute_sharpness_series(Path(rd["tif_path"]))
+    is_blurry, _ = flag_blurry_frames(scores)
+    frames = sorted(set(tracks_df["frame"].unique().tolist()) & set(np.flatnonzero(~is_blurry).tolist()))
+    rng.shuffle(frames)
+    for frame_index in frames:
+        present = tracks_df.loc[tracks_df["frame"] == frame_index, "particle"]
+        if present.isin(valid).sum() < MIN_PARTICLES_IN_VIEW:
+            continue
+        content = _content_box_px(tracks_df, frame_index, history_frames)
+        box, _ = _centred_box(content, mpp, stack.shape[1:], DISSERTATION_FOV_UM)
+        if box is not None:
+            return int(frame_index)
+    return None
+
+
+def _add_grey_scalebar(ax, mpp: float) -> None:
+    """5 um scalebar, lower right, white bar and 8 pt text on a grey box."""
+    from matplotlib_scalebar.scalebar import ScaleBar
+    ax.add_artist(ScaleBar(
+        mpp, units="um", dimension="si-length", fixed_value=SCALEBAR_LENGTH_UM, fixed_units="um",
+        location="lower right", width_fraction=0.015, sep=2, pad=0.4, border_pad=0.6,
+        frameon=True, color="white", box_color="#555555", box_alpha=0.85,
+        scale_loc="top", font_properties={"size": 8, "family": "Open Sans"},
+        scale_formatter=lambda value, unit: f"{value:g} {unit}",
+    ))
+
+
+def render_dissertation_frame(rd: dict, stack: np.ndarray, frame_index: int, box: tuple[float, float, float, float],
+                              radius_px: Optional[float], out_path: Path) -> dict:
+    """Cutout + trajectory history + detection circles at the Styleguide v2 size
+    (narrow, 1.42 : 1, PNG 600 dpi). Returns the display parameters."""
+    tracks_df, mpp, fps = rd["tracks_df"], rd["mpp"], rd["fps"]
+    frame_avg = average_frames(stack, frame_index)
+    x0, x1, y0, y1 = box
+    xi0, xi1 = int(np.floor(x0 + 0.5)), int(np.ceil(x1 + 0.5))
+    yi0, yi1 = int(np.floor(y0 + 0.5)), int(np.ceil(y1 + 0.5))
+    cut = frame_avg[max(yi0, 0):yi1, max(xi0, 0):xi1]
+    median = float(np.median(cut))
+    sigma = 1.4826 * float(np.median(np.abs(cut - median)))
+    vmin, vmax = median + DISPLAY_NOISE_WINDOW[0] * sigma, median + DISPLAY_NOISE_WINDOW[1] * sigma
+
+    width = DISSERTATION_WIDTH_IN
+    fig = plt.figure(figsize=(width, width / CUTOUT_RATIO), layout="none")
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.imshow(frame_avg, cmap="gray", origin="upper", interpolation="nearest",
+              norm=colors.PowerNorm(gamma=DISPLAY_GAMMA, vmin=vmin, vmax=vmax, clip=True))
+    history = _history_frames_from_fps(fps, DISSERTATION_TRAIL_SECONDS)
+    for pid, g in tracks_df.groupby("particle"):
+        g = g.sort_values("frame")
+        if frame_index not in set(g["frame"]):
+            continue
+        g = g[(g["frame"] <= frame_index) & (g["frame"] >= frame_index - history)]
+        if len(g) >= 2:
+            ax.plot(g["x"], g["y"], color=COLOR_TRAJECTORY, lw=ANNOTATION_LW,
+                    solid_joinstyle="round", solid_capstyle="round", zorder=4)
+    current = tracks_df[tracks_df["frame"] == frame_index]
+    r = radius_px if radius_px is not None else DEFAULT_MARKER_RADIUS_PX
+    for _, row in current.iterrows():
+        ax.add_patch(Circle((row["x"], row["y"]), radius=r, fill=False,
+                            edgecolor=COLOR_DETECTION, linewidth=ANNOTATION_LW, zorder=5))
+    ax.set_xlim(x0, x1)
+    ax.set_ylim(y1, y0)
+    ax.set_axis_off()
+    _add_grey_scalebar(ax, mpp)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=SAVE_DPI)
+    plt.close(fig)
+
+    norm = colors.PowerNorm(gamma=DISPLAY_GAMMA, vmin=vmin, vmax=vmax, clip=True)
+    return dict(vmin_counts=float(vmin), vmax_counts=float(vmax), sigma_counts=sigma,
+                vmin_percentile=float((cut < vmin).mean() * 100), vmax_percentile=float((cut <= vmax).mean() * 100),
+                median_counts=median,
+                median_display_level=float(norm(np.median(cut))),
+                mean_display_level=float(np.mean(norm(cut))),
+                n_detections=int(len(current)), history_frames=int(history), radius_px=r)
+
+
+def save_dissertation_frames() -> None:
+    """Abb01 (buffer) and Abb02 (hydrogel) at Styleguide v2 size with a common
+    field of view, contrast rule and scalebar."""
+    with open(CACHE_MSD_D0, "rb") as f:
+        caches = {"water": pickle.load(f)}
+    with open(CACHE_20MG, "rb") as f:
+        caches["hydrogel"] = pickle.load(f)
+    plt.style.use(Path(__file__).resolve().parents[1] / "thesis.mplstyle")
+    for medium, base_name, frame_index, out_name in DISSERTATION_TARGETS:
+        matches = [rd for rd in caches[medium].values() if rd.get("base_name") == base_name]
+        if len(matches) != 1:
+            raise ValueError(f"{base_name}: expected exactly one cache entry, found {len(matches)}")
+        rd = matches[0]
+        stack = load_tiff_stack(Path(rd["tif_path"]))
+        history = _history_frames_from_fps(rd["fps"], DISSERTATION_TRAIL_SECONDS)
+        content = _content_box_px(rd["tracks_df"], frame_index, history)
+        box, shifted = _centred_box(content, rd["mpp"], stack.shape[1:], DISSERTATION_FOV_UM)
+        used_frame, note = frame_index, "selected frame, centred"
+        if box is None:
+            if DISSERTATION_RECENTER_SEARCH:
+                alt = _find_centrable_frame(rd, stack, history, random.Random(RANDOM_SEED))
+                if alt is None:
+                    raise RuntimeError(f"{base_name}: no frame allows a centred {DISSERTATION_FOV_UM} um cutout")
+                used_frame = alt
+                content = _content_box_px(rd["tracks_df"], used_frame, history)
+                box, _ = _centred_box(content, rd["mpp"], stack.shape[1:], DISSERTATION_FOV_UM)
+                note = f"selected frame {frame_index} cannot be centred inside the image; frame {alt} used"
+            else:
+                box, note = shifted, "selected frame, shifted to the image border (not centred)"
+        stats = render_dissertation_frame(rd, stack, used_frame, box, _detection_radius_px(Path(rd["xml_path"])),
+                                          DISSERTATION_SAVE_PATH / out_name)
+        print(f"{out_name}: {base_name}, frame {used_frame} ({note}); mpp {rd['mpp']}, fps {rd['fps']:.2f}; "
+              f"cutout x {box[0]:.1f}-{box[1]:.1f} px, y {box[2]:.1f}-{box[3]:.1f} px; "
+              f"display median {DISPLAY_NOISE_WINDOW} sigma (sigma {stats['sigma_counts']:.1f}) = "
+              f"{stats['vmin_counts']:.1f}-{stats['vmax_counts']:.1f} counts = percentiles "
+              f"{stats['vmin_percentile']:.2f}-{stats['vmax_percentile']:.2f} of the cutout, "
+              f"gamma {DISPLAY_GAMMA}; median {stats['median_counts']:.1f} counts -> display level "
+              f"{stats['median_display_level']:.3f}, mean display level {stats['mean_display_level']:.3f}; "
+              f"{stats['n_detections']} detections, trail {stats['history_frames']} frames, "
+              f"circle radius {stats['radius_px']} px")
+
+
+# ============================================================================
 # Main
 # ============================================================================
 
 def main() -> None:
+    if not CACHE_MSD_D0.exists():
+        raise FileNotFoundError(f"Nicht gefunden: {CACHE_MSD_D0}\nBitte zuerst MSD_FromTrackmate_D0.py ausfuehren.")
+    if not CACHE_20MG.exists():
+        raise FileNotFoundError(f"Nicht gefunden: {CACHE_20MG}\nBitte zuerst MSD_FromTrackmate_20mg.py ausfuehren.")
+    save_dissertation_frames()
+    if RENDER_ALL_CONDITIONS:
+        render_all_conditions()
+
+
+def render_all_conditions() -> None:
     if not CACHE_MSD_D0.exists():
         raise FileNotFoundError(f"Nicht gefunden: {CACHE_MSD_D0}\nBitte zuerst MSD_FromTrackmate_D0.py ausfuehren.")
     if not CACHE_20MG.exists():

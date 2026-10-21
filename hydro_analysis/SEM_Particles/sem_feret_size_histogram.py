@@ -45,7 +45,7 @@ from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COL
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "sem_feret_particles.pkl"
 SAVE_PATH: Path | None = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data"
-) / "SEM_particle_size"
+) / "Particle_Characterization"
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 SHOW_FIGURE = True
 

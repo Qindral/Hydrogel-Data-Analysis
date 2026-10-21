@@ -24,7 +24,9 @@ Decay analysis (user, 2026-10-07; ENTSCHEIDUNGEN.md E011):
 
 Writes to OUTPUT_DIR (no pickle; no other script reads these outputs):
   autofluorescence_decays_normalised.pdf   all normalised decays in one plot
-  autofluorescence_switch_qc.pdf           raw traces with the detected switches; pauses marked by an arrow
+  autofluorescence_switch_qc.pdf           raw traces with the detected switches; pauses marked by an arrow;
+                                           panel title = gel concentration, wavelength, laser power
+                                           (user, 2026-10-14) instead of the file name
   autofluorescence_half_times.csv          t1/2 per switch-on (the table)
   autofluorescence_pause_rise.csv          pause duration and rise per pause
   autofluorescence_decays_normalised.csv   the plotted curves, long format
@@ -50,7 +52,7 @@ from hydro_analysis.Auto_fluorecence.autofluorescence_inspect import DATA_DIR, O
 from hydro_analysis.Auto_fluorecence.autofluorescence_inspect import new_figure, read_record
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-OUTPUT_DIR = INSPECTION_DIR.parent / "time_aligned"
+OUTPUT_DIR = INSPECTION_DIR.parent
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 PRE_SWITCH_SECONDS = 1.0      # aligned CSVs only; PROPOSED, not approved
 MIN_JUMP_COUNTS = 10.0        # switch detection; PROPOSED, not approved
@@ -218,7 +220,12 @@ def plot_decays(curves):
     return fig
 
 
-def plot_qc(cached, pauses):
+def qc_title(group):
+    conc, wavelength, power = group
+    return f"{conc} mg mL$^{{-1}}$, {wavelength} nm, {power:g} mW"
+
+
+def plot_qc(cached, pauses, groups):
     n = len(cached)
     ncols = 4
     nrows = -(-n // ncols)
@@ -236,8 +243,7 @@ def plot_qc(cached, pauses):
                     f"{p['pause_s']:.1f} s\n{p['rise_percent']:+.1f} %", ha="center", va="bottom",
                     fontsize=6, color=ARROW_COLOR, zorder=4,
                     bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.8})
-        ax.text(0.97, 0.95, name.replace("20mg_ohnePartikel_", "20mg_").replace(".tif", ""),
-                transform=ax.transAxes, ha="right", va="top", fontsize=6)
+        ax.set_title(qc_title(groups[name]), fontsize=7, fontweight="normal", pad=2)
         ax.tick_params(labelsize=6)
     for ax in list(axes.flat)[n:]:
         ax.set_visible(False)
@@ -251,6 +257,7 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     inspection = json.loads((INSPECTION_DIR / "inspection.json").read_text(encoding="utf-8"))
     reports, event_rows, cached, curves, exclusions, pauses = [], [], {}, [], [], []
+    groups = {}
     for name in inspection["orphan_record_files"]:
         exclusions.append({"file": name, "step": "inventory", "parameter": "", "n_before": 1, "n_after": 0,
                            "reason": ".rec file without TIFF recording"})
@@ -335,6 +342,7 @@ def main():
         write_csv(OUTPUT_DIR / f"aligned_{stem}.csv", aligned_rows)
         reports.append(report)
         cached[filename] = (t, y, events)
+        groups[filename] = group
         print(filename, events, f"{power:g} mW", "timing warnings:", timing["irregular_interval_count"], flush=True)
 
     table = [{"file": c["file"], "event": c["event"], "switch_on": c["switch_on"],
@@ -360,7 +368,7 @@ def main():
 
     with plt.style.context(STYLE_PATH):
         for stem, fig in [("autofluorescence_decays_normalised", plot_decays(curves)),
-                          ("autofluorescence_switch_qc", plot_qc(cached, pauses))]:
+                          ("autofluorescence_switch_qc", plot_qc(cached, pauses, groups))]:
             fig.savefig(OUTPUT_DIR / f"{stem}.pdf")
             plt.close(fig)
 

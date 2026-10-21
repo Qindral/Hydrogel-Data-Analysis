@@ -53,7 +53,7 @@ from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
 # ── Configuration ──────────────────────────────────────────────────────────────
 TIF_PATH = Path(r"E:\Daten Promotion Sicherung\Diffusion in Hydrogel Data\20mg_20nm\Inj\B3_20nm_20mg_1d_zentral_3.tif")
 SAVE_PATH: Path | None = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "Immobilized_Sharpness_FocusCheck"
 
 GAUSSIAN_PRESMOOTH_SIGMA = 1.0   # px, suppresses shot noise before the Laplacian

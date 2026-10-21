@@ -43,7 +43,7 @@ CACHE_D0 = CACHE_DIR / "msd_d0_results.pkl"
 CACHE_DEFF = CACHE_DIR / "msd_20mg_files.pkl"
 SAVE_PATH = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
-    r"\Experiments and Results - Data\Auswertungsbilder\TrackLength_Histogram"
+    r"\Experiments and Results - Data\_scratch\Auswertungsbilder\TrackLength_Histogram"
 )
 SHOW_PLOT = True
 N_BINS = 40

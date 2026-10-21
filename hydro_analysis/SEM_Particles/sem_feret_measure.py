@@ -84,7 +84,7 @@ CACHE_PATH = Path(__file__).resolve().parent / "cache" / "sem_feret_particles.pk
 REVIEW_PATH = Path(__file__).resolve().parent / "cache" / "sem_segmentation_review.json"
 SAVE_PATH: Path | None = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data"
-) / "SEM_particle_size"
+) / "Particle_Characterization"
 
 MIN_AREA_PX = 11                       # Cellpose min_size of run_parameters.ijm
 ELLIPSE_VERTICES = 72                  # polygon resolution of hand-drawn ellipses

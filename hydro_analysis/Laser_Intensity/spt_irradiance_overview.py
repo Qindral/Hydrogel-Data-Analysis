@@ -49,7 +49,7 @@ from hydro_analysis.core.io import (
 # ── Configuration ──────────────────────────────────────────────────────────────
 SPT_ROOT = Path(r"E:\PhD Data Analysis\SPT 2025 II")    # root of REC_files scraping.py
 OUTPUT_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder"
-                  r"\Experiments and Results - Data\Laser_Beam_Characterization")
+                  r"\Experiments and Results - Data\Laser_Characterization\Laser_Beam_Characterization")
 CALIBRATION_CSV = OUTPUT_DIR / "irradiance_results.csv"
 OUTPUT_XLSX = OUTPUT_DIR / "spt_irradiance_overview.xlsx"
 DEFAULT_WAVELENGTH_NM = 488

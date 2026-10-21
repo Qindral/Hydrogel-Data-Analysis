@@ -91,7 +91,7 @@ from hydro_analysis.FRAP.frap_analysis import (
 # ── Configuration ──────────────────────────────────────────────────────────────
 DATA_ROOT = Path(r"H:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF")
 MEASUREMENTS_CSV = Path(__file__).resolve().parent / "measurements.csv"
-OUTPUT_ROOT = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP_v2")
+OUTPUT_ROOT = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP\FRAP_v2")
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "frap_v2_phase1.pkl"
 
 # Image handling

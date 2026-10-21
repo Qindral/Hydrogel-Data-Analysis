@@ -101,7 +101,7 @@ IMAGES: list[dict] = [
 BEFORE_AFTER = ("50nm_initial", "50nm_1d")   # (vorher, nachher)
 
 SAVE_PATH = Path(
-    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder"
+    r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 ) / "Hydrogel_Best_Frames_20mg"
 
 CUTOUT_RATIO = 1.42        # width / height

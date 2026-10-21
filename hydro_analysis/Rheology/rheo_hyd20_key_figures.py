@@ -17,8 +17,9 @@ Data basis (decisions by the user, 2026-10-08, ENTSCHEIDUNGEN.md E008, E025-E028
     t distribution with N - 1 degrees of freedom; no interval for N = 1;
   - figure 1: amplitude sweep of one 9 d run drawn at random (fixed seed; second draw of
     the generator, the first draw picks a 4 d specimen whose frequency sweep is no longer
-    shown) from the qc_filtered amplitude sweeps of 9 d; black, no legend, y range
-    10-600 Pa (points outside are counted in the console output);
+    shown) from the qc_filtered amplitude sweeps of 9 d; black, y range 10-600 Pa (points outside are counted in the console output);
+    legend G' (filled) / G'' (open) and no vertical gamma_5% / gamma_10% lines (user,
+    2026-10-14, replaces "Legende weglassen" of E028; the strains stay in table 1);
   - figure 2: G' at 0.5 Hz (Gp_rep_Pa) of every qc_filtered run vs. gel age, no means,
     no legend;
   - mesh size (value for the caption, no figure) and pore sizes pool all qc_filtered
@@ -51,7 +52,7 @@ Pore geometry (phantom network, Rubinstein & Colby 2003, ch. 7; network_geometry
 
 Writes to OUTPUT_DIR (figures as PDF, tables as CSV and one workbook):
   fig1_viscoelasticity.pdf          G'(gamma) filled, G''(gamma) open of the drawn 9 d
-                                    amplitude sweep; gamma_5% dotted, gamma_10% dashed
+                                    amplitude sweep, with legend
   fig2_stability_gp_vs_age.pdf      G' at 0.5 Hz of every qc_filtered run vs. gel age
   fig3a_lattice_cells.pdf           shaded renderings (pyvista/VTK) of the periodic lattices
                                     f = 4, 6, 8 around one cavity, one scale, 10 nm bar;
@@ -94,7 +95,7 @@ CACHE_PATH = Path(__file__).resolve().parent / "cache" / "rheo_hyd20_results.pkl
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 OUTPUT_DIR = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data"
-    r"\Rheology_Hyd20\key_figures"
+    r"\Rheology"
 )
 SELECTION = "qc_filtered"                 # decided by user, 2026-10-08 (E008, E025)
 CI_LEVEL = 0.95                           # decided by user, 2026-10-08 (E025): t interval over specimens
@@ -440,7 +441,7 @@ def _log_minor(ax: plt.Axes, axis: str = "both") -> None:
 
 
 def plot_viscoelasticity(cache: dict, as_run: str, path: Path) -> int:
-    """Amplitude sweep in black: G' filled, G'' open, gamma_5% / gamma_10% as lines.
+    """Amplitude sweep in black: G' filled, G'' open, legend (user, 2026-10-14).
 
     Returns the number of points outside AS_YLIM_PA (not visible in the figure).
     """
@@ -455,11 +456,10 @@ def plot_viscoelasticity(cache: dict, as_run: str, path: Path) -> int:
     if (~valid).any():
         ax.plot(x[~valid], gp[~valid], "o", mfc=COLOR_EXCLUDED, mec=COLOR_EXCLUDED, zorder=2)
         ax.plot(x[~valid], gpp[~valid], "s", mfc="white", mec=COLOR_EXCLUDED, zorder=2)
-    res = cache["results"][as_run]["as"]
-    for tag, ls in (("5pct", ":"), ("10pct", (0, (4, 3)))):
-        gamma = res.get(f"strain_{tag}_pct", np.nan)
-        if np.isfinite(gamma):
-            ax.axvline(gamma, color="black", lw=1.0, ls=ls, zorder=1)
+    ax.legend(handles=[
+        plt.Line2D([], [], marker="o", ls="none", mfc="black", mec="black", label="Storage modulus $G'$"),
+        plt.Line2D([], [], marker="s", ls="none", mfc="white", mec="black", label="Loss modulus $G''$"),
+    ], loc="lower left")
     ax.set_xscale("log")
     ax.set_yscale("log")
     _log_minor(ax)

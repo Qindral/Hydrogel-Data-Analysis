@@ -127,7 +127,7 @@ FILES: dict[tuple[str, float], str] = {
     # ist leer, 200/500/1000 nm-Ordner existieren im Projekt nicht).
 }
 
-OUTPUT_DIR = r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\Auswertungsbilder\PSF_Analyse"
+OUTPUT_DIR = r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder\PSF_Analyse"
 SEED = 42
 
 N_PARTICLES_PER_CONDITION = 5   # volle Quote pro Fall (nicht ueber Faelle gepoolt)
