@@ -6,14 +6,26 @@ particle size and computes MSD independently per file. Produces NO figures
 and never combines raw trajectories across files — any plotting, and any
 further aggregation, is done by other scripts that load these pickles.
 
+All data handling, fit model, parameters and uncertainties come from
+msd_pipeline.py and are identical to the water stage MSD_FromTrackmate_D0.py
+(user, 2026-10-27, E040 A); this script only names folders, .rec assignments
+and outputs. In short: one analysis per movie (E031), abort on missing
+calibration (E006 A), edge-artifact removal (E001 A), 40 Hz minimum for nominal
+20-100 nm (E003 A), drift subtraction at >= 30 tracks/frame (E009 B), 10-frame
+filter, fit MSD with motion blur and 4 sigma^2 for any n (Savin & Doyle 2005,
+Backlund et al. 2015; E046) over 6 lags with sigma of the
+immobilised particles (E039 C, E004 A, E005 A; at 0.3 um/px for nominal 20-100 nm,
+E042), per-size average weighted by tracks >= 10 frames (E002 A); dynamic vs.
+static localisation error variance per file in the tables (E042).
+
 Two pickles are written, per particle size:
   msd_20mg_files.pkl   ensemble PER FILE — each file gets its own iMSD/eMSD
-                        and power-law fit from its own particles only. This
-                        is the source of truth; nothing here ever pools raw
+                        and fit from its own particles only. This is the
+                        source of truth; nothing here ever pools raw
                         trajectories from different files together.
-  msd_20mg_result.pkl  a trajectory-count-WEIGHTED AVERAGE of the per-file
-                        D/exponent values above (not a refit on pooled/
-                        combined tracks) — see core.analysis.weighted_average_per_size().
+  msd_20mg_result.pkl  a WEIGHTED AVERAGE of the per-file D/exponent values
+                        above (not a refit on pooled/combined tracks) — see
+                        core.analysis.weighted_average_per_size().
 
 msd_20mg_files.pkl is also loaded (as CACHE_20MG) by:
   - Hydrogel_Water_Analysis.py
@@ -23,28 +35,16 @@ msd_20mg_files.pkl is also loaded (as CACHE_20MG) by:
 
 msd_20mg_result.pkl is also loaded (as RESULT_CACHE_FILE) by:
   - MSD_AnomalousExponent_SaxtonFit.py
+  - MSD_Deff_over_D0_vs_Size_20mg_WeightedAvg.py (and the Amsden version)
 
 Always recomputes from the raw XML files (no cache-reuse) and unconditionally
-overwrites both pickle files, so downstream scripts always get fresh results.
-
-Tracks are pre-filtered via core.io.single_file_data() -> remove_edge_artifacts():
-detections within 3% of the frame border are dropped and trajectories split at
-the gap, to correct spurious TrackMate linking of near-edge detections.
-
-fps filter: only for the small sizes (DLS 35-100 nm / nominal 20-100 nm,
-SMALL_SIZES_NM) is a minimum frame rate required (MIN_FPS_SMALL_SIZES=40 Hz),
-matching MSD_FromTrackmate_D0.py's rule for consistency between the water
-and hydrogel compute stages; 200/500/1000 nm have no fps requirement at all.
-fps is still recorded per file (see the "fps" column in the printed summary
-and in each result_dict).
+overwrites both pickle files. Tables: TABLE_PATH/msd_20mg_exclusions.csv,
+msd_20mg_per_file.csv, msd_20mg_weighted_average.csv.
 """
 
 from pathlib import Path
-import pickle
-import pandas as pd
 
-from hydro_analysis.core.io import single_file_data
-from hydro_analysis.core.analysis import perform_msd_analysis, DEFAULT_MSD_FIT_POINTS, weighted_average_per_size
+from hydro_analysis.MSD_Trackmate.msd_pipeline import run_pipeline
 
 # -----------------------------
 # Configuration
@@ -60,133 +60,24 @@ XML_FOLDERS = {
     1000.0: [ROOT_PATH / "1000 nm" / "Tracks"],
 }
 
-MSD_FIT_POINTS = DEFAULT_MSD_FIT_POINTS
-VERBOSE = True
-PRINT_FILE_SUMMARY = True
-
-# For the small (DLS 35-100 nm / nominal 20-100 nm) particles specifically, a
-# minimum frame rate is required -- fast diffusion needs enough temporal
-# sampling; anything slower undersamples the motion, unlike the larger,
-# slower-diffusing sizes, which have no fps requirement at all (see module
-# docstring: the earlier fps filter for ALL sizes was removed on request).
-MIN_FPS_SMALL_SIZES = 40.0
-SMALL_SIZES_NM = (20.0, 50.0, 100.0)
+# .rec files whose name differs from the movie (raw data stay unchanged): {XML name: .rec path}.
+# B2 .rec belongs to the B3 movie; decided by user, 2026-10-27.
+REC_OVERRIDES = {
+    "B3_inside_1d_1mmfrom injection_50_20mg_Tracks.xml":
+        Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg"
+             r"\B2_inside_1d_1mmfrom injection_50_20mg.rec"),
+}
 
 # Pickle output (always overwritten fresh, never read back to skip recomputation)
 CACHE_FILE        = Path(__file__).parent / "cache" / "msd_20mg_files.pkl"
 RESULT_CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_result.pkl"
 
-
-def save_results_to_cache(results: dict) -> None:
-    """Save results to pickle cache."""
-    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(CACHE_FILE, "wb") as f:
-        pickle.dump(results, f)
-    print(f"Cache gespeichert: {CACHE_FILE} ({len(results)} Dateien)")
-
-
-def compute_results() -> dict:
-    """Compute MSD analysis for all XML files."""
-    results = {}
-    total_files = 0
-    processed = 0
-
-    for size_nm, folders in XML_FOLDERS.items():
-        for folder in folders:
-            if not folder.exists():
-                print(f"WARNING: folder not found: {folder}")
-                continue
-            xml_files = list(folder.glob("*.xml"))
-            total_files += len(xml_files)
-            for xml_path in sorted(xml_files):
-                rd = single_file_data(xml_path)
-                if rd is None:
-                    continue
-                fps = rd.get("fps")
-                if size_nm in SMALL_SIZES_NM and (fps is None or fps < MIN_FPS_SMALL_SIZES):
-                    print(f"  [SKIP fps={fps}<{MIN_FPS_SMALL_SIZES}] {xml_path.name}")
-                    continue
-                rd["particle_size_nm"] = size_nm if rd.get("particle_size_nm") is None else rd["particle_size_nm"]
-                perform_msd_analysis(rd, fit_points=MSD_FIT_POINTS)
-                results[rd["xml_path"]] = rd
-                processed += 1
-                if processed % 10 == 0:
-                    print(f"  Verarbeitet: {processed}/{total_files}")
-
-    print(f"Analyse abgeschlossen: {processed} Dateien verarbeitet")
-    return results
-
-
-def save_result_cache(data: dict) -> None:
-    """Save the per-size weighted-average cache."""
-    RESULT_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(RESULT_CACHE_FILE, "wb") as f:
-        pickle.dump(data, f)
-    print(f"Result cache gespeichert: {RESULT_CACHE_FILE} ({len(data)} Größen)")
+RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
+TABLE_PATH = RESULTS / "SPT" / "msd_20mg_pipeline"
 
 
 def main() -> None:
-    # Always recompute from the raw XML files — no cache-reuse.
-    results = compute_results()
-    if not results:
-        print("No analyzable files found.")
-        return
-    save_results_to_cache(results)
-
-    # ── Weighted average per size, from the independent per-file fits ──────
-    avg_results = weighted_average_per_size(results)
-    if avg_results:
-        save_result_cache(avg_results)
-
-    print("\n── Trajectory-weighted average per particle size ──")
-    avg_rows = []
-    for size_nm, pr in sorted(avg_results.items()):
-        fit = pr.get("fit_results_MSD") or {}
-        avg_rows.append({
-            "Größe (nm)":    int(size_nm),
-            "D (µm²/s)":     f"{fit.get('D_um2_per_s', float('nan')):.4f}",
-            "± D":           f"{fit.get('D_error', float('nan')):.4f}",
-            "n":             f"{fit.get('exponent', float('nan')):.3f}",
-            "± n":           f"{fit.get('exponent_error', float('nan')):.3f}",
-            "σ_lok (nm)":    f"{fit.get('sigma_loc_nm', float('nan')):.1f}",
-            "N Partikel":    pr.get("n_particles_pooled"),
-            "N Dateien":     pr.get("n_files"),
-        })
-    if avg_rows:
-        print(pd.DataFrame(avg_rows).set_index("Größe (nm)").to_string())
-
-    rows = []
-    for r in results.values():
-        fit = r.get("fit_results_MSD")
-        if fit is None:
-            continue
-        # Count data points (rows in tracks_df = individual particle positions)
-        tracks_df = r.get('tracks_df')
-        n_particles = len(tracks_df) if tracks_df is not None else 0
-        rows.append({
-            "xml_path": r["xml_path"],
-            "base_name": r["base_name"],
-            "particle_size_nm": r.get("particle_size_nm"),
-            "D_MSD_um2_per_s": r.get("D_MSD"),
-            "D_error": fit.get("D_error"),
-            "exponent": fit.get("exponent"),
-            "exponent_error": fit.get("exponent_error"),
-            "sigma_loc_nm": fit.get("sigma_loc_nm"),
-            "fps": r.get("fps"),
-            "mpp_um_per_px": r.get("mpp"),
-            "n_particles": n_particles,
-            "weight": n_particles,
-        })
-
-    summary_df = pd.DataFrame(rows)
-
-    if VERBOSE:
-        print(summary_df.to_string(index=False))
-    if PRINT_FILE_SUMMARY:
-        cols = ["base_name", "particle_size_nm", "n_particles", "fps", "mpp_um_per_px", "D_MSD_um2_per_s"]
-        file_df = summary_df[cols].sort_values(["particle_size_nm", "base_name"])
-        print("\nPro Datei (MSD):")
-        print(file_df.to_string(index=False))
+    run_pipeline(XML_FOLDERS, REC_OVERRIDES, CACHE_FILE, RESULT_CACHE_FILE, TABLE_PATH, "msd_20mg")
 
 
 if __name__ == "__main__":

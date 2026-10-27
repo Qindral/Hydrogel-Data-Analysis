@@ -28,7 +28,7 @@ from scipy.optimize import curve_fit
 from hydro_analysis.Litesizer.litesizer_parser import load_litesizer_xlsx
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-XLSX_PATH      = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
+XLSX_PATH      = Path(r"E:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
 SAVE_PATH      = None           # Set to Path to export figures; None → plt.show()
 SIZES          = [20, 50, 100, 200, 500, 1000]
 MAX_PDI        = 42.0

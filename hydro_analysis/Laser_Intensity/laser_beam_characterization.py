@@ -41,7 +41,7 @@ spt_irradiance_overview.py):
                                       incident power per particle (W) for every DLS particle size
   beam_profiles_through_centre.csv    the plotted profiles: E measured and fitted per pixel
   laser_beam_exclusions.csv           per file: temporal outliers and hot pixels replaced
-  beam_profiles_all_settings.pdf      x and y profiles through the centre, all wavelengths and powers
+  beam_profiles_all_settings.pdf      x and y profiles through the centre (E in W/cm^2), all wavelengths and powers
   beam_profiles_all_settings_fit.pdf  the same with the 2D Gaussian fit on the same row / column
 Related: laser_intensity_calibration.py (same raw data); not read or modified here.
 """
@@ -77,6 +77,7 @@ FIG_SIZE_IN = (6.30, 3.6)               # width class "full"; two panels side by
 # 488 nm cyan-blue, 514 nm green (user, 2026-10-07; deviates from the style guide palette)
 SETTING_COLORS = {488: ["#1c78c4", "#005db4", "#0B2A92"], 514: ["#2ad232", "#3ba521", "#499136"]}
 MEASURED_ALPHA_WITH_FIT = 0.45
+W_M2_TO_W_CM2 = 1e-4                    # figures show E in W/cm^2, tables keep W/m^2 (user, 2026-10-26)
 PANEL_LABEL_KW = dict(fontsize=10, fontweight="bold", va="bottom", ha="left")
 SAVE_RETRIES = 5
 
@@ -158,8 +159,7 @@ def save_figure(fig: plt.Figure, path: Path) -> None:
 
 def plot_profiles(entries: list[tuple[dict, dict]], with_fit: bool) -> plt.Figure:
     """x and y profiles of all settings; entries = [(measurement, centre_profiles), ...] in plot order."""
-    exponent = int(np.floor(np.log10(max(max(pr[k][1].max(), pr[k][2].max()) for _, pr in entries for k in "xy"))))
-    scale = 10.0 ** exponent
+    scale = 1.0 / W_M2_TO_W_CM2
     fig, axs = plt.subplots(1, 2, figsize=FIG_SIZE_IN, sharey=True, layout="constrained")
     n_seen = {}
     for m, prof in entries:
@@ -179,7 +179,7 @@ def plot_profiles(entries: list[tuple[dict, dict]], with_fit: bool) -> plt.Figur
         ax.set_ylim(0.0, None)
         ax.set_xlabel(f"Position {key} (µm)")
         ax.text(0.0, 1.02, label, transform=ax.transAxes, **PANEL_LABEL_KW)
-    axs[0].set_ylabel(rf"Irradiance $E$ ($10^{{{exponent}}}$ W m$^{{-2}}$)")
+    axs[0].set_ylabel(r"Irradiance $E$ (W cm$^{-2}$)")
     handles, labels = axs[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="outside lower center", ncols=2, frameon=False,
                title="2D Gaussian fit (lines), measured (pale)" if with_fit else None, title_fontsize=8)

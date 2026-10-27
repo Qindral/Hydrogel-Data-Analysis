@@ -1,6 +1,10 @@
 """
-Robustheit von D und n gegenueber der Anzahl der in den MSD-Powerlaw-Fit
-einbezogenen Lag-Zeit-Punkte (MSD(tau) = 4D * tau^n).
+Robustheit von D und n gegenueber der Anzahl der in den MSD-Fit einbezogenen
+Lag-Zeit-Punkte. Seit 2026-10-27 (E045 A) wird jeder Track mit demselben Modell
+wie die eMSD-Fits der Pipeline gefittet, Bewegungsunschaerfe und 4 sigma^2 nach
+Savin & Doyle 2005 / Backlund et al. 2015 (core.analysis.
+fit_powerlaw_blur_locerror_general, E046), mit sigma und t_E der Datei aus
+fit_results_MSD ("sigma_loc_nm", "exposure_ms"; sigma nach E042).
 
 Neues Skript, ersetzt keine bestehenden Skripte. Reiner Konsument: liest
 cache/msd_d0_results.pkl (Bedingung "Wasser") und cache/msd_20mg_files.pkl
@@ -10,14 +14,13 @@ von Rohdaten, kein Neuberechnen der Trajektorien/iMSD -- fit_results_MSD
 ["imsd"] (eine Spalte pro Track, bereits ueber genuegend Lag-Zeiten von
 trackpy berechnet) ist in beiden Caches bereits vorhanden.
 
-Fuer jeden Track (jede imsd-Spalte) wird core.analysis.fit_powerlaw_with_
-errors() -- unveraendert wiederverwendet, bereits ueber den Parameter
-`points` parametrisiert -- fuer jede der 5 Datenpunktanzahlen (4, 5, 6, 7, 8)
-separat aufgerufen (Fenster beginnend bei der ersten Lag-Zeit). Ein Track
-wird fuer eine gegebene Punktanzahl uebersprungen (nicht stillschweigend
-weggelassen, siehe Konsolen-Ausgabe), wenn das Fit-Fenster NaN- oder
-<=0-Werte enthaelt -- gleiche Ausschlussregel wie
-TaskB1_TrackLengthBias_Compute.py::per_track_fits().
+Fuer jeden Track (jede imsd-Spalte) wird dieser Fit fuer jede der 5
+Datenpunktanzahlen (4, 5, 6, 7, 8) separat aufgerufen (Fenster beginnend bei der
+ersten Lag-Zeit). Ein Track wird fuer eine gegebene Punktanzahl uebersprungen,
+wenn das Fit-Fenster NaN- oder <=0-Werte enthaelt (gleiche Regel wie
+TaskB1_TrackLengthBias_Compute.py::per_track_fits()) oder der Fit nicht
+konvergiert; beides wird pro Datei gezaehlt und als Ausschlusstabelle
+zurueckgegeben (per_track_fits_by_points -> (fits, exclusions)).
 
 Aggregation pro (Partikelgroesse x Bedingung x Datenpunktanzahl): Median und
 Interquartilsabstand (25./75. Perzentil) von D und n.
@@ -45,7 +48,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from hydro_analysis.core.analysis import fit_powerlaw_with_errors
+from hydro_analysis.core.analysis import fit_msd_like_ensemble
 from hydro_analysis.core.io import condition_label_from_filename, get_dls_labels
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
 from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_savefig
@@ -86,19 +89,20 @@ def _condition_for(base_name: str, source: str) -> str:
     return f"Hydrogel {label.lower()}" if label else "Hydrogel"
 
 
-def per_track_fits_by_points(results: dict, source: str) -> pd.DataFrame:
-    """Pro Track x pro Datenpunktanzahl: D, n (oder NaN, wenn das Fit-Fenster
-    fuer diese Punktanzahl NaN/<=0-Werte enthaelt)."""
-    rows = []
+def per_track_fits_by_points(results: dict, source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Pro Track x pro Datenpunktanzahl: D, n aus dem Modell der Pipeline (E046)
+    (E045 A). Rueckgabe (fits, exclusions); exclusions zaehlt pro Datei und Punktanzahl
+    die Tracks mit NaN/<=0 im Fit-Fenster (bzw. zu kurz) und die nicht konvergierten Fits."""
+    rows, excl = [], []
     n_total = 0
     n_excluded = 0
+    n_failed = 0
     for r in results.values():
-        fit = r.get("fit_results_MSD")
-        size_nm = r.get("particle_size_nm")
-        if fit is None or fit.get("imsd") is None or size_nm is None:
-            continue
+        fit = r["fit_results_MSD"]
+        size_nm = r["particle_size_nm"]
         imsd = fit["imsd"]
         condition = _condition_for(r.get("base_name", ""), source)
+        counts = {p: [0, 0] for p in FITTINGPOINTS}     # points -> [window excluded, fit failed]
         for col in imsd.columns:
             n_total += 1
             series = imsd[col]
@@ -106,16 +110,33 @@ def per_track_fits_by_points(results: dict, source: str) -> pd.DataFrame:
                 window = series.iloc[0:points]
                 if len(window) < points or window.isna().any() or (window <= 0).any():
                     n_excluded += 1
+                    counts[points][0] += 1
                     continue
-                track_fit = fit_powerlaw_with_errors(window, points=points)
+                try:
+                    track_fit = fit_msd_like_ensemble(window, points, fit)
+                except ValueError:
+                    n_failed += 1
+                    counts[points][1] += 1
+                    continue
                 rows.append({
                     "particle_size_nm": float(size_nm), "condition": condition,
                     "fittingpoints": points, "xml_path": r.get("xml_path"), "particle_id": col,
-                    "D_um2_per_s": float(track_fit["A"][0] / 4.0), "exponent": float(track_fit["n"][0]),
+                    "D_um2_per_s": track_fit["D"], "exponent": track_fit["n"],
                 })
+        n_tracks = len(imsd.columns)
+        for points, (n_win, n_fail) in counts.items():
+            if n_win:
+                excl.append({"file": r.get("xml_path"), "step": "per_track_window", "parameter": f"{points} points",
+                             "n_before": n_tracks, "n_after": n_tracks - n_win,
+                             "reason": "NaN/<=0 in the fit window or track too short"})
+            if n_fail:
+                excl.append({"file": r.get("xml_path"), "step": "per_track_fit_failed", "parameter": f"{points} points",
+                             "n_before": n_tracks - n_win, "n_after": n_tracks - n_win - n_fail,
+                             "reason": "fit with localisation error and motion blur did not converge"})
     print(f"  {source}: {n_total} Tracks x {len(FITTINGPOINTS)} Punktanzahlen geprüft, "
-          f"{n_excluded} Kombinationen ausgeschlossen (NaN/<=0 im Fit-Fenster oder Track zu kurz)")
-    return pd.DataFrame(rows)
+          f"{n_excluded} Kombinationen ausgeschlossen (NaN/<=0 im Fit-Fenster oder Track zu kurz), "
+          f"{n_failed} Fits nicht konvergiert")
+    return pd.DataFrame(rows), pd.DataFrame(excl, columns=["file", "step", "parameter", "n_before", "n_after", "reason"])
 
 
 def build_summary(df: pd.DataFrame) -> pd.DataFrame:
@@ -181,8 +202,8 @@ def main() -> None:
     hydrogel_results = _load_pickle(CACHE_20MG, "MSD_FromTrackmate_20mg.py")
     print(f"Cache geladen: {CACHE_20MG} ({len(hydrogel_results)} Dateien)")
 
-    df_water = per_track_fits_by_points(d0_results, "water")
-    df_gel = per_track_fits_by_points(hydrogel_results, "hydrogel")
+    df_water, excl_water = per_track_fits_by_points(d0_results, "water")
+    df_gel, excl_gel = per_track_fits_by_points(hydrogel_results, "hydrogel")
     df = pd.concat([df_water, df_gel], ignore_index=True)
     print(f"Gesamt: {len(df)} (Track x Fitpunkte)-Kombinationen erfolgreich gefittet.")
 
@@ -192,6 +213,8 @@ def main() -> None:
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
     csv_path = SAVE_PATH / "fittingpoints_robustness.csv"
     summary.to_csv(csv_path, index=False)
+    pd.concat([excl_water, excl_gel], ignore_index=True).to_csv(
+        SAVE_PATH / "fittingpoints_robustness_exclusions.csv", index=False)
     print(f"Tabelle gespeichert: {csv_path}")
 
     dls_labels = get_dls_labels()

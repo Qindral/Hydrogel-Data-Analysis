@@ -18,52 +18,52 @@ Format (wird vom Rainmeter-Skin gelesen, bitte beibehalten):
 - A: behalten (3 %) → im Methodenteil begründen, Zahl der entfernten Detektionen je Bedingung berichten.
 - B: abschalten → mehr Detektionen und längere Tracks; mögliche Fehlverknüpfungen am Rand bleiben in den Daten.
 - C: Sensitivität rechnen (0, 1, 3 %) und danach festlegen → ein zusätzlicher Durchlauf, zeigt, ob D davon abhängt.
-**Entscheidung:** Rand ist immer von unsicherheiten tracking linking betroffen und muss ausgeschlossen werden.
+**Entscheidung:** A Rand ist immer von unsicherheiten tracking linking betroffen und muss ausgeschlossen werden.
 muss nicht weiter begründet werden. 
 
-## E002 · OFFEN · 2026-10-06
+## E002 · ENTSCHIEDEN · 2026-10-27
 **Frage:** Womit werden die Dateien beim Mittelwert je Partikelgröße gewichtet?
 **Stelle:** `core.analysis.weighted_average_per_size`, Gewicht = `num_tracks`.
 **Wirkung heute:** `num_tracks` wird vor dem 10-Frame-Filter gezählt. Bei 50 nm im Hydrogel sind 66 % dieser Tracks zu kurz und gehen nicht in den Fit ein, bestimmen aber das Gewicht.
 - A: Trackzahl nach dem 10-Frame-Filter → Gewicht entspricht den Tracks, die wirklich im Fit stecken.
 - B: ungewichtet, jede Datei zählt gleich → passt zur Regel „das Movie ist die Einheit“; Dateien mit wenigen Tracks wiegen dann so viel wie große.
 - C: so lassen → D und Fehlerbalken bleiben wie bisher, die Gewichtung ist dann zu begründen.
-**Entscheidung:** offen
+**Entscheidung:** A offen. Im Dialog bestätigt: A, Gewicht = Tracks nach dem 10-Frame-Filter (`num_tracks_fit`) (Nutzer, 2026-10-27). Umgesetzt in `MSD_FromTrackmate_20mg.py` (`WEIGHT_KEY`): 35 nm 1183, 50 nm 539 Tracks.
 
-## E003 · OFFEN · 2026-10-06
+## E003 · ENTSCHIEDEN · 2026-10-27
 **Frage:** Mindest-Bildrate von 40 Hz für nominal 20, 50 und 100 nm behalten?
 **Stelle:** `MSD_FromTrackmate_D0.py` und `MSD_FromTrackmate_20mg.py`, `MIN_FPS_SMALL_SIZES`.
 **Wirkung heute:** unbekannt. Übersprungene Dateien werden nur in der Konsole genannt und nirgends gespeichert. Zuerst zählen lassen, welche Dateien betroffen sind.
 - A: behalten → übersprungene Dateien in die Ausschlussliste schreiben und im Methodenteil nennen.
 - B: abschaffen → alle Dateien gehen ein; langsam aufgenommene Filme kleiner Partikel haben wenige, große Schritte.
 - C: andere Schwelle → mit Begründung über Schrittweite je Frame festlegen.
-**Entscheidung:** offen
+**Entscheidung:** A Ja. langsamere fps ausschließen (Nutzer, 2026-10-27). Hydrogel 20 mg/mL: 2 Dateien übersprungen und in `msd_20mg_exclusions.csv` vermerkt (`20nm_1d_B4_01_processed` 33,3 Hz, `B3_inside_1d_1mmfrom injection_50_20mg` 20 Hz). Wasser (E040 A): keine Datei unter 40 Hz (`20 nm_water` mit genau 40,0 Hz bleibt).
 
-## E004 · OFFEN · 2026-10-06
+## E004 · ENTSCHIEDEN · 2026-10-27
 **Frage:** Wie viele Lag-Punkte gehen in den MSD-Fit: 6 (Standard im Code) oder 4 (in den Validierungsläufen benutzt)?
 **Stelle:** `core.analysis.DEFAULT_MSD_FIT_POINTS = 6`.
 **Wirkung heute:** D und α im Kapitel stammen aus 6 Punkten, die Validierung zum Tracklängen-Bias aus 4.
 - A: 6 Punkte überall → Validierung mit 6 wiederholen.
 - B: 4 Punkte überall → Hauptauswertung neu rechnen.
 - C: Sensitivität 2 bis 6 Punkte einmal berichten und einen Wert festlegen → beantwortet die Frage auch für die Prüfer.
-**Entscheidung:** offen
+**Entscheidung:** A 6 Lagpunkte (Nutzer, 2026-10-27). Validierung mit 6 Punkten noch nicht wiederholt.
 
-## E005 · OFFEN · 2026-10-06
+## E005 · ENTSCHIEDEN · 2026-10-27
 **Frage:** Wie wird der Lokalisationsfehler berichtet, wenn der Achsenabschnitt der MSD negativ ist?
 **Stelle:** `core.analysis.perform_msd_analysis`, `sigma_loc_nm`; Mittelung in `weighted_mean_and_err`.
 **Wirkung heute:** Ein negativer Achsenabschnitt wird zu „kein Wert“ und fällt aus dem Mittel. In Wasser betrifft das 22 von 44 Dateien, im Hydrogel 3 von 33. Der gemittelte Wert stammt also nur aus Dateien mit positivem Achsenabschnitt.
 - A: σ aus den immobilisierten Partikeln als Hauptwert, Achsenabschnitt nur als Diagnose zeigen → kein Auswahleffekt.
 - B: über die Achsenabschnitte aller Dateien mitteln (auch negative), erst danach die Wurzel ziehen → Mittel ohne Auswahl, kann nahe null oder negativ ausfallen.
 - C: so lassen → im Text angeben, dass nur positive Achsenabschnitte eingehen und wie viele Dateien das sind.
-**Entscheidung:** offen
+**Entscheidung:** A (Nutzer, 2026-10-27). Hydrogel: `sigma_loc_nm` = σ der immobilisierten Partikel (E039), Achsenabschnitt als `sigma_loc_intercept_nm` nur Diagnose.
 
-## E006 · OFFEN · 2026-10-06
+## E006 · ENTSCHIEDEN · 2026-10-27
 **Frage:** Was passiert mit Dateien ohne Kalibrierung (.rec fehlt, Bildbreite unbekannt) oder mit fehlgeschlagenem Fit?
 **Stelle:** `core.io.single_file_data` (gibt `None` zurück), `core.analysis.analyze_multiple_files` (fängt Fehler ab).
 **Wirkung heute:** Die Datei wird übersprungen, es gibt nur eine Konsolenmeldung. In den gespeicherten Ergebnissen ist nicht zu sehen, ob und welche Dateien fehlen.
 - A: Abbruch mit Fehlermeldung, die Datei und fehlendes Feld nennt → keine Datei kann unbemerkt fehlen; der Lauf stoppt, bis das Problem behoben ist.
 - B: überspringen, aber in die Ausschlussliste schreiben → der Lauf geht durch, das Fehlen ist dokumentiert.
-**Entscheidung:** offen
+**Entscheidung:** A (Nutzer, 2026-10-27). Die .rec zu `B3_inside_1d_1mmfrom injection_50_20mg` heißt `B2_inside_1d_1mmfrom injection_50_20mg.rec` und ist im Skript zugeordnet (`REC_OVERRIDES`, Nutzer, 2026-10-27). Wasser: `1000_nm_10_Tracks_v2.xml` ist eine zweite Analyse des Films `1000_nm_10` und wird mit `1000_nm_10.tif.rec` kalibriert (Nutzer, 2026-10-27).
 
 ## E007 ·Geschlossen · 2026-10-06
 **Frage:** DLS-Messungen mit Polydispersität über 42 % ausschließen? 
@@ -72,7 +72,7 @@ muss nicht weiter begründet werden.
 - A: behalten → Schwelle begründen, Zahl der ausgeschlossenen Messungen je Größe berichten.
 - B: alle Messungen zeigen und die auffälligen markieren → kein Ausschluss, breitere Streuung.
 - C: andere Schwelle → mit Quelle oder Herstellerangabe festlegen.
-**Entscheidung:** Ja ab eine Polydispersität ist das Ergebnis zu unsicher unter 0.3 sehr genau. 6-10-2026
+**Entscheidung:** A Ja ab eine Polydispersität ist das Ergebnis zu unsicher unter 0.3 sehr genau. 6-10-2026
 
 ## E008 · ENTSCHIEDEN · 2026-10-08
 **Frage:** Rheologie: Läufe mit dem Kennzeichen `group_outlier` (Faktor 2 gegen den Median gleich alter Läufe) aus der gefilterten Statistik lassen?
@@ -82,14 +82,14 @@ muss nicht weiter begründet werden.
 - B: nur markieren, nicht ausschließen → Statistik über alle gültigen Läufe.
 **Entscheidung:** A, Statistik mit `qc_filtered` wie bisher, zusammen mit den Codes axial_force, presheared und cracks (Nutzer, 2026-10-08, siehe E025).
 
-## E009 · OFFEN · 2026-10-06
+## E009 · ENTSCHIEDEN · 2026-10-27
 **Frage:** Driftkorrektur im MSD-Code: entfernen, behalten oder richtig einführen? Driftkorrektur nur bei Wasser.
 **Stelle:** `core.analysis.perform_msd_analysis`, Bedingung „Partikel je Frame > 50“.
 **Wirkung heute:** keine. Die Bedingung wurde bei keiner der 77 Dateien ausgelöst (höchster Wert 1,1), es wird also nie Drift abgezogen. Der Code steht aber da und würde bei dichteren Filmen still eingreifen.
 - A: entfernen → der Code tut, was im Methodenteil steht: keine Driftkorrektur.
 - B: behalten → als Regel dokumentieren, obwohl sie nie greift.
 - C: Drift prüfen und dann entscheiden → einmal die mittlere Verschiebung je Film ausgeben lassen.
-**Entscheidung:** offen
+**Entscheidung:** B - ab 30 Partikeln pro Frame (Nutzer, 2026-10-27). Umgesetzt mit dem bisherigen Maß (Tracks / Frames ≥ 30, `DRIFT_MIN_TRACKS_PER_FRAME`); Hydrogel höchstens 0,25, keine Driftkorrektur.
 
 ## E010 · Geschlossen · 2026-10-06
 **Frage:** Sollen die 40 neu gefundenen DLS-Größenmessungen in die DLS-Referenzwerte (Größe, D₀, Legenden-Labels) eingehen? 
@@ -270,53 +270,188 @@ muss nicht weiter begründet werden.
 - Mesh Size für die Caption: A: Proben < 10 d (N = 4, 17,5 ± 1,1 nm). B: alle qc-Proben (N = 8, ≈ 16,4 ± 1,1 nm).
 **Entscheidung:** Viskoelastizität nur Amplitudensweep (Hyd20), ohne Titel, schwarz, Legende und Stern A (weglassen), y 10–600 Pa; Stabilität ohne Legende, Symbole kleiner; Gitter ohne Fibrillendicke (Kavität und Throat mit Achsendurchmessern), auf eine Kavität zentriert und periodisch in alle Richtungen fortgesetzt; Kavität gegen f in Schwarz; Mesh Size keine Abbildung, Wert A für die Caption (Nutzer, 2026-10-08). Nachtrag: Gitter als beleuchtetes 3D-Rendering (pyvista/VTK) mit glatter, halbtransparenter Kavitätskugel, Nachbarzellen nur angedeutet, Stränge vor der Kavität blass, näher am Objekt (Nutzer, 2026-10-08). Nachtrag (Nutzer, 2026-10-14): Viskoelastizität mit Legende G′ (gefüllt) / G″ (offen) und ohne die senkrechten Linien bei γ5% und γ10%; ersetzt für diese Abbildung „Legende weglassen“ (die Dehnungswerte bleiben in Tabelle 1).
 
-## E029 · OFFEN · 2026-10-14
+## E029 · ENTSCHIEDEN · 2026-10-22
 **Frage:** FRAP-Bildserie (Hydrogel oben, Wasser unten, t = 0/10/20 s): Welche Messung wird je Reihe gezeigt?
 **Stelle:** `FRAP/frap_recovery_image_panels.py`, `SELECTION_RULE` (nutzt `_representative` aus `FRAP/frap_figures.py`).
 **Wirkung heute:** Regel aus Fig. 1 von `frap_figures.py` übernommen: QC-bestandene (Profil) Messung mit der größten Bleichtiefe K0 → Hydrogel gel_B1_1 (K0 = 0,81, Kandidaten: 9 Bulk-Gel-Messungen A1/B1, 20 mg/mL), Wasser water_3 (K0 = 0,72; water_2 fällt an gesättigten Pixeln durch, water_1 hat K0 = 0,53). Für diese Regel ist keine Nutzerentscheidung vermerkt.
 - A: Regel „größtes K0“ beibehalten → Abbildung bleibt wie erzeugt (gel_B1_1, water_3).
 - B: Messungen vom Nutzer benannt (z. B. eine typische statt der tiefsten Bleiche) → nur die gezeigten Bilder ändern sich, keine Zahlenwerte.
-**Entscheidung:** offen
+**Entscheidung:** A (Nutzer, 2026-10-22)
 
-## E030 · OFFEN · 2026-10-21
+## E030 · ENTSCHIEDEN · 2026-10-22
 **Frage:** Ist die Pixelgröße 0,130 µm/px für 800 px breite Filme (Binning ×1) richtig, oder müsste sie nach dem Binning 0,075 µm/px sein?
 **Stelle:** `core.io` (Auswertung der `.rec`-Datei, Zeile 147: `x == 800 → mpp = 0.130`, Kommentar „mpp measured via Thorlab Grid 10µm“); gleiche Tabelle `MPP_BY_IMAGE_WIDTH_PX` in `Validation_Claude/snr_signal_profile.py`.
 **Wirkung heute:** Dieselbe Kamera (pco.pixelfly USB, Seriennummer 1401) hat am 30.01.2026 `500 nm_2.tif` mit 400 × 300 px, Binning ×2 (→ 0,15 µm/px) und drei Minuten später `500 nm_3.tif` mit 800 × 600 px, Binning ×1 aufgenommen. Bei 0,30 µm/px für Binning ×4 und 0,15 µm/px für Binning ×2 ergäbe Binning ×1 0,075 µm/px. Betroffen: immobilisierte 560-nm-Filme `500 nm_3` und `500 nm_4` (42 Tracks in Abb20; FWHM-Median 1092 nm gegen 659 nm bei 0,15 µm/px und 736 nm bei 0,30 µm/px; mit 0,075 µm/px wären es 1092 × 0,075/0,130 ≈ 630 nm) und die Gruppe 560 nm / 0,13 µm/px der Lokalisationsfehler-Tabelle (σ_loc 50 ± 16 nm). Die Umrechnung 0,15 gegen 0,30 µm/px (240/560/1370 nm gegen 35–100 nm) ist dagegen mit dem Binning konsistent. Abb20 zeigt die Werte unverändert.
 - A: 0,130 µm/px bleibt (eigene Kalibrierung mit dem 10-µm-Gitter für diese Einstellung) → keine Änderung; Kalibrieraufnahme im Methodenteil nennen.
 - B: 0,075 µm/px aus dem Binning → `core.io` ändern, `Particle_Size_SNR_Compute.py` und `Loc_Error_Analyse_immob_particle.py` neu laufen lassen; 560-nm-FWHM und σ_loc der zwei Filme sinken um den Faktor 0,58.
 - C: die beiden 800-px-Filme aus Abb20 und der σ_loc-Tabelle herausnehmen, bis die Pixelgröße geklärt ist → 560 nm nur aus 222 Tracks bei 0,15 und 0,30 µm/px.
-**Entscheidung:** offen
+**Entscheidung:** B -> da der Ausschnitt der gleiche bleibt (Nutzer, 2026-10-22)
 
-## E031 · OFFEN · 2026-10-21
+## E031 · ENTSCHIEDEN · 2026-10-22
 **Frage:** Wie werden mehrfach analysierte Filme in den MSD-Caches behandelt (Buffer `msd_d0_results.pkl` und Hydrogel `msd_20mg_files.pkl`)?
 **Stelle:** `MSD_FromTrackmate_D0.py` und `MSD_FromTrackmate_20mg.py` (Dateisuche); Folgeskripte Abb05, Abb08–Abb12, Abb14, Abb15, Abb17–Abb19.
 **Wirkung heute:** Buffer 35 nm (nominal 20 nm) zählt 9 Einträge, aber nur 4 verschiedene Filme: `20 nm water_4` viermal (je eine Kopie in `D_0 Wassermessung\20 nm\Tracks` und `2026.01.16\Tracks_20` mit identischem Ergebnis D = 13,06 µm²/s, dazu `filtered_20 nm water_4` D = 13,01 und `Resultof20 nm water_4` D = 11,79), `20 nm_water_02` und `20 nm_water_03` je zweimal (beide Ordner, identische Ergebnisse), dazu `20 nm_water` (0,15 µm/px, 40 fps, D = 1,6). Hydrogel 35 nm zählt 21 Einträge für 19 Filme: `20nm_1d_B4_04` und `20nm_1d_B4_04_processed` (D = 3,05 / 2,95), `20nm_1d_A4_01` und `Resultof20nm_1d_A4_01` (D = 2,94 / 6,27). Alle Einträge gehen heute einzeln in Abbildungen und gewichtete Mittel ein; nichts wurde entfernt.
 - A: so lassen → jede Analyse zählt als eigene Messung; Doppelungen im Methodenteil nennen.
 - B: je Film nur eine Analyse behalten (Regel vom Nutzer, z. B. „Originalordner, unbearbeitete Tracks“) → Buffer 35 nm 4 statt 9 Werte, Hydrogel 35 nm 19 statt 21; Neulauf der Compute-Skripte und aller Folgeabbildungen.
 - C: identische Kopien (gleiches Ergebnis, zwei Ordner) entfernen, bearbeitete Varianten (`filtered_`, `Resultof`, `_processed`) behalten → Buffer 35 nm 6 statt 9.
-**Entscheidung:** offen
+**Entscheidung:** nur eine analyse behalten - aber die andern werden in dem Summary behandelt unter andere Methode. (Nutzer, 2026-10-22)
 
-## E032 · OFFEN · 2026-10-21
+## E032 · ENTSCHIEDEN · 2026-10-22
 **Frage:** Welche DLS-Referenzwerte gelten in den SPT-Abbildungen (D₀ und Größenfehler)?
 **Stelle:** `core.io.get_dls_reference_maps()` (fest eingetragene Werte) gegen `core.io.get_dls_diffusion_means()` / `get_dls_sizes()` (DLS-Cache, laut Docstring maßgeblich); benutzt in Abb09–Abb12.
 **Wirkung heute:** Die x-Position kommt aus dem Cache (z. B. 557,9 und 1366,9 nm), D₀, D₀-Fehler und Größenfehler aus den fest eingetragenen Werten, die zu älteren Durchmessern gehören (621,5 und 1266,5 nm). Für 35–240 nm stimmen beide überein; für 560 nm D₀ = 0,700 (fest) gegen 0,774 µm²/s (Cache), für 1370 nm 0,341 gegen 0,314 µm²/s. Dadurch weicht die DLS-Referenz in Abb12 bei 560/1370 nm um −8,9 / +8,8 % von Stokes–Einstein ab, bei 35–240 nm um 0,0 %. Größenfehler fest 21,8 / 47,0 nm gegen DLS-Tabelle (Abb35) ± 51,1 / ± 38,3 nm.
 - A: so lassen → Abbildungen unverändert; Mischung im Methodenteil begründen.
 - B: alle Referenzwerte aus dem DLS-Cache (`get_dls_diffusion_means()`, Größenfehler aus derselben Auswertung) → DLS-Punkte 560/1370 nm verschieben sich, Abb09 unverändert (nur 35/50 nm).
-**Entscheidung:** offen
+**Entscheidung:** B und die Maps verbessern (Nutzer, 2026-10-22)
 
-## E033 · OFFEN · 2026-10-21
+## E033 · ENTSCHIEDEN · 2026-10-22
 **Frage:** Welche Messungen sind für 560 nm (nominal 500 nm) die „drei Referenzmessungen“ in Abb35/Abb36?
 **Stelle:** `Litesizer/litesizer_visualization_chapter.py` (über `litesizer_visualization.group_accepted_measurements`), Quelle `Size_repitition_All Sizes.xlsx`.
 **Wirkung heute:** Für 500 nm enthält die Referenzdatei 12 Messungen, davon 6 mit PDI ≤ 42 % (zwei Serien „500 nm 1–3“: d_H 500,8 / 558,3 / 533,8 nm und 516,5 / 620,7 / 617,6 nm). Alle 6 werden gezeigt und gemittelt (d_H 557,9 ± 51,1 nm); alle anderen Größen haben genau 3. Nichts wurde entfernt.
 - A: alle 6 behalten → wie heute; im Text „3 bzw. 6 Wiederholungen“ nennen.
 - B: nur eine Serie (vom Nutzer benannt) → 3 Messungen; d_H, D₀ und PDI für 560 nm ändern sich und damit die x-Position von 560 nm in allen SPT-Abbildungen, wenn der DLS-Cache neu erzeugt wird.
-**Entscheidung:** offen
+**Entscheidung:**alle 6 nehmen (Nutzer, 2026-10-22)
 
-## E034 · OFFEN · 2026-10-21
+## E034 · ENTSCHIEDEN · 2026-10-22
 **Frage:** Welche Feret-Definition zeigen Abb31 (50 nm) und Abb32 (240 nm) gemeinsam?
 **Stelle:** `SEM_Particles/sem_feret_size_histogram.py` (`DIAMETER_VARIANTS`); ausgewählt sind derzeit `sem_feret_diameter_50nm.pdf` (Feret_max) und `sem_mean_feret_diameter_200nm.pdf` (mittlerer Feret = (Feret_max + Feret_min)/2).
 **Wirkung heute:** Beide Varianten werden für jede Größe erzeugt. 50 nm: Feret_max 39,4 ± 8,4 nm, mittlerer Feret 36,6 ± 8,4 nm; 240 nm: Feret_max 244,5 ± 17,8 nm, mittlerer Feret 228,2 ± 20,1 nm (n = 1000 / 1010, ohne Pt-Abzug). Abb33 nutzt Feret_max.
 - A: Feret_max für beide → Abb32 als `sem_feret_diameter_200nm.pdf`; einheitlich mit Abb33.
 - B: mittlerer Feret für beide → Abb31 als `sem_mean_feret_diameter_50nm.pdf`; Abb33 nutzt dann eine andere Definition, außer sie wird ebenfalls umgestellt.
 - C: zusätzlich Pt-Abzug (2 × 1,3 nm wie in Abb33) auch in Abb31/32 → Werte um 2,6 nm kleiner.
+**Entscheidung:** Ferret max für beide (Nutzer, 2026-10-22)
+
+## E035 · ENTSCHIEDEN · 2026-10-22
+**Frage:** Wie wird die nicht normierte FRAP-Intensität (FITC-Messungen gegen noFITC-Kontrollen) in der Vergleichsgrafik gezeigt?
+**Stelle:** neues Skript `FRAP/frap_raw_intensity_comparison.py` (Consumer von `cache/frap_v2_phase1.pkl`, Pre-Bleach-Frames aus den TIFs wie in `frap_depth_figures.py`).
+**Wirkung heute:** Alle Abbildungen zeigen nur doppelt normierte Kurven. Rohwerte (Mittel in der Bleich-ROI, 8 bit, Hintergrund 0) vor dem Bleichen: Buffer 61,6 / 92,1 (water_2 gesättigt, 254,6, vom Nutzer ausgeschlossen); Hydrogel 28,8–84,6; noFITC 15,6 / 83,1 / 68,7 Counts. Detektor (PMT 1, Gain 800, Offset 0) und Pinhole (1 AU) sind überall gleich, die Aufnahme-Laserleistung nicht: 1,0 % bei water_1–3, nofitc_1, gel_B1_1–6, gel_A1_2/3; 0,5 % bei nofitc_2/3, interface_1/2, gel_A1_1. nofitc_3 hat Zoom 1 statt 1,275 (0,361 statt 0,283 µm/px).
+- Messgröße: A: Mittel in der Bleich-ROI (Radius r_e der Messung; Kontrollen an der mittleren Bleichstelle, r = 46,4 µm, wie in v2). B: Mittel über das ganze Bildfeld. C: beide als zwei Panels.
+- Laserleistung: A: alle Messungen wie aufgenommen, Laserleistung im Symbol/Linienstil markiert, keine Umrechnung. B: nur Messungen mit 1,0 % in der Grafik (übrige in der Tabelle). C: zwei Panels, getrennt nach 0,5 % und 1,0 %.
+- Darstellung: A: Zeitverlauf jeder Messung (Pre-Bleach und Recovery) in Counts. B: wie A plus Gruppenmittel je Probe und Laserleistung. C: nur Pre-Bleach-Niveau je Messung als Punkt (kein Zeitverlauf).
+**Entscheidung:** Einzelne Grafiken Pro Bleaching - in einem Subfigure Raster, nur für den Anhang und zur Übersicht. Im Dialog: Messgröße A (Bleich-ROI), Laserleistung A (alle Messungen, markiert, keine Umrechnung), Darstellung A (Zeitverlauf in Counts) (Nutzer, 2026-10-22).
+
+## E036 · ENTSCHIEDEN · 2026-10-26
+**Frage:** Welcher Unsicherheitsbereich wird um den Amsden-Fit von D_eff/D0 (20 mg/mL, r_f = 6 nm) schattiert?
+**Stelle:** `MSD_Trackmate/MSD_Deff_over_D0_vs_Size_20mg_Amsden.py`, `BAND_K` und `fit_amsden` (gewichteter Fit, absolute Fehler).
+**Wirkung heute:** Fit über 2 Punkte (35 nm: 0,178 ± 0,032; 50 nm: 0,095 ± 0,015, 1 SE) mit einem freien Parameter: r̄ = 11,18 ± 0,51 nm, χ² = 4,94 bei 1 Freiheitsgrad. Einzeln invertiert ergeben die Punkte r̄ = 9,78 nm (35 nm) und 12,05 nm (50 nm). Gezeigt ist ±1σ mit absoluten Fehlern (r̄ 10,68–11,69 nm); der 35-nm-Punkt liegt mit seinem Fehlerbalken außerhalb des Bandes.
+- A: ±1σ, absolute Fehler (heute) → schmales Band, gibt nur die Fehlerbalken wieder, nicht die Streuung zwischen den Punkten.
+- B: ±1σ, σ mit √χ²_red skaliert → r̄ 10,06–12,31 nm; Band deckt beide Einzelpunkt-Werte ab.
+- C: alle r̄, deren Kurve jeden Fehlerbalken einzeln trifft (Einhüllende der Einzelpunkte ± 1 SE) → r̄ 8,95–12,62 nm; breitestes der Bänder A–C.
+- D: 95 %-KI (t-Verteilung, 1 Freiheitsgrad, skaliertes σ) → r̄ −3,1 bis 25,5 nm; 12,7-mal so breit wie B (t-Faktor bei 1 Freiheitsgrad).
+**Entscheidung:** A, B und D, alle drei als geschachtelte Bänder in einer Abbildung (Nutzer, 2026-10-26). Am selben Tag geändert: nur A (Nutzer, 2026-10-26).
+
+## E037 · ENTSCHIEDEN · 2026-10-26
+**Frage:** Der Amsden-Fit mit freiem Fibrillenradius (3 nm ≤ r_f ≤ 15 nm, Nutzer) endet an der Obergrenze r_f = 15 nm – wie wird damit umgegangen?
+**Stelle:** `MSD_Trackmate/MSD_Deff_over_D0_vs_Size_20mg_Amsden.py`, `R_F_MODE = "free"`, `R_F_BOUNDS_NM`, `fit_amsden`.
+**Wirkung heute:** χ² fällt über den ganzen Bereich stetig mit r_f (r_f = 3 nm: 7,96; 6 nm: 4,94; 12 nm: 1,81; 15 nm: 1,03). Der Fit liegt deshalb auf der Grenze: r_f = 15 nm, r̄ = 7,79 ± 0,65 nm (σ bei festgehaltenem r_f, da ein Parameter auf der Grenze keinen symmetrischen Fehler hat). Ohne Grenze läuft die Kurve exakt durch beide Punkte (χ² = 0, 0 Freiheitsgrade) bei r_f = 29,2 nm, r̄ = 2,2 nm. Bei 2 Punkten und 2 freien Parametern ist der Fehler nicht verlässlich: An synthetischen Daten (wahr r̄ = 10, r_f = 8 nm) deckt ±1σ r̄ nur in 54,7 % der Fälle ab (erwartet 68,3 %), und 849 von 2000 Fits enden auf einer Grenze. Gezeigt in `deff_over_d0_vs_size_20mg_amsden_rf_free.pdf`; die Version mit r_f = 6 nm (`..._amsden.pdf`) bleibt bestehen.
+- A: so lassen → r_f = 15 nm auf der Grenze, r̄ = 7,79 ± 0,65 nm; im Text angeben, dass r_f an der Grenze liegt.
+- B: Grenze erweitern (Wert vom Nutzer) → ab r_f ≥ 29,2 nm exakter Durchgang, r̄ = 2,2 nm, kein Fehler schätzbar.
+- C: r_f fest (Wert vom Nutzer, z. B. 6 nm wie bisher oder aus der Rheologie 4,5–6,5 nm) → r̄ nur aus einem Parameter, z. B. 11,18 ± 0,51 nm bei 6 nm.
+- D: kein Fit von r_f; nur das χ²-Profil über r_f (Tabelle in `..._rf_free_fit_results.txt`) berichten.
+**Entscheidung:** C mit r_f = 1,5 nm fest; gesucht ist der Porendurchmesser 2r̄ (Nutzer, 2026-10-26). Ergebnis: r̄ = 12,78 ± 0,44 nm, 2r̄ = 25,56 ± 0,88 nm, χ² = 10,09 (1 Freiheitsgrad).
+
+## E038 · ENTSCHIEDEN · 2026-10-26
+**Frage:** In welcher Form wird das Amsden-Modell für D_eff/D0 gefittet?
+**Stelle:** `MSD_Trackmate/MSD_Deff_over_D0_vs_Size_20mg_Amsden.py`, `amsden_ratio`; abweichende Form in `MSD_Trackmate/MSD_Normalize_Hydrogel_vs_Water.py`, Origin `Amsden.FDF`/`Amsden_v2.FDF` und Hydrogel-Network-Simulation `amsden_fit.py`.
+**Wirkung heute:** Das Skript nutzte exp[−π/4 ((r_s + r_f)/(r̄ + r_f))²]; das ist dieselbe Funktion wie Amsden 2022 Gl. 3 mit ξ = 2r̄. Die übrigen Stellen nutzen exp[−π((r_s + r_f)/(ξ + r_f))²] (r_f statt 2r_f im Nenner); dort gilt ξ_Amsden = ξ_alt − r_f (gemessen, r_f = 4 nm: 28,9 → 24,9 nm).
+- A: Amsden 2022 Gl. 3, exp[−π((r_s + r_f)/(ξ + 2r_f))²], ξ = Mesh Size als Fitparameter.
+- B: bisherige Form der übrigen Stellen.
+**Entscheidung:** A, die neuere Form (Amsden 2022, Gl. 3; nach Amsden 1999 und Hadjiev & Amsden 2015) (Nutzer, 2026-10-26). Ergebnis bei r_f = 1,5 nm: ξ = 25,56 ± 0,88 nm, χ² = 10,09 (1 Freiheitsgrad). Die übrigen Stellen sind nicht geändert.
+
+## E039 · ENTSCHIEDEN · 2026-10-27
+**Frage:** Soll D_eff aus dem MSD um den Lokalisationsfehler (und die Bewegungsunschärfe) korrigiert werden?
+**Stelle:** `core.analysis.perform_msd_analysis` und `fit_powerlaw_with_errors`: D = A/4 aus dem log-log-Fit MSD = A·τ^n über die ersten 6 Lags, ohne Offset-Term; σ_loc aus dem linearen Fit MSD = 4Dτ + 4σ² wird nur berichtet, nicht abgezogen. Belichtungszeit wird aus der .rec gelesen, aber nicht verwendet.
+**Wirkung heute:** Hydrogel 20 mg/mL, Achsenabschnitt des linearen Fits relativ zum MSD beim ersten Lag (1/60 s): 35 nm Median 0,16 (−0,22 bis 1,14, 21 Dateien), 50 nm Median 0,65 (0,32 bis 0,77, 12 Dateien). Gewichtete D_eff/D0 (DLS): Potenzgesetz A/4 (heute) 35 nm 0,178, 50 nm 0,095; Steigung des linearen Fits/4: 35 nm 0,206, 50 nm 0,182. Exponent heute 0,89 (35 nm) und 0,62 (50 nm). Der Achsenabschnitt des linearen Fits enthält neben 4σ² auch Krümmung durch Subdiffusion, er ist kein reiner Lokalisationsfehler. Die Amsden-Abbildung (E036–E038) beruht auf den heutigen Werten. Verwandt: E005 (Berichten von σ_loc), E009 (Drift).
+- A: so lassen → D = A/4 aus dem Potenzgesetz ohne Offset; im Methodenteil nennen.
+- B: Fit MSD = 4D·τ^n + 4σ² mit σ frei (3 Parameter auf 6 Lags) → D, n und σ gemeinsam; Neulauf der Compute-Skripte.
+- C: σ aus den immobilisierten Partikeln (`Validation_Claude/Loc_Error_*`) je Bedingung fest abziehen, dann Potenzgesetz → unabhängige σ-Quelle; braucht σ für 35/50 nm bei den verwendeten Pixelgrößen.
+- D: linearer Fit MSD = 4Dτ + 4σ² (n = 1 angenommen) → D/D0 35 nm 0,206, 50 nm 0,182.
+- Zusätzlich je Option: Bewegungsunschärfe über die Belichtungszeit berücksichtigen (ja/nein).
+**Entscheidung:** C und dazu die Bewegungsunschärfe mit 4D(τ- 1/3 t_E) + 4σ²  , t_E entspricht Belichtungszeit. Im Dialog präzisiert (Nutzer, 2026-10-27): Modell MSD = 4D(τ − t_E/3)^n + 4σ², σ = Werte der immobilisierten Partikel für die entsprechende Pixelgröße (Mittel von `sigma_xy_static_nm` je Größe und mpp: 35 nm/0,3 µm/px 118,8 nm, 50 nm/0,3 µm/px 76,1 nm). Ergebnis Hydrogel (Gewicht E002 A): 35 nm D = 1,79 ± 0,30 µm² s⁻ⁿ, n = 0,87 ± 0,04; 50 nm D = 0,66 ± 0,10, n = 0,57 ± 0,03; D_eff/D0 0,146 / 0,078; Amsden (r_f = 1,5 nm) ξ = 23,73 ± 0,75 nm, χ² = 15,9.
+
+## E040 · ENTSCHIEDEN · 2026-10-27
+**Frage:** Sollen E002, E003, E006, E009, E031 und E039 auch in der Wasserauswertung (`MSD_FromTrackmate_D0.py`, D0 der SPT) gelten?
+**Stelle:** `MSD_Trackmate/MSD_FromTrackmate_D0.py` (Cache `msd_d0_results.pkl`), Folgeskripte Abb12, Abb23, `MSD_Normalize_Hydrogel_vs_Water.py`, Abb03/07, Abb17–19.
+**Wirkung heute:** Der Hydrogel-Cache ist seit 2026-10-27 mit Lokalisationsfehler und Bewegungsunschärfe gefittet, der Wasser-Cache noch mit dem alten Potenzgesetz (A/4, Gewicht `num_tracks`, keine Ausschlussliste). Vergleiche Hydrogel gegen SPT-Wasser mischen damit zwei Methoden; D_eff/D0 mit DLS-D0 (Abb09, Amsden) ist nicht betroffen. Hindernisse für E006 A und E039 C im Wasser: `1000_nm_10_Tracks_v2.xml` (Ordner `2026.01.19\Tracks_1000`) hat keine .rec; für 1370 nm bei 0,3 µm/px (`1000_nm_01` bis `_09`) gibt es kein σ der immobilisierten Partikel (nur 0,15 µm/px: 10,4 nm). Doppelanalysen (E031) im Wasser: `20 nm water_4` viermal, `20 nm_water_02`/`_03` je zweimal.
+- A: alle genannten Entscheidungen auch im Wasser → Neulauf von `MSD_FromTrackmate_D0.py`; braucht die .rec zu `1000_nm_10_Tracks_v2` und ein σ (Wert und Quelle) für 1370 nm bei 0,3 µm/px.
+- B: Wasser bleibt wie heute → Methodenmischung im Methodenteil nennen.
+- C: im Wasser alles außer E039 (ohne σ- und Unschärfekorrektur) → kein σ für 1370 nm nötig; Methodenmischung beim Fitmodell bleibt.
+**Entscheidung:** A: alle SPT-Auswertungen werden im Wasser gleich getätigt, selbe Funktion, selbe Parameter, selbe Unsicherheiten (Nutzer, 2026-10-27). Umgesetzt: gemeinsames Modul `MSD_Trackmate/msd_pipeline.py`, das beide Compute-Skripte aufrufen. Wasser: 39 Filme ausgewertet, 6 weitere Analysen (3 identische Kopien, 3 Re-Analysen) nur in `msd_d0_per_file.csv`.
+
+## E041 · ENTSCHIEDEN · 2026-10-27
+**Frage:** Welches σ der immobilisierten Partikel gilt für 1370 nm (nominal 1000 nm) bei 0,3 µm/px, wofür es keine immobilisierte Aufnahme gibt?
+**Stelle:** `MSD_Trackmate/msd_pipeline.py`, `SIGMA_MPP_SUBSTITUTES`.
+**Wirkung heute:** betrifft 9 Wasserfilme (`1000_nm_01` bis `_09`); immobilisiert vorhanden nur 0,15 µm/px (10,4 nm, 49 Tracks, `1000nm.xml`, `1k.xml`). 4σ²/MSD(τ₁) dort 0,004 bis 0,014.
+- A: Neue Messung abwarten → Wasserlauf bricht ab.
+- B: σ von 0,15 µm/px übernehmen → 10,4 nm, Ausnahme protokolliert.
+- C: Wert vom Nutzer.
+**Entscheidung:** B (Nutzer, 2026-10-27). Jede betroffene Datei steht mit `sigma_loc_substitute` in `msd_d0_exclusions.csv`.
+
+## E042 · ENTSCHIEDEN · 2026-10-27
+**Frage:** Welche Pixelgröße der immobilisierten Partikel bestimmt das feste σ im MSD-Fit, und wie wird der Lokalisierungsfehler der bewegten Proben ausgegeben?
+**Stelle:** `MSD_Trackmate/msd_pipeline.py`, `SIGMA_MPP_BY_SIZE`, `_sigma_for()`; `core/analysis.py`, `locerror_from_msd_slope()`.
+**Wirkung heute:** σ wurde je Datei nach (Größe, mpp der Datei) gewählt; abweichend nur `20 nm water` bei 0,15 µm/px (σ 35,6 nm) und `1000_nm_01` bis `_09` bei 0,3 µm/px (E041). Ein dynamischer Lokalisierungsfehler wurde nicht ausgegeben.
+- A: σ nach mpp der Datei (bisher) → wie oben.
+- B: σ nach Größe: 0,3 µm/px für nominal 20, 50, 100 nm, 0,15 µm/px für 200, 500, 1000 nm → `20 nm water` (0,15 µm/px) bekommt 118,9 nm statt 35,6 nm; 1000 nm unverändert 10,4 nm (ersetzt E041).
+**Entscheidung:** B (Nutzer, 2026-10-27; 100 nm → 0,3 µm/px). Jede Datei, deren eigene Pixelgröße abweicht, steht mit `sigma_loc_mpp` in der Ausschlussliste. Zusätzlich pro Datei die Lokalisierungsfehler-Varianz der bewegten Probe (Nutzer, 2026-10-27): Gerade durch die ersten 6 eMSD-Punkte, Steigung = 4D, zum Achsenabschnitt wird (4/3)·D·t_E addiert, der Rest ist 4σ² (Savin & Doyle 2005); ausgegeben neben σ² der immobilisierten Partikel (`sigma2_loc_dynamic_nm2`, `sigma2_loc_static_nm2`, `msd_offset_var_nm2` = Achsenabschnitt/4) in `<prefix>_per_file.csv` und gewichtet pro Größe in `<prefix>_weighted_average.csv`. Nur Ausgabe, geht nicht in den Fit ein.
+
+## E043 · ENTSCHIEDEN · 2026-10-27
+**Frage:** Mit welchen Größen wird der dynamische Lokalisierungsfehler nach Gl. 4.6 der Dissertation, δ_dyn = δ_sta·√(1 + D·t_E/s₀²), pro Datei berechnet?
+**Stelle:** `core/physics.py`, `calculate_dynamic_localization_error()`; `MSD_Trackmate/msd_pipeline.py`, `PSF_SIGMA_S0_NM`, `analyse_file()`.
+**Wirkung heute:** Bisher nur die Varianz aus dem Achsenabschnitt der MSD-Geraden (E042); Gl. 4.6 nicht ausgewertet. PSF-Fits der immobilisierten Partikel liegen nicht für jede Größe bei der Pixelgröße aus E042 vor (500 nm nur bei 0,3 µm/px, 20 nm bei 0,3 µm/px nur 12 Tracks).
+- s₀: A: PSF-Fit bei der Pixelgröße aus E042 → 500 nm mit dem 0,3-Wert; B: PSF-Fit über alle Pixelgrößen; C: Theorie 0,21·λ/NA bzw. fester Wert → ein s₀ für alle Größen.
+- D: D des Pipeline-Fits (Einheit µm² s⁻ⁿ) oder D_lin = Steigung/4 der Geraden durch die ersten 6 eMSD-Punkte (µm²/s).
+**Entscheidung:** s₀ = 250 nm für alle Größen und Medien; D = D_lin; δ_sta = festes σ der immobilisierten Partikel nach E042 (Nutzer, 2026-10-27). Ausgabe `delta_dyn_eq46_nm`, `delta_dyn2_eq46_nm2` in `<prefix>_per_file.csv`, gewichtet pro Größe in `<prefix>_weighted_average.csv`. Nur Ausgabe, geht nicht in den Fit ein.
+
+## E044 · ENTSCHIEDEN · 2026-10-27
+**Frage:** Was soll Abb03 (Korrektur-Abweichung vorher/nachher) zeigen, seit der Pipeline-Fit selbst σ und Bewegungsunschärfe enthält?
+**Stelle:** `MSD_Trackmate/Validation_Claude/Figures_Refined/Correlations_Refined.py` (`A_correction_deviation_refined.pdf`), `Validation_Claude/Correlations.py`, `correct_and_refit()`.
+**Wirkung heute:** „vorher“ ist jetzt der korrigierte Pipeline-Fit (E039 C), „nachher“ die alte Methode (4σ² vom eMSD abziehen, Potenzgesetz neu fitten, σ = `_representative_sigma_loc_nm`). Die Abbildung vergleicht damit zwei Korrekturen statt unkorrigiert gegen korrigiert. Letzter Lauf 2026-10-27 13:12.
+- A: vorher = unkorrigierter Fit aus dem Cache (`D_uncorrected`, `exponent_uncorrected`), nachher = Pipeline-Fit → Abb03 zeigt die Wirkung der jetzigen Korrektur; Skript wird angepasst.
+- B: Abb03 entfällt → Verweis im Text auf die Tabellen (`D_uncorrected` neben `D_um2_per_s`).
+- C: unverändert lassen → Beschriftung „before/after“ ist nicht mehr zutreffend.
+**Entscheidung:** A (Nutzer, 2026-10-27). Umgesetzt in `Correlations_Refined.py`; Werte pro Datei in `A_correction_deviation_refined_per_file.csv`; Hydrogel-Boxen kreuzschraffiert.
+
+## E045 · ENTSCHIEDEN · 2026-10-27
+**Frage:** Sollen die Fits pro Track (iMSD) in Abb14–15 und Abb17–19 ebenfalls mit Lokalisierungsfehler und Bewegungsunschärfe gefittet werden?
+**Stelle:** `Validation_Claude/Fittingpoints_robustness.py`, `per_track_fits_by_points()` (Abb14–15); `Validation_Claude/TaskB1_TrackLengthBias_Compute.py` → `cache/track_length_bias_*.pkl` (Abb17–19, n-Histogramm).
+**Wirkung heute:** beide fitten jede iMSD-Spalte mit dem Potenzgesetz `fit_powerlaw_with_errors` ohne σ und t_E. Abb14–15 wurde am 2026-10-27 aus den neuen Caches gerechnet (Tracks wie Pipeline), Abb17–19 liest `track_length_bias_*.pkl` vom 2026-09-23 (Dateistand und Filter von damals, ohne E031/E003).
+- A: beide auf `fit_powerlaw_blur_locerror` mit dem σ aus E042 umstellen, TaskB1 neu rechnen → Track-n und Track-D mit derselben Korrektur wie die eMSD-Fits.
+- B: unkorrigiert lassen, nur TaskB1 mit den heutigen Dateien neu rechnen → Methodenunterschied Track gegen Ensemble im Text nennen.
+- C: unverändert lassen.
+**Entscheidung:** A (Nutzer, 2026-10-27). Umgesetzt; ausgelassene Tracks (NaN/≤ 0 im Fenster, Fit nicht konvergiert) in `SPT/track_length_bias/track_length_bias_exclusions.csv` und `SPT/fittingpoints_exclusions.csv`.
+
+## E046 · ENTSCHIEDEN · 2026-10-27
+**Frage:** Welche Form hat der Term für Lokalisierungsfehler und Bewegungsunschärfe im MSD-Fit bei n ≠ 1?
+**Stelle:** `core/analysis.py`, `msd_blur_locerror_general()`, `fit_powerlaw_blur_locerror_general()`, `perform_msd_analysis_blur_locerror(model=…)`; `MSD_Trackmate/msd_pipeline.py`, `MSD_MODEL`; Fits pro Track in `TaskB1_TrackLengthBias_Compute.py` und `Fittingpoints_robustness.py`.
+**Wirkung heute:** Fit mit MSD = 4D(τ − t_E/3)ⁿ + 4σ² (E039 C); diese Form ist nur für n = 1 exakt. Im Hydrogel ist n ≈ 0,57 bis 0,87.
+- A: 4D(τ − t_E/3)ⁿ + 4σ² beibehalten.
+- B: allgemeine Form (Savin & Doyle 2005, Backlund et al. 2015), 2D: MSD(τ) = 4K/[(n+1)(n+2)·t_E²]·[(τ+t_E)^(n+2) + |τ−t_E|^(n+2) − 2τ^(n+2) − 2t_E^(n+2)] + 4σ².
+**Entscheidung:** B (Nutzer, 2026-10-27). K wird als `D_um2_per_s` gespeichert (Einheit µm² s⁻ⁿ), Modell in `fit_results_MSD["model_id"] = "general"`. Für n = 1 identisch mit A (geprüft, relative Abweichung < 1e-15). Gilt für Wasser, Hydrogel und die Fits pro Track.
+
+## E047 · OFFEN · 2026-10-27
+**Frage:** Wie sollen die Fits pro Track mit dem allgemeinen Modell (E046) umgehen, das nur für n > 0 definiert ist (bei τ = t_E ist der Klammerterm t_E^(n+2)·(2^(n+2) − 4), für n ≤ 0 also ≤ 0)?
+**Stelle:** `core/analysis.py`, `fit_powerlaw_blur_locerror_general()` (ohne Grenzen für n); `Validation_Claude/TaskB1_TrackLengthBias_Compute.py` (Abb17–19), `Validation_Claude/Fittingpoints_robustness.py` (Abb14–15).
+**Wirkung heute:** Fits pro Track, die nicht konvergieren oder am Startwert scheitern, werden ausgelassen und protokolliert: TaskB1 Wasser 465 von 6915 Tracks (35 nm 40, 50 nm 116, 100 nm 108, 240 nm 8, 560 nm 38, 1370 nm 155), Hydrogel 195 von 1722 (35 nm 77, 50 nm 118 von 539); Abb14–15 2344 (Wasser) und 1046 (Hydrogel) Kombinationen aus Track und Punktzahl. Es fallen bevorzugt Tracks mit kleinem n weg. Die Ensemble-Fits pro Datei sind nicht betroffen (alle konvergiert).
+- A: Fit pro Track mit Grenzen 0 < n < 2 (beschränkter Optimierer) → jeder Track bekommt einen Wert, Tracks am Rand werden markiert und gezählt.
+- B: wie heute, gescheiterte Tracks auslassen → Histogramme und Mediane ohne diese Tracks.
+- C: pro Track das bisherige Modell 4D(τ − t_E/3)ⁿ + 4σ² (für jedes n definiert) → Methodenunterschied Track gegen Ensemble.
+**Entscheidung:** offen
+
+## E048 · OFFEN · 2026-10-27
+**Frage:** FRAP v2: Wie wird der Hintergrund F_BG begründet bzw. gewählt, nachdem nur noch eine noFITC-Kontrolle (nofitc_1) übrig ist?
+**Stelle:** `FRAP/frap_analysis_v2.py`, `BACKGROUND_COUNTS = 0.0` und Modul-Docstring („The noFITC controls cannot serve as a quantitative background (their intensity scatters by a factor of 5 …)“).
+**Wirkung heute:** F_BG = 0 in allen Messungen. Die Begründung „Streuung um Faktor 5“ stammt aus den drei Kontrollen 15,6 / 83,1 / 68,7 Counts; nofitc_2 und nofitc_3 sind seit 2026-10-27 ausgeschlossen (FITC vorhanden, Nutzer), es bleibt nofitc_1 mit 15,6 Counts in der Bleich-ROI vor dem Bleichen (1,0 % Laser). FITC-Messungen vor dem Bleichen: 28,8–92,1 Counts; 3 von 13 gezeigten (interface_1, interface_2, gel_A1_1) mit 0,5 % Laser, dafür gibt es keine Kontrolle mehr. Laut Docstring kürzt sich ein konstanter Untergrund aus τ, t_half, M_f und w(t) und senkt nur das scheinbare K0.
+- A: F_BG = 0 beibehalten, Docstring nur mit PMT-Offset 0 begründen → keine Zahl ändert sich.
+- B: F_BG = Niveau von nofitc_1 (15,6 Counts) für die 1,0-%-Messungen → K0 und F_norm ändern sich; für die 0,5-%-Messungen ist ein eigener Wert nötig (vom Nutzer).
+- C: F_BG = 0, Abzug von nofitc_1 nur als Diagnose in den Tabellen → Hauptergebnisse unverändert, zusätzliche Spalten.
+**Entscheidung:** offen
+
+## E049 · OFFEN · 2026-10-27
+**Frage:** FRAP: Welche Unsicherheit wird für D_eff/D0 angegeben und gespeichert (Abbildung `frap_deff_d0_vs_depth.pdf` und Tabelle `frap_deff_d0_values.csv`)?
+**Stelle:** `FRAP/frap_depth_figures.py`, `plot_ratio()` und `write_ratio_table()`.
+**Wirkung heute:** Gezeigt und gespeichert werden der Mittelwert ± SD (ddof = 1) von D_eff/D0 über die QC-bestandenen Messungen: Hydrogel 0,902 ± 0,042 (n = 11, flach und tief zusammen), Buffer 1,000 ± 0,020 (n = 2). D0 = 30,13 µm²/s (water_1, water_3) mit einer SD von 0,62 µm²/s geht als Konstante ein, seine Unsicherheit wird nicht fortgepflanzt. Für D_propagation gibt es je Messung keine Fit-Unsicherheit, deshalb haben die Einzelwerte in `frap_depth_values.csv` keine. `frap_analysis_v2.py` speichert daneben H = geometrisches Mittel D_gel / D_Wasser (nur tiefes Gel, N = 9) = 0,900 mit 95 %-Bootstrap-KI [0,869; 0,933] in `ratio_gel_water.json`.
+- A: wie heute, SD über die Messungen, D0 als Konstante → Hydrogel ± 0,042.
+- B: SD über die Messungen, die relative SD von D0 quadratisch addiert (Gauß) → Hydrogel ± 0,046.
+- C: Standardfehler des Mittelwerts statt SD → Hydrogel ± 0,013 (ohne D0) bzw. 95 %-t-KI ± 0,028; Buffer (n = 2) 95 %-t-KI ± 0,184.
 **Entscheidung:** offen

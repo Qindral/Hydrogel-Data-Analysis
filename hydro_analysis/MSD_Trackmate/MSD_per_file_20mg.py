@@ -3,8 +3,12 @@ Per-file publication MSD figures — 20 mg/mL C16 hydrogel.
 
 Dissertation layout (Abb24; user, 2026-10-14): same A|B layout as the buffer
 figure, from MSD_perfile_D0.plot_msd_dissertation() (hydrogel eMSD markers in the
-dark size colour). Files named in DISSERTATION_FILES are written to SAVE_PATH,
-all other files to SCRATCH_PATH; the per-file summary table goes to SAVE_PATH.
+dark size colour), in the three versions of MSD_perfile_D0.VARIANTS (fit only;
+plus fit without localisation error and motion blur; plus iMSD). Every analysed
+movie goes to MSD_perfile_D0.ALL_MOVIES_PATH (figures, per-lag values table and
+emsd_all_movies_hydrogel.csv, see MSD_perfile_D0.write_movie_outputs); files named in
+DISSERTATION_FILES are also copied to SAVE_PATH under their dissertation name. The
+per-file summary table goes to SAVE_PATH.
 
 Reads the per-file results already computed by MSD_FromTrackmate_20mg.py
 (msd_20mg_files.pkl) instead of reprocessing the raw TrackMate XML files —
@@ -26,13 +30,12 @@ from hydro_analysis.core.io import (
 from hydro_analysis.core.analysis import DEFAULT_MSD_FIT_POINTS
 from hydro_analysis.core.physics import calculate_theoretical_diffusion
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import clip_msd_points
-from hydro_analysis.MSD_Trackmate.MSD_perfile_D0 import plot_msd_dissertation, RESULTS
+from hydro_analysis.MSD_Trackmate.MSD_perfile_D0 import RESULTS, write_movie_outputs, write_movie_overview
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_FILE = Path(__file__).parent / "cache" / "msd_20mg_files.pkl"
 
 SAVE_PATH = RESULTS / "SPT"
-SCRATCH_PATH = RESULTS / "_scratch" / "MSD_per_file_20mg"
 # file shown in the dissertation -> output name (user selection, SPT_ausgewaehlt_Abbildungen.docx)
 DISSERTATION_FILES = {"50 nm B2_1d_01_processed_Tracks.xml": "emsd_hydrogel_50nm_B2_1d_01"}
 MSD_FIT_POINTS   = DEFAULT_MSD_FIT_POINTS
@@ -55,7 +58,6 @@ def main() -> None:
     size_override = get_dls_reference_maps()["size_override_nm"]
 
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
-    SCRATCH_PATH.mkdir(parents=True, exist_ok=True)
 
     summary_rows: list[dict] = []
     n_processed = 0
@@ -124,13 +126,8 @@ def main() -> None:
         })
 
         rd_plot = clip_msd_points(rd, MSD_MAX_POINTS)
-        suffix  = f"_first{MSD_MAX_POINTS}" if MSD_MAX_POINTS is not None else ""
-        if base in DISSERTATION_FILES:
-            out_file = SAVE_PATH / f"{DISSERTATION_FILES[base]}.pdf"
-        else:
-            out_file = SCRATCH_PATH / f"{base}_{int(size_nm)}nm{suffix}.pdf"
-        plot_msd_dissertation(rd_plot, D_theo, label_nm, MSD_FIT_POINTS, "hydrogel",
-                              "20 mg mL$^{-1}$ C16", out_file)
+        write_movie_outputs(rd_plot, D_theo, label_nm, MSD_FIT_POINTS, "hydrogel", "20 mg mL$^{-1}$ C16",
+                            DISSERTATION_FILES.get(base))
         n_processed += 1
 
     # ── per-file summary CSV ──────────────────────────────────────────────────
@@ -142,6 +139,7 @@ def main() -> None:
         summary_df = pd.DataFrame(summary_rows)
         summary_df.to_csv(csv_path, index=False, sep=";", decimal=",", encoding="utf-8-sig")
         print(f"\nSummary saved: {csv_path}")
+        write_movie_overview(results, summary_rows, "hydrogel")
 
     print(f"\nDone — {n_processed} files processed, {n_skipped} skipped.")
 

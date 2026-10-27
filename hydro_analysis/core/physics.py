@@ -60,3 +60,20 @@ def calculate_theoretical_psf_sigma(wavelength_nm: float, numerical_aperture: fl
     Returns sigma in the same units as wavelength_nm (nm).
     """
     return 0.21 * wavelength_nm / numerical_aperture
+
+
+def calculate_dynamic_localization_error(
+    delta_static_nm: float,
+    diffusion_um2_per_s: float,
+    exposure_s: float,
+    psf_sigma_nm: float,
+) -> float:
+    """
+    Dynamic localisation error of a particle moving during the exposure:
+    delta_dyn = delta_sta * sqrt(1 + D * t_E / s0**2), s0 = PSF width
+    (dissertation eq 4.6, after ref [24] there).
+
+    Returns delta_dyn in nm.
+    """
+    s0_um = psf_sigma_nm / 1000.0
+    return float(delta_static_nm * np.sqrt(1.0 + diffusion_um2_per_s * exposure_s / s0_um ** 2))

@@ -1,7 +1,7 @@
 """Core functionality for hydrogel analysis."""
 
 # Physics functions
-from .physics import calculate_theoretical_psf_sigma, calculate_network_mesh_size
+from .physics import calculate_theoretical_psf_sigma, calculate_network_mesh_size, calculate_dynamic_localization_error
 
 # IO functions
 from .io import (
@@ -26,6 +26,14 @@ from .analysis import (
     diffusion_2d_from_1d_fits,
     fit_powerlaw_with_errors,
     perform_msd_analysis,
+    fit_powerlaw_blur_locerror,
+    fit_powerlaw_blur_locerror_general,
+    msd_blur_locerror_general,
+    msd_fit_curve,
+    fit_powerlaw_plain,
+    fit_msd_like_ensemble,
+    perform_msd_analysis_blur_locerror,
+    locerror_from_msd_slope,
     perform_stepsize_analysis,
     calculate_theoretical_diffusion,
     analyze_multiple_files,
@@ -47,6 +55,7 @@ from .visualization import (
 __all__ = [
     # Physics functions
     'calculate_theoretical_psf_sigma',
+    'calculate_dynamic_localization_error',
     'calculate_network_mesh_size',
 
     # IO functions
@@ -69,6 +78,14 @@ __all__ = [
     'diffusion_2d_from_1d_fits',
     'fit_powerlaw_with_errors',
     'perform_msd_analysis',
+    'fit_powerlaw_blur_locerror',
+    'fit_powerlaw_blur_locerror_general',
+    'msd_blur_locerror_general',
+    'msd_fit_curve',
+    'fit_powerlaw_plain',
+    'fit_msd_like_ensemble',
+    'perform_msd_analysis_blur_locerror',
+    'locerror_from_msd_slope',
     'perform_stepsize_analysis',
     'calculate_theoretical_diffusion',
     'analyze_multiple_files',

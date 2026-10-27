@@ -157,6 +157,7 @@ Jede Partikelgröße hat in allen Figuren dieselbe Farbe. Richtung wie die Jet-C
 - Quelle im Code: `SIZE_COLORS` in `hydro_analysis/MSD_Trackmate/Validation_Claude/Correlations.py` als `{nominal_nm: (base, dark)}` – importieren, nicht kopieren.
 - `base` für Markerflächen, gefüllte Flächen und Bänder; `dark` für Linien, Markerkanten und Errorbars. Dünne Linien immer in `dark`, da `base` für 100 nm (#49ffad) und 50 nm (#ffd700) auf Weiß kaum lesbar ist.
 - Legendenbeschriftung immer mit dem DLS-Label (`get_dls_labels()`), nicht mit der Nominalgröße.
+- Buffer gegen Hydrogel in derselben Abbildung: Buffer `base`, Hydrogel `dark`; gefüllte Hydrogel-Flächen (Boxen, Histogrammbalken, Bänder) zusätzlich kreuzschraffiert (`HYDROGEL_HATCH = "xxxx"`, Linienstärke 0,5, Schraffur in `dark` × 0,55 über `hydrogel_hatch_edge()`, alles in `Correlations.py`) (Nutzer, 2026-10-27).
 - Noch abweichend (vereinheitlichen): `Validation_Claude/Fittingpoints_robustness.py` (umgekehrte Reihenfolge, 20 nm blau) und `MSD_Trackmate/plot_emsd_publication.py` (Okabe-Ito-Farben).
 
 Regeln:

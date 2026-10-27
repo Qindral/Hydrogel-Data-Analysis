@@ -31,12 +31,16 @@ computed from the sizes hydrogel actually has, so they center correctly.
 All of these share the same D-scale (log) so they stay comparable; n-scale
 unchanged at [-0.3, 1.2]. No overall title; bolder panel titles.
 
-Item 9 (correction deviation): Before/After BOXPLOTS instead of
-scatter+median-line (no median line/marker drawn inside any box, not even
-the default one -- medianprops set invisible). D and n, and Water/Hydrogel,
-stay visually distinguishable via panel row and box color. Sizes without a
-valid sigma_loc reference show only the Before box; the missing After box
-is explicitly annotated, never substituted.
+Item 9 (correction deviation, Abb03): Before/After BOXPLOTS (no median line/marker
+drawn inside any box -- medianprops set invisible). Since the MSD pipeline fits
+motion blur and 4 sigma^2 itself (E039 C, E046), "Before" is the
+uncorrected power-law fit 4 D tau^n of the same 6 eMSD lags and "After" the
+pipeline fit, both per file from fit_results_MSD (D_uncorrected /
+exponent_uncorrected vs. D_um2_per_s / exponent; user, 2026-10-27, E044 A).
+The former "After" (4 sigma^2 subtracted from the eMSD and the power law refitted,
+Correlations.correct_and_refit) is no longer used here. D and n, and
+Water/Hydrogel, stay distinguishable via panel row, box colour and, for
+hydrogel, cross-hatching (HYDROGEL_HATCH; user, 2026-10-27).
 
 Item 9 axis ranges (user, 2026-10-12): D 0-15 um^2/s for DLS 35 and 50 nm, 0-6 um^2/s for
 DLS 100-1370 nm; n 0.5-1.3 for all sizes. Values outside a range stay in the box statistics and
@@ -67,10 +71,9 @@ from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _DASH_THEORY, _add_log_minor_ticks
 from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_savefig
 from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import (
-    CACHE_D0, CACHE_20MG, CACHE_LOCERR, SAVE_PATH as ORIG_SAVE_PATH,
-    SIZE_COLORS, LENGTH_BIN_LABELS,
-    build_file_standard_table, _representative_sigma_loc_nm, correct_and_refit,
-    _load_pickle,
+    CACHE_D0, CACHE_20MG, SAVE_PATH as ORIG_SAVE_PATH,
+    SIZE_COLORS, LENGTH_BIN_LABELS, HYDROGEL_HATCH, HYDROGEL_HATCH_LINEWIDTH,
+    build_file_standard_table, hydrogel_hatch_edge, _load_pickle,
 )
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -102,7 +105,9 @@ def _condition_handles(marker: str | None) -> list:
         for size_nm in LEGEND_SIZES_NM:
             face, edge = condition_colors(size_nm, condition)
             if marker is None:
-                parts.append(Patch(facecolor=face, edgecolor=edge, alpha=0.85))
+                hatched = condition == "hydrogel"
+                parts.append(Patch(facecolor=face, edgecolor=hydrogel_hatch_edge(edge) if hatched else edge,
+                                   hatch=HYDROGEL_HATCH if hatched else None, alpha=0.85))
             else:
                 parts.append(Line2D([0], [0], marker=marker, linestyle="none", markerfacecolor=face,
                                     markeredgecolor=edge, markersize=5, alpha=0.8))
@@ -286,37 +291,30 @@ def plot_length_bins_hydrogel(df: pd.DataFrame, dls_labels: dict[float, int],
 
 # ── Item 9: correction deviation, Before/After boxplots, all sizes ──────────────
 
-def build_correction_table_all_sizes(d0_results: dict, hydrogel_results: dict, locerr_df: pd.DataFrame) -> pd.DataFrame:
-    """Same correction formula as Correlations.py::build_file_correction_table
-    (correct_and_refit, imported unchanged), applied to every particle size
-    present in the data instead of the hard-coded TARGET_SIZES_NM=(20,50).
-    Sizes without a finite sigma_loc reference get D_after/n_after = NaN
-    (has_reference=False) -- shown as missing, never substituted."""
+def build_correction_table_all_sizes(d0_results: dict, hydrogel_results: dict) -> pd.DataFrame:
+    """Per file: uncorrected power-law fit (Before) and pipeline fit with
+    localisation error and motion blur (After), both from fit_results_MSD
+    (E044 A). A file without these keys raises (cache older than the pipeline)."""
     rows = []
     for results, condition in ((d0_results, "water"), (hydrogel_results, "hydrogel")):
         for r in results.values():
             size_nm = r.get("particle_size_nm")
-            fit = r.get("fit_results_MSD")
-            if size_nm is None or fit is None or fit.get("emsd") is None:
-                continue
-            D_before, n_before = fit.get("D_um2_per_s"), fit.get("exponent")
-            if D_before is None or n_before is None:
-                continue
-            sigma_loc_nm = _representative_sigma_loc_nm(locerr_df, float(size_nm))
-            has_reference = bool(np.isfinite(sigma_loc_nm))
-            D_after = n_after = np.nan
-            if has_reference:
-                correction = correct_and_refit(fit, sigma_loc_nm / 1000.0)
-                corrected_fit = correction["corrected_fit"]
-                if corrected_fit is not None:
-                    D_after = float(corrected_fit["A"][0] / 4.0)
-                    n_after = float(corrected_fit["n"][0])
+            fit = r["fit_results_MSD"]
+            missing = [k for k in ("D_uncorrected", "exponent_uncorrected", "D_um2_per_s", "exponent")
+                       if k not in fit]
+            if missing:
+                raise KeyError(f"{r.get('base_name')}: {missing} not in fit_results_MSD; "
+                               "run MSD_FromTrackmate_D0.py / MSD_FromTrackmate_20mg.py first.")
+            D_before, n_before = fit["D_uncorrected"], fit["exponent_uncorrected"]
+            D_after, n_after = fit["D_um2_per_s"], fit["exponent"]
+            has_reference = True
             rows.append({
                 "xml_path": r.get("xml_path"), "base_name": r.get("base_name"),
                 "particle_size_nm": float(size_nm), "condition": condition,
                 "has_reference": has_reference,
-                "D_before": float(D_before), "D_after": D_after,
-                "n_before": float(n_before), "n_after": n_after,
+                "sigma_loc_nm": float(fit["sigma_loc_nm"]), "exposure_ms": float(fit["exposure_ms"]),
+                "D_before": float(D_before), "D_after": float(D_after),
+                "n_before": float(n_before), "n_after": float(n_after),
             })
     return pd.DataFrame(rows)
 
@@ -349,7 +347,7 @@ def plot_correction_before_after(table: pd.DataFrame, dls_labels: dict[float, in
                 ("n_before", "n_after", N_LABEL))):
             ax = axes[row][col]
             lo, hi = ylims[_correction_group(row, size_nm)]
-            positions, box_data, colors, edges, alphas = [], [], [], [], []
+            positions, box_data, colors, edges, alphas, hatched = [], [], [], [], [], []
             xtick_pos, xtick_labels = [], []
             pos = 0.0
             for condition in ("water", "hydrogel"):
@@ -363,7 +361,7 @@ def plot_correction_before_after(table: pd.DataFrame, dls_labels: dict[float, in
                                                 (after_vals, "After", 0.85, after_vals.size > 0)):
                     if has:
                         box_data.append(vals); positions.append(pos); colors.append(face)
-                        edges.append(edge); alphas.append(alpha)
+                        edges.append(edge); alphas.append(alpha); hatched.append(condition == "hydrogel")
                         n_above, n_below = int((vals > hi).sum()), int((vals < lo).sum())
                         outside.append({"particle_size_nm": size_nm, "condition": condition, "stage": stage,
                                         "quantity": "D" if row == 0 else "n", "axis_min": lo, "axis_max": hi,
@@ -377,11 +375,14 @@ def plot_correction_before_after(table: pd.DataFrame, dls_labels: dict[float, in
             if box_data:
                 bp = ax.boxplot(box_data, positions=positions, widths=0.7, patch_artist=True, showfliers=False,
                                  medianprops=hidden_median)
-                for patch, color, edge, alpha in zip(bp["boxes"], colors, edges, alphas):
+                for patch, color, edge, alpha, hatch in zip(bp["boxes"], colors, edges, alphas, hatched):
                     patch.set_facecolor(color)
                     patch.set_alpha(alpha)
-                    patch.set_edgecolor(edge)
+                    patch.set_edgecolor(hydrogel_hatch_edge(edge) if hatch else edge)
                     patch.set_linewidth(0.8)
+                    if hatch:
+                        patch.set_hatch(HYDROGEL_HATCH)
+                        patch.set_hatch_linewidth(HYDROGEL_HATCH_LINEWIDTH)
                 for element in ("whiskers", "caps"):
                     for i, line in enumerate(bp[element]):
                         line.set_color(edges[i // 2])
@@ -396,7 +397,8 @@ def plot_correction_before_after(table: pd.DataFrame, dls_labels: dict[float, in
                 ax.set_ylabel(ylabel)
 
     handles = _condition_handles(None) + [Patch(facecolor="#888888", alpha=0.35), Patch(facecolor="#888888", alpha=0.85)]
-    labels = ["Buffer", "Hydrogel", "Without log-error correction", "After correction"]
+    labels = ["Buffer", "Hydrogel", r"Fit $4D\tau^n$ (uncorrected)",
+              r"Fit with motion blur and $4\sigma^2$"]
     fig.legend(handles, labels, loc="outside lower center", ncol=4, frameon=False,
                handler_map={tuple: HandlerTuple(ndivide=None, pad=0.2)})
     return fig, pd.DataFrame(outside)
@@ -418,7 +420,6 @@ def _save(fig: plt.Figure, stem: str, dissertation: bool = False) -> None:
 def main() -> None:
     d0_results = _load_pickle(CACHE_D0, "MSD_FromTrackmate_D0.py")
     hydrogel_results = _load_pickle(CACHE_20MG, "MSD_FromTrackmate_20mg.py")
-    locerr_df = _load_pickle(CACHE_LOCERR, "Loc_Error_Analyse_immob_particle.py")
     dls_labels = get_dls_labels()
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
     SCRATCH_PATH.mkdir(parents=True, exist_ok=True)
@@ -449,10 +450,11 @@ def main() -> None:
         _save(fig8_gel, "B_length_bin_hydrogel")
 
         # Item 9
-        correction_table = build_correction_table_all_sizes(d0_results, hydrogel_results, locerr_df)
-        n_missing = int(correction_table.groupby("particle_size_nm")["has_reference"].apply(lambda s: not s.any()).sum())
-        print(f"Correction deviation: {correction_table['particle_size_nm'].nunique()} particle size(s) considered, "
-              f"{n_missing} without a sigma_loc reference (Before shown, After explicitly marked missing).")
+        correction_table = build_correction_table_all_sizes(d0_results, hydrogel_results)
+        correction_table.to_csv(SAVE_PATH / "A_correction_deviation_refined_per_file.csv", index=False)
+        print(f"Correction deviation (E044 A): {len(correction_table)} files, "
+              f"{correction_table['particle_size_nm'].nunique()} particle size(s); "
+              f"table: {SAVE_PATH / 'A_correction_deviation_refined_per_file.csv'}")
         fig9, outside9 = plot_correction_before_after(correction_table, dls_labels)
         print(f"Correction deviation axis ranges: {_correction_ylims(correction_table)}")
         _save(fig9, "A_correction_deviation_refined", dissertation=True)

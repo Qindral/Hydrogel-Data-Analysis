@@ -19,7 +19,7 @@ from hydro_analysis.core.io import get_dls_reference_maps
 from hydro_analysis.Litesizer.litesizer_parser import MeasurementData, load_litesizer_xlsx
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-XLSX_PATH  = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
+XLSX_PATH  = Path(r"E:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
 SAVE_PATH  = None          # Set to a Path to save figures, e.g. Path(r"E:\...\Plots")
 DIST_TYPE  = "intensity"   # "volume" | "intensity" | "number"
 MAX_PDI    = 42.0          # measurements with PDI > this are excluded

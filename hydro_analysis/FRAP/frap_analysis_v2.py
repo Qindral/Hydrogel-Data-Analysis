@@ -12,7 +12,9 @@ with the existing loaders in frap_analysis.py); post-bleach series of different 
 intervals are joined on their absolute time stamps, t = 0 at the first post-bleach frame.
 Conditions: water (free diffusion reference), gel (bulk hydrogel, batches from the CSV),
 gel_interface (gel/glass interface, reported separately, never pooled with gel) and
-gel_noFITC (autofluorescence / matrix-bleaching control, no diffusion analysis).
+gel_noFITC (autofluorescence / matrix-bleaching control, no diffusion analysis). Controls with
+include = False are not loaded (nofitc_2, nofitc_3: FITC clearly present, excluded by user,
+2026-10-27) and are written to nofitc_controls_exclusions.csv and the cache ("control_exclusions").
 
 Per measurement (all geometry from the pixel data; the nominal radius r_n is metadata only):
   1. Bleach centre: intensity-weighted centroid of the smoothed deficit (pre mean - first
@@ -62,7 +64,7 @@ frame and the non-Gaussian profile left by a long bleach phase.
 Writes (always recomputed, overwritten):
   cache/frap_v2_phase1.pkl                (this folder; read by frap_figures.py)
   OUTPUT_ROOT/results_per_measurement.csv, summary_per_condition.csv, ratio_gel_water.json,
-    loo_gel.csv, nofitc_controls.csv, synthetic_validation.csv, results_per_measurement.tex,
+    loo_gel.csv, nofitc_controls.csv, nofitc_controls_exclusions.csv, synthetic_validation.csv, results_per_measurement.tex,
     summary_per_condition.tex, report_phase1.md
 """
 from __future__ import annotations
@@ -89,7 +91,7 @@ from hydro_analysis.FRAP.frap_analysis import (
 )
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-DATA_ROOT = Path(r"H:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF")
+DATA_ROOT = Path(r"E:\Daten Promotion Sicherung\FRAP\2025_09_08_14_57_46--Project_TIF")
 MEASUREMENTS_CSV = Path(__file__).resolve().parent / "measurements.csv"
 OUTPUT_ROOT = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP\FRAP_v2")
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "frap_v2_phase1.pkl"
@@ -830,8 +832,13 @@ def main() -> None:
     bleach_site = {"row_um": float(standard["centre_row_px"].median() * mpp0),
                    "col_um": float(standard["centre_col_px"].median() * mpp0),
                    "r_e_um": float(standard.loc[standard["condition"] == "gel", "r_e_um"].median())}
-    controls, control_details = [], {}
+    controls, control_details, control_exclusions = [], {}, []
     for _, row in table[table["condition"] == "gel_noFITC"].iterrows():
+        if not row["include"]:
+            print(f"Skipping control {row['measurement_id']} ({row['file']}): include = False ({row['note']})")
+            control_exclusions.append({"file": row["file"], "step": "excluded by user", "parameter": "include",
+                                       "n_before": 1, "n_after": 0, "reason": f"{row['measurement_id']}: {row['note']}"})
+            continue
         print(f"Analysing control {row['measurement_id']} ({row['file']})")
         res, det = analyse_control(row, bleach_site)
         controls.append(res)
@@ -849,6 +856,8 @@ def main() -> None:
     summary.to_csv(OUTPUT_ROOT / "summary_per_condition.csv", index=False)
     loo.to_csv(OUTPUT_ROOT / "loo_gel.csv", index=False)
     controls.to_csv(OUTPUT_ROOT / "nofitc_controls.csv", index=False)
+    pd.DataFrame(control_exclusions, columns=["file", "step", "parameter", "n_before", "n_after", "reason"]).to_csv(
+        OUTPUT_ROOT / "nofitc_controls_exclusions.csv", index=False)
     synth.to_csv(OUTPUT_ROOT / "synthetic_validation.csv", index=False)
     (OUTPUT_ROOT / "ratio_gel_water.json").write_text(json.dumps(ratios, indent=2), encoding="utf-8")
     write_latex(results, {"measurement_id": "Measurement", "condition": "Condition", "r_e_um": r"{$r_e$ (\si{\micro\metre})}",
@@ -867,7 +876,7 @@ def main() -> None:
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CACHE_PATH, "wb") as fh:
         pickle.dump({"created": datetime.now(), "results": results, "details": details, "controls": controls,
-                     "control_details": control_details, "summary": summary, "ratios": ratios, "loo": loo,
+                     "control_details": control_details, "control_exclusions": control_exclusions, "summary": summary, "ratios": ratios, "loo": loo,
                      "synthetic": synth, "bleach_site": bleach_site, "d_se_um2_s": d_se,
                      "config": {"profile_r_max_um": PROFILE_R_MAX_UM, "profile_bin_um": PROFILE_BIN_UM,
                                 "background_counts": BACKGROUND_COUNTS, "data_root": str(DATA_ROOT)}}, fh)

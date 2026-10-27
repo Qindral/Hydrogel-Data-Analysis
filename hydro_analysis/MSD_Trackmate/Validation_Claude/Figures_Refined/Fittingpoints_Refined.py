@@ -31,7 +31,11 @@ fittingpoints_tracklength_summary.csv.
 
 Dissertation outputs (PDF, SAVE_PATH): fittingpoints_D_by_size_456_only.pdf,
 fittingpoints_n_by_size_456_only.pdf, fittingpoints_robustness_hydrogel_combined.csv,
-fittingpoints_tracklength_summary.csv. The all-points variants and the
+fittingpoints_tracklength_summary.csv, fittingpoints_exclusions.csv (tracks per file and
+fit-point count left out: NaN/<=0 window or fit not converged). Per-track fit since
+2026-10-27: model of the pipeline with motion blur and 4 sigma^2 (E046), sigma and t_E of the
+file (E045 A);
+hydrogel IQR bands cross-hatched (user, 2026-10-27). The all-points variants and the
 200-1370 nm D variant go to SCRATCH_PATH (PNG).
 """
 from __future__ import annotations
@@ -48,7 +52,9 @@ from hydro_analysis.core.analysis import MIN_TRACK_LENGTH
 from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
 from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_savefig
-from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
+from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import (
+    SIZE_COLORS, HYDROGEL_HATCH, HYDROGEL_HATCH_LINEWIDTH, hydrogel_hatch_edge,
+)
 from hydro_analysis.MSD_Trackmate.Validation_Claude.Fittingpoints_robustness import (
     CACHE_D0, CACHE_20MG, _load_pickle, per_track_fits_by_points, build_summary,
 )
@@ -97,7 +103,12 @@ def plot_metric_by_size(df: pd.DataFrame, value_col: str, iqr_low_col: str, iqr_
             fill = face if condition == "Wasser" else edge   # buffer base, hydrogel dark
             ax.plot(x, y, color=edge, linewidth=1.2, linestyle="-", marker=marker,
                      markersize=4, markerfacecolor=fill, markeredgecolor=edge, markeredgewidth=0.6)
-            ax.fill_between(x, g[iqr_low_col], g[iqr_high_col], color=fill, alpha=0.18, linewidth=0)
+            if condition == "Wasser":
+                ax.fill_between(x, g[iqr_low_col], g[iqr_high_col], color=fill, alpha=0.18, linewidth=0)
+            else:   # hydrogel band cross-hatched (user, 2026-10-27); hatch drawn in the edge colour
+                band = ax.fill_between(x, g[iqr_low_col], g[iqr_high_col], facecolor=fill, alpha=0.18,
+                                       edgecolor=hydrogel_hatch_edge(edge), hatch=HYDROGEL_HATCH, linewidth=0)
+                band.set_hatch_linewidth(HYDROGEL_HATCH_LINEWIDTH)
             legend_conditions.setdefault(condition, marker)
         ax.set_title(f"{dls_labels.get(size_nm, int(size_nm))} nm")
         ax.set_xticks(fit_points)
@@ -119,6 +130,9 @@ def plot_metric_by_size(df: pd.DataFrame, value_col: str, iqr_low_col: str, iqr_
                        label=CONDITION_LABELS_EN.get(cond, cond))
                for cond, marker in sorted(legend_conditions.items(), key=lambda kv: kv[0] != "Wasser")]
     handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="0.6", alpha=0.3, label="Interquartile range of tracks"))
+    if any(cond != "Wasser" for cond in legend_conditions):
+        handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="0.3", alpha=0.3, edgecolor="0.15", linewidth=0,
+                                     hatch=HYDROGEL_HATCH, label="Interquartile range, hydrogel"))
     fig.legend(handles=handles, loc="outside lower center", ncol=len(handles), frameon=False)
     return fig
 
@@ -148,8 +162,12 @@ def tracklength_summary(results: dict, medium: str) -> pd.DataFrame:
 def main() -> None:
     d0_results = _load_pickle(CACHE_D0, "MSD_FromTrackmate_D0.py")
     hydrogel_results = _load_pickle(CACHE_20MG, "MSD_FromTrackmate_20mg.py")
-    per_track = pd.concat([per_track_fits_by_points(d0_results, "water"),
-                           per_track_fits_by_points(hydrogel_results, "hydrogel")], ignore_index=True)
+    fits_water, excl_water = per_track_fits_by_points(d0_results, "water")
+    fits_gel, excl_gel = per_track_fits_by_points(hydrogel_results, "hydrogel")
+    per_track = pd.concat([fits_water, fits_gel], ignore_index=True)
+    SAVE_PATH.mkdir(parents=True, exist_ok=True)
+    pd.concat([excl_water, excl_gel], ignore_index=True).to_csv(
+        SAVE_PATH / "fittingpoints_exclusions.csv", index=False)
 
     if CSV_PATH.exists():
         reference = pd.read_csv(CSV_PATH)

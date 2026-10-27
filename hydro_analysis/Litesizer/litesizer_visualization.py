@@ -62,7 +62,7 @@ from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _DASH_THEORY, 
 from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-XLSX_PATH  = Path(r"H:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
+XLSX_PATH  = Path(r"E:\Daten Promotion Sicherung\Lite Sizer Particle Measurements\Size_repitition_All Sizes.xlsx")
 SAVE_PATH_BASE = Path(
     r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\_scratch\Auswertungsbilder"
 )

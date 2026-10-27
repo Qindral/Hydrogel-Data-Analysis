@@ -12,7 +12,9 @@ measurement whose folder name states its depth (DEPTH_ANCHOR, 306 µm): depth = 
 anchor depth, with z the z-wide ZPosition (identical for all series of a measurement; checked).
 The gel/glass interface measurements ("C16 shallow") are set to SHALLOW_DEPTH_UM by the user;
 their planar depth is written to the CSV for comparison. water_2 (failed, 97 % saturated pixels)
-is left out of every figure (EXCLUDE_IDS, user 2026-10-06) and logged in the exclusion CSV.
+is left out of every figure (EXCLUDE_IDS, user 2026-10-06) and logged in the exclusion CSV. The noFITC
+controls excluded in frap_analysis_v2.py (include = False; nofitc_2, nofitc_3, user 2026-10-27) are not
+in the cache and are copied from its "control_exclusions" into the exclusion CSV.
 Figures (user, 2026-10-14): shallow (SHALLOW_DEPTH_UM) and deep hydrogel measurements are one
 group "Hydrogel" -- one recovery mean curve, one column of D points and one D_eff/D0 point (mean +- SD
 over all QC-passed hydrogel measurements). "Water" is labelled "Buffer"; hydrogel is drawn in a darker
@@ -33,7 +35,10 @@ Figures (FIGURE_DIR, PDF, each with a sidecar JSON; D figures half, recovery nar
       frames and the noFITC controls shown, x and y range fixed (user, 2026-10-07). The controls have no bleach
       (1 - F(0) ~ 0), so they are shown as the double-normalised curve F_norm, not full-scale normalised.
       Points outside the axis range are counted in the sidecar JSON.
-Also writes frap_depth_values.csv and frap_depth_values_exclusions.csv. No other script reads these.
+Also writes frap_depth_values.csv (per measurement, incl. Deff_D0), frap_deff_d0_values.csv (the values of
+frap_deff_d0_vs_depth.pdf: per sample type n, mean and SD (ddof = 1) of D_eff/D0 over the QC-passed
+measurements, plus D0 with the SD over its reference measurements; D0 enters the ratio as a constant)
+and frap_depth_values_exclusions.csv. No other script reads these.
 """
 from __future__ import annotations
 
@@ -54,7 +59,7 @@ from hydro_analysis.FRAP.frap_analysis_v2 import double_normalised_curve, load_m
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "frap_v2_phase1.pkl"
-DATA_ROOT = Path(r"E:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF")
+DATA_ROOT = Path(r"E:\Daten Promotion Sicherung\FRAP\2025_09_08_14_57_46--Project_TIF")
 FIGURE_DIR = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data\FRAP")
 STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 
@@ -114,7 +119,8 @@ def load_values() -> tuple[pd.DataFrame, list[dict], dict]:
     for r in cache["controls"].itertuples():
         log.append(dict(file=r.file, step="condition", parameter="SAMPLE_TYPE", n_before=1, n_after=0,
                         reason=f"{r.measurement_id}: noFITC control, not in the D figures (shown in the recovery figure)"))
-    df = res[res.condition.isin(SAMPLE_TYPE)].copy()
+    log += cache.get("control_exclusions", [])
+    df =res[res.condition.isin(SAMPLE_TYPE)].copy()
     for r in df[df.measurement_id.isin(EXCLUDE_IDS)].itertuples():
         log.append(dict(file=r.file, step="excluded by user", parameter="EXCLUDE_IDS", n_before=1, n_after=0,
                         reason=f"{r.measurement_id}: {EXCLUDE_IDS[r.measurement_id]}"))
@@ -277,6 +283,20 @@ def plot_ratio(df):
     return groups
 
 
+def write_ratio_table(df, groups):
+    """Values behind frap_deff_d0_vs_depth.pdf; D0 is the same constant for every row."""
+    ref = df.loc[df.measurement_id.isin(df.attrs["D0_ids"]), "D_um2_s"]
+    d0_sd = float(ref.std(ddof=1)) if len(ref) > 1 else np.nan
+    rows = [{"sample_type": name, "n": g["n"], "Deff_D0_mean": g["mean"], "Deff_D0_SD": g["SD"],
+             "uncertainty": "SD (ddof = 1) over the QC-passed measurements; D0 uncertainty not propagated",
+             "measurements": ", ".join(g["measurements"]), "positions": ", ".join(g["positions"]),
+             "qc_failed_not_in_mean": ", ".join(g["qc_failed_not_in_mean"]),
+             "D_column": D_COLUMN, "gate": D_GATE, "D0_um2_s": df.attrs["D0"], "D0_SD_um2_s": d0_sd,
+             "D0_n": len(ref), "D0_from": ", ".join(df.attrs["D0_ids"])}
+            for name, g in groups.items()]
+    pd.DataFrame(rows).to_csv(FIGURE_DIR / "frap_deff_d0_values.csv", index=False)
+
+
 def full_scale(f: np.ndarray) -> np.ndarray:
     """Full-scale normalisation of a double-normalised curve: 0 at the first post-bleach frame, 1 = pre-bleach."""
     return (f - f[0]) / (1.0 - f[0])
@@ -365,8 +385,10 @@ def main():
               f"Deff/D0 = {g.Deff_D0.mean():.3f} +- {g.Deff_D0.std(ddof=1):.3f}")
     pre, controls = load_pre_bleach(df)
     plot_d(df)
-    for name, g in plot_ratio(df).items():
+    groups = plot_ratio(df)
+    for name, g in groups.items():
         print(f"D_eff/D0 {name}: n = {g['n']}, {g['mean']:.3f} +- {g['SD']:.3f} (SD)")
+    write_ratio_table(df, groups)
     for m, (a, b) in plot_recovery(df, curves, pre, controls).items():
         print(f"recovery {m}: {a} points beyond x range, {b} within x range beyond y range")
     df[cols].to_csv(FIGURE_DIR / "frap_depth_values.csv", index=False)

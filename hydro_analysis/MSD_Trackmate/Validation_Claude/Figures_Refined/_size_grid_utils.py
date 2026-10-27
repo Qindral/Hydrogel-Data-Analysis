@@ -115,8 +115,13 @@ def _panel_hist(ax, water_vals, hydrogel_vals, spec: GridAxisSpec,
             v = v[v > 0]
         if v.size == 0:
             continue
-        ax.hist(v, bins=spec.bin_edges, alpha=0.55, color=style["face"],
-                edgecolor=style["edge"], linewidth=0.4, label=style["label"])
+        # optional style["hatch"] (hydrogel cross-hatching, user 2026-10-27); hatch drawn in style["edge"]
+        _, _, bars = ax.hist(v, bins=spec.bin_edges, alpha=0.55, color=style["face"],
+                             edgecolor=style["edge"], linewidth=0.4, label=style["label"],
+                             hatch=style.get("hatch"))
+        if style.get("hatch"):
+            for bar in bars:
+                bar.set_hatch_linewidth(style.get("hatch_linewidth", 0.5))
         if overlay_kde:
             _scaled_kde(ax, v, spec.bin_edges, spec.log_x, style["edge"])
     if spec.log_x:

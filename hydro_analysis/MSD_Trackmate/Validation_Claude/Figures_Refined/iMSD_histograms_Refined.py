@@ -52,7 +52,9 @@ from matplotlib.colors import to_rgb
 from hydro_analysis.core.io import get_dls_labels
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _RC
 from hydro_analysis.MSD_Trackmate.Validation_Claude._plot_utils import safe_savefig
-from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import SIZE_COLORS
+from hydro_analysis.MSD_Trackmate.Validation_Claude.Correlations import (
+    SIZE_COLORS, HYDROGEL_HATCH, HYDROGEL_HATCH_LINEWIDTH,
+)
 from hydro_analysis.MSD_Trackmate.Validation_Claude.iMSD_histograms import (
     build_track_table, CACHE_TRACKLENGTH_D0, CACHE_MSD_D0, CACHE_MSD_20MG,
 )
@@ -125,7 +127,9 @@ def plot_grid_size_colors(df: pd.DataFrame, metric: str, xlabel: str, dls_labels
         water = df.loc[(df["condition"] == "water") & (df["particle_size_nm"] == size_nm), metric]
         hydrogel = df.loc[(df["condition"] == "hydrogel") & (df["particle_size_nm"] == size_nm), metric]
         _panel_hist(ax, water, hydrogel, spec,
-                    dict(face=base, edge=dark, label="Buffer"), dict(face=dark, edge=darker, label="Hydrogel"),
+                    dict(face=base, edge=dark, label="Buffer"),
+                    dict(face=dark, edge=darker, label="Hydrogel", hatch=HYDROGEL_HATCH,
+                         hatch_linewidth=HYDROGEL_HATCH_LINEWIDTH),
                     overlay_kde=True)
         ax.set_title(f"{dls_labels.get(size_nm, int(size_nm))} nm")
         if len(hydrogel.dropna()):

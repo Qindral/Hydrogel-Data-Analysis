@@ -84,6 +84,20 @@ SIZE_COLORS = {
     100.0: ("#49ffad", "#33b279"), 50.0: ("#ffd700", "#b29600"), 20.0: ("#ff6800", "#b24900"),
 }
 
+# Hydrogel areas (boxes, histogram bars, bands) are cross-hatched in addition to the dark
+# colour, so that buffer and hydrogel differ without colour; decided by user, 2026-10-27.
+# Matplotlib draws the hatch in the edge colour, so hydrogel edges use the dark colour
+# darkened by HYDROGEL_HATCH_DARKEN to keep the hatch visible on the dark face.
+HYDROGEL_HATCH = "xxxx"
+HYDROGEL_HATCH_LINEWIDTH = 0.5
+HYDROGEL_HATCH_DARKEN = 0.55
+
+
+def hydrogel_hatch_edge(dark: str) -> tuple[float, float, float]:
+    """Edge (and hatch) colour of a hydrogel area: the dark size colour x HYDROGEL_HATCH_DARKEN."""
+    from matplotlib.colors import to_rgb
+    return tuple(c * HYDROGEL_HATCH_DARKEN for c in to_rgb(dark))
+
 LENGTH_BINS = [(10, 20), (20, 40), (40, 70), (70, np.inf)]
 LENGTH_BIN_LABELS = ["10-20", "20-40", "40-70", "70+"]
 

@@ -10,9 +10,24 @@ plot_msd_dissertation() and also used by MSD_per_file_20mg.py (Abb24):
            ratio (image size from the TIFF header), scale bar with its length
   Styleguide v2, width class full, PDF; both panels have the same height.
   Colours: SIZE_COLORS, eMSD markers in the base colour for buffer and in the
-  dark colour for hydrogel, fit line in the dark colour, theory black dashed.
-Files named in DISSERTATION_FILES are written to SAVE_PATH, all other files to
-SCRATCH_PATH. The per-file summary table goes to SAVE_PATH.
+  dark colour for hydrogel, theory black dashed.
+Three versions per file (VARIANTS; user, 2026-10-27), all with the fit of the
+pipeline drawn as its full model with motion blur and 4 sigma^2 (E046, core.analysis.
+msd_fit_curve) (thin, light red):
+  "fit"              eMSD, theory and fit (output name without suffix);
+  "fit_uncorrected"  additionally the fit without localisation error and motion
+                     blur, 4 D tau^n (D_uncorrected, exponent_uncorrected),
+                     dark red dashed (suffix _uncorrected_fit);
+  "imsd"             additionally the iMSD of every track entering the eMSD,
+                     black, alpha 0.3 (suffix _imsd).
+Every analysed movie of both media goes to one folder, ALL_MOVIES_PATH (user,
+2026-10-27): per movie the three figure versions <stem>.pdf, <stem>_uncorrected_fit.pdf,
+<stem>_imsd.pdf (stem = medium_size_movie, see movie_stem()) and <stem>_values.csv
+(per plotted lag: eMSD, number of tracks, both fit curves, Stokes-Einstein line, lag
+used in the fit), plus one table per medium, emsd_all_movies_<medium>.csv, with all
+per-file values of the pipeline (msd_pipeline per-file columns) and of the summary
+below. Files named in DISSERTATION_FILES are also copied to SAVE_PATH under their
+dissertation name. The per-file summary table goes to SAVE_PATH as before.
 
 Reads the per-file results already computed by MSD_FromTrackmate_D0.py
 (msd_d0_results.pkl) instead of reprocessing the raw TrackMate XML files —
@@ -26,6 +41,8 @@ the gap, to correct spurious TrackMate linking of near-edge detections.
 from __future__ import annotations
 
 import pickle
+import re
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -39,7 +56,7 @@ from hydro_analysis.core.io import (
     get_dls_reference_maps, get_dls_sizes, get_dls_labels,
     condition_label_from_filename, parse_rec_comment_metadata, parse_chamber_day_repeat,
 )
-from hydro_analysis.core.analysis import DEFAULT_MSD_FIT_POINTS
+from hydro_analysis.core.analysis import DEFAULT_MSD_FIT_POINTS, msd_fit_curve
 from hydro_analysis.core.physics import calculate_theoretical_diffusion
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import (
     clip_msd_points, _add_log_minor_ticks, _nice_length, MAX_TRACKS_DISPLAY,
@@ -51,7 +68,7 @@ CACHE_FILE = Path(__file__).parent / "cache" / "msd_d0_results.pkl"
 
 RESULTS = Path(r"E:\PhD Data Analysis\SPT 2025 II\Visualizations\PhD Dis Bilder\Experiments and Results - Data")
 SAVE_PATH = RESULTS / "SPT"
-SCRATCH_PATH = RESULTS / "_scratch" / "MSD_perfile_D0"
+ALL_MOVIES_PATH = RESULTS / "SPT" / "eMSD_all_movies"   # every analysed movie, both media; user, 2026-10-27
 # file shown in the dissertation -> output name (user selection, SPT_ausgewaehlt_Abbildungen.docx)
 DISSERTATION_FILES = {"50 nm water_04_Tracks.xml": "emsd_buffer_50nm_water_04"}
 MSD_FIT_POINTS   = DEFAULT_MSD_FIT_POINTS
@@ -62,15 +79,86 @@ FIG_WIDTH_IN     = 6.30  # Styleguide width class "full"
 COLOR_THEORY     = "black"
 DASH_THEORY      = (0, (4, 3))
 EMSD_MARKERSIZE  = 4.5
+VARIANTS         = {"fit": "", "fit_uncorrected": "_uncorrected_fit", "imsd": "_imsd"}  # version -> file suffix; decided by user, 2026-10-27
+COLOR_FIT        = "#de1f1f"  # light red (Styleguide palette 8, bright); decided by user, 2026-10-27
+FIT_LINEWIDTH    = 0.8        # thin; decided by user, 2026-10-27
+COLOR_FIT_UNCORR = "#990000"  # dark red (Styleguide palette 8, dark); decided by user, 2026-10-27
+DASH_FIT_UNCORR  = (0, (2, 1.5))
+COLOR_IMSD       = "black"
+IMSD_ALPHA       = 0.3        # decided by user, 2026-10-27
+IMSD_LINEWIDTH   = 0.4
+
+
+def _fit_model(fit: dict, t: np.ndarray) -> np.ndarray:
+    """Pipeline fit curve, with the model stored in fit["model_id"] (core.analysis.msd_fit_curve)."""
+    return msd_fit_curve(fit, t)
+
+
+def _fit_uncorrected(fit: dict, t: np.ndarray) -> np.ndarray:
+    """Power-law fit 4 D tau^n without localisation error and motion blur."""
+    return 4.0 * float(fit["D_uncorrected"]) * t ** float(fit["exponent_uncorrected"])
+
+
+def movie_stem(rd: dict, medium: str, label_nm: int) -> str:
+    """File stem in ALL_MOVIES_PATH: medium_<DLS label>nm_<movie>, lowercase, no spaces."""
+    movie = re.sub(r"_Tracks$", "", Path(rd["base_name"]).stem)
+    return re.sub(r"[^0-9a-z]+", "_", f"{medium}_{label_nm}nm_{movie}".lower()).strip("_")
+
+
+def emsd_values_table(rd_plot: dict, D_theo: float, n_fit: int) -> pd.DataFrame:
+    """Per plotted lag: eMSD, tracks contributing, pipeline fit, uncorrected fit, 4 D0 tau."""
+    fit = rd_plot["fit_results_MSD"]
+    emsd, imsd = fit["emsd"], fit["imsd"]
+    lag = emsd.index.values.astype(float)
+    return pd.DataFrame({
+        "lag_s": lag,
+        "emsd_um2": emsd.values.astype(float),
+        "n_tracks_at_lag": imsd.notna().sum(axis=1).reindex(emsd.index).to_numpy(),
+        "fit_model_um2": _fit_model(fit, lag),
+        "fit_uncorrected_um2": _fit_uncorrected(fit, lag),
+        "stokes_einstein_4D0tau_um2": 4.0 * D_theo * lag,
+        "used_in_fit": np.arange(len(lag)) < n_fit,
+    })
+
+
+def write_movie_outputs(rd_plot: dict, D_theo: float, label_nm: int, n_fit: int, medium: str,
+                        sample_label: str, dissertation_name: str | None) -> None:
+    """All figure versions and the per-lag table of one movie to ALL_MOVIES_PATH; the
+    dissertation file is copied to SAVE_PATH under its dissertation name."""
+    stem = movie_stem(rd_plot, medium, label_nm)
+    ALL_MOVIES_PATH.mkdir(parents=True, exist_ok=True)
+    for variant, v_suffix in VARIANTS.items():
+        out_file = ALL_MOVIES_PATH / f"{stem}{v_suffix}.pdf"
+        plot_msd_dissertation(rd_plot, D_theo, label_nm, n_fit, medium, sample_label, out_file, variant)
+        if dissertation_name is not None:
+            shutil.copyfile(out_file, SAVE_PATH / f"{dissertation_name}{v_suffix}.pdf")
+    emsd_values_table(rd_plot, D_theo, n_fit).to_csv(ALL_MOVIES_PATH / f"{stem}_values.csv", index=False,
+                                                     encoding="utf-8-sig")
+
+
+def write_movie_overview(results: dict, summary_rows: list[dict], medium: str) -> None:
+    """emsd_all_movies_<medium>.csv: summary columns plus all per-file pipeline columns."""
+    from hydro_analysis.MSD_Trackmate.msd_pipeline import _per_file_row
+    by_xml = {str(r["xml_path"]): r for r in results.values()}
+    rows = []
+    for row in summary_rows:
+        rd = by_xml[str(row["xml_path"])]
+        extra = {k: v for k, v in _per_file_row(rd, "used").items() if k not in row}
+        rows.append({"figure_stem": movie_stem(rd, medium, row["label_nm"]), **row, **extra})
+    path = ALL_MOVIES_PATH / f"emsd_all_movies_{medium}.csv"
+    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig")
+    print(f"Übersicht gespeichert: {path} ({len(rows)} Filme)")
 
 
 def plot_msd_dissertation(rd: dict, D_theo: float, label_nm: int, n_fit: int, medium: str,
-                          sample_label: str, out_file: Path) -> None:
+                          sample_label: str, out_file: Path, variant: str = "fit") -> None:
     """Panel A: eMSD with theory, fit and normalised inset; panel B: trajectories in
-    the camera aspect ratio with a labelled scale bar. medium: "buffer" or "hydrogel"."""
+    the camera aspect ratio with a labelled scale bar. medium: "buffer" or "hydrogel";
+    variant: a key of VARIANTS (see module docstring)."""
+    if variant not in VARIANTS:
+        raise ValueError(f"variant must be one of {list(VARIANTS)}, got {variant!r}.")
     fit = rd.get("fit_results_MSD") or {}
     emsd, imsd = fit.get("emsd"), fit.get("imsd")
-    A_fit, n_exp = fit.get("A"), fit.get("exponent")
     if emsd is None or emsd.empty:
         print(f"  [SKIP] no eMSD for {out_file.name}")
         return
@@ -97,9 +185,17 @@ def plot_msd_dissertation(rd: dict, D_theo: float, label_nm: int, n_fit: int, me
         ev = emsd.values.astype(float)
         valid = ev > 0
         t_th = np.logspace(np.log10(lag[valid].min()), np.log10(lag[valid].max()), 300)
+        if variant == "imsd":
+            if imsd is None:
+                raise ValueError(f"{rd.get('base_name')}: no iMSD in fit_results_MSD.")
+            lag_i = imsd.index.values.astype(float)
+            ax.plot(lag_i, imsd.where(imsd > 0).values.astype(float), color=COLOR_IMSD, alpha=IMSD_ALPHA,
+                    linewidth=IMSD_LINEWIDTH, zorder=1, rasterized=True)
         ax.plot(t_th, 4.0 * D_theo * t_th, color=COLOR_THEORY, linewidth=1.2, linestyle=DASH_THEORY, zorder=3)
-        if A_fit is not None and n_exp is not None:
-            ax.plot(t_th, float(A_fit) * t_th ** float(n_exp), color=dark, linewidth=1.5, zorder=4)
+        if variant == "fit_uncorrected":
+            ax.plot(t_th, _fit_uncorrected(fit, t_th), color=COLOR_FIT_UNCORR, linewidth=FIT_LINEWIDTH,
+                    linestyle=DASH_FIT_UNCORR, zorder=4)
+        ax.plot(t_th, _fit_model(fit, t_th), color=COLOR_FIT, linewidth=FIT_LINEWIDTH, zorder=4)
         ax.plot(lag[valid], ev[valid], linestyle="none", marker="o", markersize=EMSD_MARKERSIZE,
                 markerfacecolor=face, markeredgecolor=dark, markeredgewidth=0.6, zorder=5)
         ax.set_xscale("log")
@@ -118,8 +214,15 @@ def plot_msd_dissertation(rd: dict, D_theo: float, label_nm: int, n_fit: int, me
             Line2D([0], [0], color=COLOR_THEORY, linewidth=1.2, linestyle=DASH_THEORY,
                    label=rf"Stokes–Einstein $4D_{{0}}\tau$"),
         ]
-        if A_fit is not None and n_exp is not None:
-            handles.append(Line2D([0], [0], color=dark, linewidth=1.5, label=r"Power-law fit $A\tau^n$"))
+        handles.append(Line2D([0], [0], color=COLOR_FIT, linewidth=FIT_LINEWIDTH,
+                              label=(r"Power-law fit $4D\tau^n$" if fit.get("model_id") == "powerlaw"
+                                     else r"Fit with motion blur and $4\sigma^2$")))
+        if variant == "fit_uncorrected":
+            handles.append(Line2D([0], [0], color=COLOR_FIT_UNCORR, linewidth=FIT_LINEWIDTH,
+                                  linestyle=DASH_FIT_UNCORR, label=r"Fit $4D\tau^n$ (uncorrected)"))
+        if variant == "imsd":
+            handles.append(Line2D([0], [0], color=COLOR_IMSD, alpha=IMSD_ALPHA, linewidth=IMSD_LINEWIDTH,
+                                  label="iMSD"))
         ax.legend(handles=handles, loc="upper left")
         ax.text(0.03, 0.03, sample_label, transform=ax.transAxes, ha="left", va="bottom", fontsize=8)
 
@@ -129,11 +232,16 @@ def plot_msd_dissertation(rd: dict, D_theo: float, label_nm: int, n_fit: int, me
         lag_fit, ev_fit = lag[fit_mask], ev[fit_mask]
         norm_y = [1.0]
         axin.axhline(1.0, color=COLOR_THEORY, linewidth=1.0, linestyle=DASH_THEORY, zorder=3)
-        if A_fit is not None and n_exp is not None and lag_fit.size >= 2:
+        if lag_fit.size >= 2:
             t_dense = np.logspace(np.log10(lag_fit[0]), np.log10(lag_fit[-1]), 150)
-            y_fit_n = (float(A_fit) * t_dense ** float(n_exp)) / (4.0 * D_theo * t_dense)
-            axin.plot(t_dense, y_fit_n, color=dark, linewidth=1.2, zorder=4)
+            y_fit_n = _fit_model(fit, t_dense) / (4.0 * D_theo * t_dense)
+            axin.plot(t_dense, y_fit_n, color=COLOR_FIT, linewidth=FIT_LINEWIDTH, zorder=4)
             norm_y.extend(y_fit_n.tolist())
+            if variant == "fit_uncorrected":
+                y_unc_n = _fit_uncorrected(fit, t_dense) / (4.0 * D_theo * t_dense)
+                axin.plot(t_dense, y_unc_n, color=COLOR_FIT_UNCORR, linewidth=FIT_LINEWIDTH,
+                          linestyle=DASH_FIT_UNCORR, zorder=4)
+                norm_y.extend(y_unc_n.tolist())
         if lag_fit.size >= 2:
             y_emsd_n = ev_fit / (4.0 * D_theo * lag_fit)
             axin.plot(lag_fit, y_emsd_n, linestyle="none", marker="o", markersize=3.5, markerfacecolor=face,
@@ -152,6 +260,12 @@ def plot_msd_dissertation(rd: dict, D_theo: float, label_nm: int, n_fit: int, me
         axin.tick_params(which="both", labelsize=7, pad=1.5)
         axin.set_xlabel(r"$\tau$ (s)", fontsize=7, labelpad=0.5)
         axin.set_ylabel(r"MSD$/4D_0\tau$", fontsize=7, labelpad=1)
+        if variant == "imsd":
+            # labels outside the inset box lie over the iMSD lines of panel A
+            fig.draw_without_rendering()
+            for t in [axin.xaxis.label, axin.yaxis.label, *axin.get_xticklabels(which="both"),
+                      *axin.get_yticklabels(which="both")]:
+                t.set_bbox({"facecolor": "white", "edgecolor": "none", "pad": 0.3})
 
         # panel B: trajectories of the tracks in the eMSD, camera field of view
         tracks_df = rd.get("tracks_df")
@@ -198,7 +312,6 @@ def main() -> None:
     size_override = get_dls_reference_maps()["size_override_nm"]
 
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
-    SCRATCH_PATH.mkdir(parents=True, exist_ok=True)
 
     summary_rows: list[dict] = []
     n_processed = 0
@@ -267,12 +380,8 @@ def main() -> None:
         })
 
         rd_plot = clip_msd_points(rd, MSD_MAX_POINTS)
-        suffix  = f"_first{MSD_MAX_POINTS}" if MSD_MAX_POINTS is not None else ""
-        if base in DISSERTATION_FILES:
-            out_file = SAVE_PATH / f"{DISSERTATION_FILES[base]}.pdf"
-        else:
-            out_file = SCRATCH_PATH / f"{base}_{int(size_nm)}nm{suffix}.pdf"
-        plot_msd_dissertation(rd_plot, D_theo, label_nm, MSD_FIT_POINTS, "buffer", "Buffer ($D_0$)", out_file)
+        write_movie_outputs(rd_plot, D_theo, label_nm, MSD_FIT_POINTS, "buffer", "Buffer ($D_0$)",
+                            DISSERTATION_FILES.get(base))
         n_processed += 1
 
     # ── per-file summary CSV ──────────────────────────────────────────────────
@@ -284,6 +393,7 @@ def main() -> None:
         summary_df = pd.DataFrame(summary_rows)
         summary_df.to_csv(csv_path, index=False, sep=";", decimal=",", encoding="utf-8-sig")
         print(f"\nSummary saved: {csv_path}")
+        write_movie_overview(results, summary_rows, "buffer")
 
     print(f"\nDone — {n_processed} files processed, {n_skipped} skipped.")
 

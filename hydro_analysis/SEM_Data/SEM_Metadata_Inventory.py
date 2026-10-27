@@ -29,8 +29,8 @@ import pandas as pd
 from PIL import Image
 
 # ── Configuration ───────────────────────────────────────────────────────────
-ROOT_DIR = Path(r"H:\Daten Promotion Sicherung\SEM")
-ROOT_DIR = Path(r"H:\Daten Promotion Sicherung\Diffusion in Hydrogel Data\SEM Particles")
+ROOT_DIR = Path(r"E:\Daten Promotion Sicherung\SEM Hydrogel")
+ROOT_DIR = Path(r"E:\Daten Promotion Sicherung\SEM Particles")
 OUT_CSV = Path(__file__).parent / "sem_metadata_inventory.csv"
 SUMMARY_CSV = Path(__file__).parent / "sem_metadata_settings_summary.csv"
 

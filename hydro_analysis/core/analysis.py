@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 import numpy as np
 import pandas as pd
 from scipy import stats
+from scipy.optimize import least_squares
 import trackpy as tp
 
 from .physics import calculate_theoretical_diffusion
@@ -284,6 +285,320 @@ def perform_msd_analysis(result_dict: Dict[str, Any], fit_points: int = DEFAULT_
     else:
         result_dict[f"fit_MSD_fp_{fit_points}"] = fit_payload
 
+    return result_dict
+
+
+def fit_powerlaw_blur_locerror(
+    em_series: pd.Series,
+    points: int,
+    sigma_loc_um: float,
+    exposure_s: float,
+) -> Dict[str, Any]:
+    """
+    Fit MSD = 4 D (tau - t_E/3)^n + 4 sigma^2 to the first `points` lags of an
+    ensemble MSD, with sigma (localisation error) and t_E (exposure time) fixed.
+
+    Free parameters are ln D and n. The residuals are ln MSD - ln model, i.e. the
+    same log space as fit_powerlaw_with_errors(), whose result is the start value.
+    The covariance is (J^T J)^-1 * SSR / (N - 2), the scaling np.polyfit(cov=True)
+    uses in fit_powerlaw_with_errors(). Raises ValueError if tau - t_E/3 <= 0 at a
+    fitted lag or the optimiser reports no convergence.
+    """
+    xs = em_series.iloc[0:points].index.values.astype(float)
+    ys = em_series.iloc[0:points].values.astype(float)
+    tau_eff = xs - exposure_s / 3.0
+    if np.any(tau_eff <= 0):
+        raise ValueError(f"tau - t_E/3 <= 0 at a fitted lag (t_E = {exposure_s} s, first lag = {xs[0]} s)")
+    offset = 4.0 * sigma_loc_um ** 2
+    ly = np.log(ys)
+
+    def residuals(p: np.ndarray) -> np.ndarray:
+        return ly - np.log(4.0 * np.exp(p[0]) * tau_eff ** p[1] + offset)
+
+    start = fit_powerlaw_with_errors(em_series, points=points)
+    p0 = np.array([np.log(start["A"][0] / 4.0), start["n"][0]])
+    res = least_squares(residuals, p0, method="lm", xtol=1e-12, ftol=1e-12, gtol=1e-12)
+    if not res.success:
+        raise ValueError(f"MSD fit with localisation error and motion blur did not converge: {res.message}")
+
+    ssr = float(np.sum(res.fun ** 2))
+    dof = len(xs) - 2
+    cov = np.linalg.inv(res.jac.T @ res.jac) * (ssr / dof if dof > 0 else np.nan)
+    se = np.sqrt(np.diag(cov))
+    D_fit = float(np.exp(res.x[0]))
+    ss_tot = float(np.sum((ly - np.mean(ly)) ** 2))
+
+    return {
+        "D": D_fit,
+        "D_err": D_fit * float(se[0]),
+        "n": float(res.x[1]),
+        "n_err": float(se[1]),
+        "lnD": float(res.x[0]),
+        "lnD_err": float(se[0]),
+        "cov": cov,
+        "r_squared": 1.0 - ssr / ss_tot if ss_tot > 0 else np.nan,
+        "ssr": ssr,
+        "nfev": int(res.nfev),
+        "start_D": float(np.exp(p0[0])),
+        "start_n": float(p0[1]),
+    }
+
+
+MSD_MODEL_GENERAL = "general"         # Savin & Doyle 2005 / Backlund et al. 2015, any n
+MSD_MODEL_TAU_MINUS_TE3 = "tau_minus_tE_over_3"   # 4 D (tau - t_E/3)^n + 4 sigma^2
+MSD_MODEL_POWERLAW = "powerlaw"       # 4 D tau^n, no localisation error, no motion blur
+
+
+def fit_powerlaw_plain(em_series: pd.Series, points: int, sigma_loc_um: float = 0.0,
+                       exposure_s: float = 0.0) -> Dict[str, Any]:
+    """fit_powerlaw_with_errors() (4 D tau^n in log space) with the return keys of
+    fit_powerlaw_blur_locerror(); sigma_loc_um and exposure_s are not used."""
+    pw = fit_powerlaw_with_errors(em_series, points=points)
+    D_fit = float(pw["A"][0] / 4.0)
+    return {
+        "D": D_fit,
+        "D_err": float(pw["A_err"][0] / 4.0),
+        "n": float(pw["n"][0]),
+        "n_err": float(pw["n_err"][0]),
+        "lnD": float(np.log(D_fit)),
+        "lnD_err": float(pw["logA_err"][0]),
+        "cov": pw["cov"],
+        "r_squared": float(pw["r_squared"][0]),
+        "ssr": np.nan,
+        "nfev": 0,
+        "start_D": D_fit,
+        "start_n": float(pw["n"][0]),
+    }
+
+
+def msd_blur_locerror_general(tau: np.ndarray, K: float, n: float, sigma_um: float, exposure_s: float) -> np.ndarray:
+    """
+    2D MSD of a particle with MSD_true = 4 K tau^n, imaged with continuous exposure t_E
+    and static localisation error sigma (Savin & Doyle 2005, Backlund et al. 2015):
+
+        MSD(tau) = 4 K / [(n+1)(n+2) t_E^2] * [(tau+t_E)^(n+2) + |tau-t_E|^(n+2)
+                   - 2 tau^(n+2) - 2 t_E^(n+2)] + 4 sigma^2
+
+    For n = 1 and tau >= t_E this is 4 K (tau - t_E/3) + 4 sigma^2. Units: tau and
+    t_E in s, K in um^2 s^-n, sigma in um, MSD in um^2. Raises ValueError for t_E <= 0.
+    """
+    if exposure_s <= 0:
+        raise ValueError(f"exposure time must be > 0 for the motion-blur term, got {exposure_s} s")
+    tau = np.asarray(tau, dtype=float)
+    p = n + 2.0
+    bracket = (tau + exposure_s) ** p + np.abs(tau - exposure_s) ** p - 2.0 * tau ** p - 2.0 * exposure_s ** p
+    return 4.0 * K / ((n + 1.0) * (n + 2.0) * exposure_s ** 2) * bracket + 4.0 * sigma_um ** 2
+
+
+def fit_powerlaw_blur_locerror_general(
+    em_series: pd.Series,
+    points: int,
+    sigma_loc_um: float,
+    exposure_s: float,
+) -> Dict[str, Any]:
+    """
+    Fit msd_blur_locerror_general() to the first `points` lags of an MSD, with sigma
+    and t_E fixed. Free parameters ln K and n, residuals ln MSD - ln model (log space),
+    start value from fit_powerlaw_with_errors(), covariance (J^T J)^-1 * SSR / (N - 2):
+    the same procedure as fit_powerlaw_blur_locerror(). Returns the same keys ("D" = K).
+    Raises ValueError if the optimiser reports no convergence or the model is not
+    positive at the start value.
+    """
+    xs = em_series.iloc[0:points].index.values.astype(float)
+    ys = em_series.iloc[0:points].values.astype(float)
+    ly = np.log(ys)
+
+    def residuals(p: np.ndarray) -> np.ndarray:
+        model = msd_blur_locerror_general(xs, np.exp(p[0]), p[1], sigma_loc_um, exposure_s)
+        return ly - np.log(np.clip(model, 1e-300, None))
+
+    start = fit_powerlaw_with_errors(em_series, points=points)
+    p0 = np.array([np.log(start["A"][0] / 4.0), start["n"][0]])
+    if np.any(msd_blur_locerror_general(xs, np.exp(p0[0]), p0[1], sigma_loc_um, exposure_s) <= 0):
+        raise ValueError("general motion-blur model is not positive at the start value")
+    res = least_squares(residuals, p0, method="lm", xtol=1e-12, ftol=1e-12, gtol=1e-12)
+    if not res.success:
+        raise ValueError(f"MSD fit (general motion-blur model) did not converge: {res.message}")
+
+    ssr = float(np.sum(res.fun ** 2))
+    dof = len(xs) - 2
+    cov = np.linalg.inv(res.jac.T @ res.jac) * (ssr / dof if dof > 0 else np.nan)
+    se = np.sqrt(np.diag(cov))
+    K_fit = float(np.exp(res.x[0]))
+    ss_tot = float(np.sum((ly - np.mean(ly)) ** 2))
+
+    return {
+        "D": K_fit,
+        "D_err": K_fit * float(se[0]),
+        "n": float(res.x[1]),
+        "n_err": float(se[1]),
+        "lnD": float(res.x[0]),
+        "lnD_err": float(se[0]),
+        "cov": cov,
+        "r_squared": 1.0 - ssr / ss_tot if ss_tot > 0 else np.nan,
+        "ssr": ssr,
+        "nfev": int(res.nfev),
+        "start_D": float(np.exp(p0[0])),
+        "start_n": float(p0[1]),
+    }
+
+
+def msd_fit_curve(fit_results: Dict[str, Any], tau: np.ndarray) -> np.ndarray:
+    """MSD of the stored fit (fit_results_MSD of perform_msd_analysis_blur_locerror) at tau, um^2."""
+    D, n = float(fit_results["D_um2_per_s"]), float(fit_results["exponent"])
+    sigma_um = float(fit_results["sigma_loc_nm"]) / 1000.0
+    t_e = float(fit_results["exposure_ms"]) / 1000.0
+    model_id = fit_results.get("model_id", MSD_MODEL_TAU_MINUS_TE3)
+    if model_id == MSD_MODEL_POWERLAW:
+        return 4.0 * D * np.asarray(tau, dtype=float) ** n
+    if model_id == MSD_MODEL_GENERAL:
+        return msd_blur_locerror_general(tau, D, n, sigma_um, t_e)
+    if model_id == MSD_MODEL_TAU_MINUS_TE3:
+        return 4.0 * D * (np.asarray(tau, dtype=float) - t_e / 3.0) ** n + 4.0 * sigma_um ** 2
+    raise ValueError(f"unknown model_id {model_id!r}")
+
+
+def fit_msd_like_ensemble(em_series: pd.Series, points: int, fit_results: Dict[str, Any]) -> Dict[str, Any]:
+    """Fit one MSD (e.g. one iMSD column) with the model, sigma and t_E of an ensemble
+    fit (fit_results_MSD of perform_msd_analysis_blur_locerror, key "model_id")."""
+    fit_functions = {MSD_MODEL_GENERAL: fit_powerlaw_blur_locerror_general,
+                     MSD_MODEL_TAU_MINUS_TE3: fit_powerlaw_blur_locerror,
+                     MSD_MODEL_POWERLAW: fit_powerlaw_plain}
+    model_id = fit_results.get("model_id", MSD_MODEL_TAU_MINUS_TE3)
+    return fit_functions[model_id](em_series, points, float(fit_results["sigma_loc_nm"]) / 1000.0,
+                                   float(fit_results["exposure_ms"]) / 1000.0)
+
+
+def locerror_from_msd_slope(em_series: pd.Series, points: int, exposure_s: float) -> Dict[str, Any]:
+    """
+    Localisation error of a moving sample from a straight line through the first
+    `points` lags of the ensemble MSD (Savin & Doyle 2005, 2D, n = 1):
+    MSD = 4 D tau + 4 sigma^2 - (4/3) D t_E. The slope gives D; (4/3) D t_E is
+    added to the intercept and the remaining offset gives 4 sigma^2.
+
+    Returns D_lin (um^2/s), the intercept (um^2), offset_var_um2 = intercept / 4
+    (the effective, dynamic offset variance per axis, sigma^2 - D t_E / 3) and
+    sigma2_um2 = (intercept + (4/3) D t_E) / 4. Variances are returned as computed,
+    also when negative.
+    """
+    xs = em_series.iloc[0:points].index.values.astype(float)
+    ys = em_series.iloc[0:points].values.astype(float)
+    slope, intercept = np.polyfit(xs, ys, 1)
+    D_lin = float(slope) / 4.0
+    return {
+        "D_lin": D_lin,
+        "intercept_um2": float(intercept),
+        "offset_var_um2": float(intercept) / 4.0,
+        "sigma2_um2": (float(intercept) + 4.0 / 3.0 * D_lin * exposure_s) / 4.0,
+    }
+
+
+def perform_msd_analysis_blur_locerror(
+    result_dict: Dict[str, Any],
+    sigma_loc_nm: float,
+    exposure_ms: float,
+    drift_min_tracks_per_frame: float,
+    fit_points: int = DEFAULT_MSD_FIT_POINTS,
+    model: str = MSD_MODEL_GENERAL,
+) -> Dict[str, Any]:
+    """
+    MSD analysis of one file with a fixed localisation error and motion blur in
+    the fit model: model = MSD_MODEL_GENERAL (fit_powerlaw_blur_locerror_general,
+    Savin & Doyle 2005 / Backlund et al. 2015, any n) or MSD_MODEL_TAU_MINUS_TE3
+    (fit_powerlaw_blur_locerror, 4 D (tau - t_E/3)^n + 4 sigma^2), or without both
+    terms MSD_MODEL_POWERLAW (fit_powerlaw_plain, 4 D tau^n); the choice is
+    stored as fit_results_MSD["model_id"]. Same steps as perform_msd_analysis()
+    otherwise: drift subtraction when tracks per frame >= drift_min_tracks_per_frame,
+    tp.filter_stubs(MIN_TRACK_LENGTH), trackpy iMSD/eMSD, fit over the first
+    fit_points lags.
+
+    Writes D_MSD, fit_results_MSD (same keys as perform_msd_analysis(); "A" = 4 D,
+    "sigma_loc_nm" = the fixed sigma used in the fit), num_tracks_fit (tracks after
+    the 10-frame filter) and drift_subtracted into result_dict. The uncorrected
+    power-law fit and the sigma from the intercept of the linear fit are kept as
+    diagnostics, and the localisation error variance of the moving sample from
+    locerror_from_msd_slope() (sigma2_loc_dynamic_nm2, msd_offset_var_nm2) beside the
+    static one of the immobilised particles (sigma2_loc_static_nm2). Raises ValueError, naming the file, if no track is left after
+    the 10-frame filter or the fit fails.
+    """
+    name = result_dict.get("base_name")
+    tracks = result_dict["tracks_df"]
+    mpp = result_dict["mpp"]
+    fps = result_dict["fps"]
+    if tracks is None or tracks.empty:
+        raise ValueError(f"{name}: no tracks in tracks_df")
+
+    tracks_per_frame = len(tracks["particle"].unique()) / len(tracks["frame"].unique())
+    drift_subtracted = tracks_per_frame >= drift_min_tracks_per_frame
+    tracks_used = tp.subtract_drift(tracks) if drift_subtracted else tracks.copy()
+
+    tracks_used = tp.filter_stubs(tracks_used, threshold=MIN_TRACK_LENGTH)
+    if tracks_used.empty:
+        raise ValueError(f"{name}: no track with >= {MIN_TRACK_LENGTH} frames")
+
+    imsd = tp.imsd(tracks_used, mpp=mpp, fps=fps)
+    emsd = tp.emsd(tracks_used, mpp=mpp, fps=fps)
+
+    sigma_um = sigma_loc_nm / 1000.0
+    exposure_s = exposure_ms / 1000.0
+    fit_functions = {MSD_MODEL_GENERAL: fit_powerlaw_blur_locerror_general,
+                     MSD_MODEL_TAU_MINUS_TE3: fit_powerlaw_blur_locerror,
+                     MSD_MODEL_POWERLAW: fit_powerlaw_plain}
+    if model not in fit_functions:
+        raise ValueError(f"unknown MSD model {model!r}")
+    try:
+        fit = fit_functions[model](emsd, fit_points, sigma_um, exposure_s)
+    except ValueError as err:
+        raise ValueError(f"{name}: {err}") from err
+    uncorrected = fit_powerlaw_with_errors(emsd, points=fit_points)
+
+    xs_lin = emsd.iloc[0:fit_points].index.values.astype(float)
+    ys_lin = emsd.iloc[0:fit_points].values.astype(float)
+    lin_coeffs = np.polyfit(xs_lin, ys_lin, 1)
+    sigma_int_um2 = float(lin_coeffs[1]) / 4.0
+    sigma_intercept_nm = float(np.sqrt(sigma_int_um2) * 1000.0) if sigma_int_um2 > 0 else np.nan
+    dyn = locerror_from_msd_slope(emsd, fit_points, exposure_s)
+
+    offset = 4.0 * sigma_um ** 2
+    fit_payload = {
+        "D_um2_per_s": fit["D"],
+        "D_error": fit["D_err"],
+        "exponent": fit["n"],
+        "exponent_error": fit["n_err"],
+        "A": 4.0 * fit["D"],
+        "A_err": 4.0 * fit["D_err"],
+        "logA": float(np.log(4.0 * fit["D"])),
+        "logA_err": fit["lnD_err"],
+        "cov": fit["cov"],
+        "r_squared": fit["r_squared"],
+        "sigma_loc_nm": float(sigma_loc_nm),
+        "imsd": imsd,
+        "emsd": emsd,
+        "fit_points": fit_points,
+        "model": {MSD_MODEL_GENERAL: "MSD = 4K/[(n+1)(n+2) t_E^2] [(tau+t_E)^(n+2) + |tau-t_E|^(n+2) "
+                                     "- 2 tau^(n+2) - 2 t_E^(n+2)] + 4 sigma^2",
+                  MSD_MODEL_TAU_MINUS_TE3: "MSD = 4 D (tau - t_E/3)^n + 4 sigma^2",
+                  MSD_MODEL_POWERLAW: "MSD = 4 D tau^n"}[model],
+        "model_id": model,
+        "exposure_ms": float(exposure_ms),
+        "D_uncorrected": float(uncorrected["A"][0] / 4.0),
+        "D_uncorrected_error": float(uncorrected["A_err"][0] / 4.0),
+        "exponent_uncorrected": float(uncorrected["n"][0]),
+        "exponent_uncorrected_error": float(uncorrected["n_err"][0]),
+        "sigma_loc_intercept_nm": sigma_intercept_nm,
+        "D_lin_um2_per_s": dyn["D_lin"],
+        "msd_offset_var_nm2": dyn["offset_var_um2"] * 1e6,
+        "sigma2_loc_dynamic_nm2": dyn["sigma2_um2"] * 1e6,
+        "sigma2_loc_static_nm2": float(sigma_loc_nm) ** 2,
+        "offset_over_msd_lag1": float(offset / ys_lin[0]),
+        "n_lags_msd_below_offset": int(np.sum(ys_lin <= offset)),
+    }
+
+    result_dict["D_MSD"] = fit["D"]
+    result_dict["fit_results_MSD"] = fit_payload
+    result_dict["num_tracks_fit"] = int(tracks_used["particle"].nunique())
+    result_dict["drift_subtracted"] = bool(drift_subtracted)
+    result_dict["tracks_per_frame"] = float(tracks_per_frame)
     return result_dict
 
 

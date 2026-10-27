@@ -98,7 +98,7 @@ from hydro_analysis.Rheology.network_geometry import cell_edge_from_modulus, lat
 from hydro_analysis.Rheology.trios_tri_parser import TriRun, read_trios_xls, read_tri
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-RAW_DIR = Path(r"H:\Daten Promotion Sicherung\Rheo")
+RAW_DIR = Path(r"E:\Daten Promotion Sicherung\Rheology")
 TRI_GLOB = "Hyd*.tri"
 XLS_GLOB = "Hyd*.xls"
 OUTPUT_ROOT = Path(

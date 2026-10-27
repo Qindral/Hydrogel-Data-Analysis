@@ -27,7 +27,7 @@ from frap_analysis import (
 # =============================================================================
 # Configuration
 # =============================================================================
-DATA_ROOT  = Path(r"H:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF")
+DATA_ROOT  = Path(r"E:\Daten Promotion Sicherung\FRAP\2025_09_08_14_57_46--Project_TIF")
 OUTPUT_DIR = DATA_ROOT / "analysis_output"
 
 # Set True to display pre-bleach images during analysis (also always saved to OUTPUT_DIR)
@@ -41,8 +41,6 @@ GROUPS = {
     ],
     "no FITC": [
         "C16_noFITC",
-        "C16_noFITC_2",
-        "C16_noFITC_3",
     ],
     "C16 deep_B": [
         "C16 _deep B1",

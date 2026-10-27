@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 # =============================================================================
 # Configuration
 # =============================================================================
-BASE_DIR = Path(r"H:\Daten Promotion Sicherung\Confocal_Measure\2025_09_08_14_57_46--Project_TIF\Water 3")
+BASE_DIR = Path(r"E:\Daten Promotion Sicherung\FRAP\2025_09_08_14_57_46--Project_TIF\Water 3")
 
 # --- Image loading ---
 CHANNEL_INDEX = 0            # TIF channel (l-index) to load - only channel with FITC data
