@@ -16,9 +16,9 @@ is left out of every figure (EXCLUDE_IDS, user 2026-10-06) and logged in the exc
 controls excluded in frap_analysis_v2.py (include = False; nofitc_2, nofitc_3, user 2026-10-27) are not
 in the cache and are copied from its "control_exclusions" into the exclusion CSV.
 Figures (user, 2026-10-14): shallow (SHALLOW_DEPTH_UM) and deep hydrogel measurements are one
-group "Hydrogel" -- one recovery mean curve, one column of D points and one D_eff/D0 point (mean +- SD
-over all QC-passed hydrogel measurements). "Water" is labelled "Buffer"; hydrogel is drawn in a darker
-colour than buffer. The depth of every measurement stays in frap_depth_values.csv. Only the three
+group "Hydrogel" -- one recovery mean curve, one column of D points and one D_eff/D0 point (mean +- 95 % t
+confidence interval over all QC-passed hydrogel measurements; user 2026-10-27, E049 C). "Water" is labelled
+"Buffer"; hydrogel is drawn in a darker colour than buffer. The depth of every measurement stays in frap_depth_values.csv. Only the three
 plotting functions below use the pooled grouping and the DISS_* constants; load_values(), _points() and
 the constants COLORS, MARKERS, X_POS, FIG_SIZE, RATIO_SUB_OFFSET are unchanged because
 frap_pyfrap_figures.py imports them.
@@ -29,15 +29,15 @@ D0 for D_eff/D0 = arithmetic mean of the QC-passed deep water measurements (user
 
 Figures (FIGURE_DIR, PDF, each with a sidecar JSON; D figures half, recovery narrow):
   frap_d_vs_depth.pdf        D of every buffer and hydrogel measurement, x = buffer | hydrogel
-  frap_deff_d0_vs_depth.pdf  D_eff / D0, mean +- SD of the QC-passed measurements per sample type
+  frap_deff_d0_vs_depth.pdf  D_eff / D0, mean +- 95 % t CI of the QC-passed measurements per sample type
   frap_recovery_full_scale.pdf (narrow, linear time axis)  recovery curves, full-scale normalised: (F - F(0)) / (1 - F(0))
       of the double-normalised curve, F(0) = first post-bleach frame (user, 2026-10-06: start at 0); pre-bleach
       frames and the noFITC controls shown, x and y range fixed (user, 2026-10-07). The controls have no bleach
       (1 - F(0) ~ 0), so they are shown as the double-normalised curve F_norm, not full-scale normalised.
       Points outside the axis range are counted in the sidecar JSON.
 Also writes frap_depth_values.csv (per measurement, incl. Deff_D0), frap_deff_d0_values.csv (the values of
-frap_deff_d0_vs_depth.pdf: per sample type n, mean and SD (ddof = 1) of D_eff/D0 over the QC-passed
-measurements, plus D0 with the SD over its reference measurements; D0 enters the ratio as a constant)
+frap_deff_d0_vs_depth.pdf: per sample type n, mean, SD (ddof = 1), SEM and 95 % t CI of D_eff/D0 over the
+QC-passed measurements, plus D0 with the SD over its reference measurements; D0 enters the ratio as a constant)
 and frap_depth_values_exclusions.csv. No other script reads these.
 """
 from __future__ import annotations
@@ -53,6 +53,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from scipy import stats
 
 from hydro_analysis.FRAP.frap_analysis import find_series_folders, load_tif_series
 from hydro_analysis.FRAP.frap_analysis_v2 import double_normalised_curve, load_measurement
@@ -66,6 +67,7 @@ STYLE_PATH = Path(__file__).resolve().parents[1] / "thesis.mplstyle"
 D_COLUMN, D_GATE = "D_propagation_um2_s", "qc_propagation"   # decided by user, 2026-10-06
 DEPTH_ANCHOR = ("gel_B1_6", 306.0)                            # decided by user, 2026-10-06 (planar sample)
 SHALLOW_DEPTH_UM = 10.0                                       # decided by user, 2026-10-06
+CI_LEVEL = 0.95                                               # D_eff/D0 error bar, t CI; decided by user, 2026-10-27 (E049 C)
 SHALLOW_IDS_CONDITION = "gel_interface"                       # "C16 shallow" measurements
 OUTER_LAYER_IDS: list[str] = []                               # water_2 was the outer layer; now excluded
 EXCLUDE_IDS = {"water_2": "water measurement that failed (97 % saturated pixels); left out of every figure"}  # decided by user, 2026-10-06
@@ -255,7 +257,8 @@ def plot_d(df):
 
 
 def plot_ratio(df):
-    """Mean +- SD (ddof = 1) of D_eff/D0 over the QC-passed measurements per sample type (depths pooled)."""
+    """Mean of D_eff/D0 over the QC-passed measurements per sample type (depths pooled), error bar = 95 % t
+    confidence interval t(n - 1, 0.975) SD / sqrt(n) (CI_LEVEL); D0 enters as a constant."""
     d0 = df.attrs["D0"]
     df = df[~df.outer_layer]
     groups = {}
@@ -265,10 +268,16 @@ def plot_ratio(df):
         for stype, sub in df.groupby("sample_type"):
             base, dark = DISS_COLORS[stype]
             v = sub.loc[sub.qc_pass, "Deff_D0"]
-            mean, sd = float(v.mean()), float(v.std(ddof=1)) if len(v) > 1 else np.nan
-            ax.errorbar(X_POS[stype], mean, yerr=sd, fmt=MARKER, ms=4, mfc=base,
+            n = len(v)
+            mean, sd = float(v.mean()), float(v.std(ddof=1)) if n > 1 else np.nan
+            sem = sd / np.sqrt(n) if n > 1 else np.nan
+            t_q = float(stats.t.ppf(0.5 + CI_LEVEL / 2, n - 1)) if n > 1 else np.nan
+            ci = t_q * sem
+            ax.errorbar(X_POS[stype], mean, yerr=ci, fmt=MARKER, ms=4, mfc=base,
                         mec=dark, mew=0.6, ecolor=dark, elinewidth=0.8, capsize=2.0, capthick=0.8, zorder=3)
-            groups[DISPLAY_LABEL[stype]] = {"n": len(v), "mean": mean, "SD": sd, "measurements": list(sub.loc[sub.qc_pass, "measurement_id"]),
+            groups[DISPLAY_LABEL[stype]] = {"n": n, "mean": mean, "SD": sd, "SEM": sem, "t_quantile": t_q,
+                             "CI95_half_width": ci, "CI95": [mean - ci, mean + ci],
+                             "measurements": list(sub.loc[sub.qc_pass, "measurement_id"]),
                              "positions": sorted(set(sub.loc[sub.qc_pass, "position"])),
                              "qc_failed_not_in_mean": list(sub.loc[~sub.qc_pass, "measurement_id"])}
         ax.set_xticks(list(X_POS.values()), [DISPLAY_LABEL[k] for k in X_POS])
@@ -277,7 +286,8 @@ def plot_ratio(df):
         ax.set_ylim(0, 1.25)
         ax.set_ylabel(r"$D_\mathrm{eff}\,/\,D_0$")
         save(fig, "frap_deff_d0_vs_depth", {"value": f"{D_COLUMN} / D0", "gate": D_GATE,
-                                            "shown": "mean +- SD (ddof = 1) of the QC-passed measurements",
+                                            "shown": "mean of the QC-passed measurements, error bar = 95 % t confidence "
+                                                     "interval t(n - 1, 0.975) SD / sqrt(n), D0 as constant (E049, user 2026-10-27)",
                                             "D0_um2_s": d0, "D0_from": df.attrs.get("D0_ids"), "groups": groups,
                                             "left_out": list(EXCLUDE_IDS)})
     return groups
@@ -288,7 +298,10 @@ def write_ratio_table(df, groups):
     ref = df.loc[df.measurement_id.isin(df.attrs["D0_ids"]), "D_um2_s"]
     d0_sd = float(ref.std(ddof=1)) if len(ref) > 1 else np.nan
     rows = [{"sample_type": name, "n": g["n"], "Deff_D0_mean": g["mean"], "Deff_D0_SD": g["SD"],
-             "uncertainty": "SD (ddof = 1) over the QC-passed measurements; D0 uncertainty not propagated",
+             "Deff_D0_SEM": g["SEM"], "t_quantile": g["t_quantile"], "Deff_D0_CI95_half_width": g["CI95_half_width"],
+             "Deff_D0_CI95_low": g["CI95"][0], "Deff_D0_CI95_high": g["CI95"][1],
+             "uncertainty": "error bar in the figure = 95 % t CI; SD (ddof = 1) and SEM = SD / sqrt(n) over the "
+                            "QC-passed measurements; D0 uncertainty not propagated (E049 C, user 2026-10-27)",
              "measurements": ", ".join(g["measurements"]), "positions": ", ".join(g["positions"]),
              "qc_failed_not_in_mean": ", ".join(g["qc_failed_not_in_mean"]),
              "D_column": D_COLUMN, "gate": D_GATE, "D0_um2_s": df.attrs["D0"], "D0_SD_um2_s": d0_sd,
@@ -387,7 +400,8 @@ def main():
     plot_d(df)
     groups = plot_ratio(df)
     for name, g in groups.items():
-        print(f"D_eff/D0 {name}: n = {g['n']}, {g['mean']:.3f} +- {g['SD']:.3f} (SD)")
+        print(f"D_eff/D0 {name}: n = {g['n']}, {g['mean']:.3f}, SD {g['SD']:.3f}, SEM {g['SEM']:.3f}, "
+              f"95 % t CI +- {g['CI95_half_width']:.3f}")
     write_ratio_table(df, groups)
     for m, (a, b) in plot_recovery(df, curves, pre, controls).items():
         print(f"recovery {m}: {a} points beyond x range, {b} within x range beyond y range")

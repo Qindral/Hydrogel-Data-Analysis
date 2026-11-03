@@ -447,11 +447,99 @@ muss nicht weiter begründet werden.
 - C: F_BG = 0, Abzug von nofitc_1 nur als Diagnose in den Tabellen → Hauptergebnisse unverändert, zusätzliche Spalten.
 **Entscheidung:** offen
 
-## E049 · OFFEN · 2026-10-27
+## E049 · ENTSCHIEDEN · 2026-10-27
 **Frage:** FRAP: Welche Unsicherheit wird für D_eff/D0 angegeben und gespeichert (Abbildung `frap_deff_d0_vs_depth.pdf` und Tabelle `frap_deff_d0_values.csv`)?
 **Stelle:** `FRAP/frap_depth_figures.py`, `plot_ratio()` und `write_ratio_table()`.
 **Wirkung heute:** Gezeigt und gespeichert werden der Mittelwert ± SD (ddof = 1) von D_eff/D0 über die QC-bestandenen Messungen: Hydrogel 0,902 ± 0,042 (n = 11, flach und tief zusammen), Buffer 1,000 ± 0,020 (n = 2). D0 = 30,13 µm²/s (water_1, water_3) mit einer SD von 0,62 µm²/s geht als Konstante ein, seine Unsicherheit wird nicht fortgepflanzt. Für D_propagation gibt es je Messung keine Fit-Unsicherheit, deshalb haben die Einzelwerte in `frap_depth_values.csv` keine. `frap_analysis_v2.py` speichert daneben H = geometrisches Mittel D_gel / D_Wasser (nur tiefes Gel, N = 9) = 0,900 mit 95 %-Bootstrap-KI [0,869; 0,933] in `ratio_gel_water.json`.
 - A: wie heute, SD über die Messungen, D0 als Konstante → Hydrogel ± 0,042.
 - B: SD über die Messungen, die relative SD von D0 quadratisch addiert (Gauß) → Hydrogel ± 0,046.
 - C: Standardfehler des Mittelwerts statt SD → Hydrogel ± 0,013 (ohne D0) bzw. 95 %-t-KI ± 0,028; Buffer (n = 2) 95 %-t-KI ± 0,184.
+**Entscheidung:** C (Nutzer, 2026-10-27): Fehlerbalken in der Abbildung = 95 %-t-Konfidenzintervall t(n − 1; 0,975)·SD/√n, D0 als Konstante ohne Fortpflanzung; `frap_deff_d0_values.csv` enthält SD, SEM und das 95 %-t-KI. Hydrogel 0,902, 95 %-KI [0,873; 0,930] (n = 11); Buffer 1,000, 95 %-KI [0,816; 1,184] (n = 2).
+
+## E050 · ENTSCHIEDEN · 2026-10-30
+**Frage:** Wie wird beim eMSD-Fit mit 24 Lags eine Datei behandelt, deren eMSD weniger als 24 Lags hat?
+**Stelle:** Test and Other Validations, `src/msd_fit_r2_comparison.py`, `short_emsd()` und `refit()`; verwendet von `src/msd_fit_size_plots.py`.
+**Wirkung heute:** Betroffen ist nur `20nm_1d_A2_03_Tracks.xml` (Hydrogel 20 mg/mL, 35 nm DLS, 6 Tracks ≥ 10 Frames, längste Spur 23 Frames, eMSD 22 Lags). Sie fehlt nur im Lauf mit 24 Lags (R²-Vergleich und Mittel pro Größe) und steht im Ausschlussprotokoll; bei 6 und 12 Lags ist sie enthalten. Hydrogel 35 nm mit 24 Lags: 18 statt 19 Dateien, D_eff/D0 V1 0,1671 ± 0,0312, neu 0,1652 ± 0,0317; n_eff V1 0,905, neu 0,889.
+- A: wie heute, Datei bei 24 Lags auslassen und protokollieren → Werte wie oben.
+- B: Datei mit allen 22 vorhandenen Lags fitten (Fitbereich weicht für diese Datei ab) → D_eff/D0 V1 0,1665, neu 0,1645; n_eff V1 0,903, neu 0,886; R² der Datei V1 0,879, neu 0,884.
+**Entscheidung:** B (Nutzer, 2026-10-30): Datei mit allen vorhandenen Lags fitten; Spalte `fit_points_used` und Ausschlussprotokoll (Schritt „fit range shortened (E050 B)“, n_before = n_after = 1) halten das fest. Hydrogel 35 nm, 24 Lags: 19 Dateien, D_eff/D0 V1 0,1665 ± 0,0312, neu 0,1645 ± 0,0317.
+
+## E051 · ENTSCHIEDEN · 2026-11-01
+**Frage:** Wie wird σ_loc „aus dem eMSD“ bei N Fitpunkten (3–8) für die Gesamtanalyse bestimmt?
+**Stelle:** Test and Other Validations, neues Skript für die Gesamtanalyse (Fitpunkte × σ-Quelle × Fitfunktion), noch nicht geschrieben.
+**Wirkung heute:** Noch kein Verhalten. Der lineare Fit MSD = 4Dτ + 4σ² über die ersten N Lags (wie Phase 6, ohne Blur) ergibt einen negativen Achsenabschnitt bei N = 6 in 23 von 70 Dateien (Wasser 240 nm 4/4, 560 nm 3/3, 1370 nm 5/10, 100 nm 4/7, 50 nm 4/11, 35 nm 1/4; Hydrogel 35 nm 2/19, 50 nm 0/12). Mit Blur-Term ist er in allen Dateien positiv; Median σ bei N = 6 z. B. Wasser 50 nm 256 nm, Hydrogel 35 nm 158 nm, Hydrogel 50 nm 192 nm (immobilisierte Partikel: 119 / 76 nm).
+- A: linearer Fit 4Dτ + 4σ², σ² = Achsenabschnitt/4 (ohne Blur) → viele negative σ², siehe E053.
+- B: linearer Fit 4D(τ − t_E/3) + 4σ², σ² = (Achsenabschnitt + 4D·t_E/3)/4 → σ² überall positiv, σ größer als bei A.
+- C: A für V3 (Modell ohne Blur), B für V6 (Modell mit Blur) → σ passt zur Blur-Annahme der jeweiligen Fitfunktion.
+**Entscheidung:** C (Nutzer, 2026-11-01): σ² ohne Blur für V3, mit Blur für V6; umgesetzt in `src/msd_settings_scan.py`.
+
+## E052 · ENTSCHIEDEN · 2026-11-01
+**Frage:** Wie wird σ_loc „aus dem iMSD“ (MSD pro Track) bei N Fitpunkten zu einem Wert pro Datei zusammengefasst?
+**Stelle:** Test and Other Validations, neues Skript für die Gesamtanalyse, noch nicht geschrieben.
+**Wirkung heute:** Noch kein Verhalten. Pro Track derselbe lineare Fit wie in E051 über die ersten N Lags (Tracks ≥ 10 Frames, dieselben driftkorrigierten Positionen wie das eMSD). Es entstehen pro Datei so viele σ²-Werte wie Tracks im Fit (6 bis einige Hundert), einzelne davon negativ.
+- A: Mittelwert der σ² über alle Tracks, negative mitgezählt → empfindlich auf kurze, verrauschte Tracks.
+- B: Median der σ² über alle Tracks → robust, weicht vom Mittel ab, wenn die Verteilung schief ist.
+- C: Mittelwert der σ², gewichtet mit der Zahl der MSD-Werte pro Track (Tracklänge) → lange Tracks zählen mehr.
+**Entscheidung:** A (Nutzer, 2026-11-01): Mittelwert der σ² über alle Tracks, negative mitgezählt; Blur-Annahme wie E051 C.
+
+## E053 · ENTSCHIEDEN · 2026-11-01
+**Frage:** Was passiert in V3 und V6, wenn das geschätzte σ² (eMSD oder iMSD) negativ ist?
+**Stelle:** Test and Other Validations, neues Skript für die Gesamtanalyse, noch nicht geschrieben.
+**Wirkung heute:** Noch kein Verhalten. Häufigkeit hängt von E051/E052 ab (bei E051 A, N = 6: 23 von 70 Dateien). reports/decisions.md (2026-10-21): „negative Offsets berücksichtigen (nicht NaN setzen)“ gilt bisher nur für Phase 6.
+- A: σ² negativ übernehmen (Konstante 4σ² < 0); ist das Modell an einem Lag ≤ 0, scheitert der Fit und wird protokolliert → keine Änderung der Daten, aber Lücken.
+- B: σ = 0 für diese Datei, protokolliert → V3 wird für diese Dateien zu V1, V6 zu reinem Blur-Modell.
+- C: Datei in diesem Set auslassen, protokolliert → weniger Dateien pro Größe.
+**Entscheidung:** A (Nutzer, 2026-11-01): σ² mit Vorzeichen übernommen; 3 von 2940 Fits gescheitert (N = 3, V6, σ immob, keine Konvergenz), protokolliert.
+
+## E054 · ENTSCHIEDEN · 2026-11-01
+**Frage:** Gegen welches R² wird „besser als V1“ gezählt, wenn ein Set N ≠ 6 Fitpunkte hat?
+**Stelle:** Test and Other Validations, neues Skript für die Gesamtanalyse, noch nicht geschrieben.
+**Wirkung heute:** Noch kein Verhalten. R² über N Lags und R² über 6 Lags beziehen sich auf verschiedene Datenpunkte (anderes SST); bei N = 3 und 2 freien Parametern liegt R² fast immer nahe 1.
+- A: wie angefragt, ΔR² = R²(Set, N Lags) − R²(V1, 6 Lags) → kleine N wirken systematisch besser.
+- B: ΔR² = R²(Set, N Lags) − R²(V1, N Lags), gleiche Lags → misst nur den Unterschied der Fitfunktion.
+- C: beide Spalten ausgeben.
+**Entscheidung:** A (Nutzer, 2026-11-01): ΔR² = R²(Set, N Lags) − R²(V1, 6 Lags).
+
+## E055 · OFFEN · 2026-11-02
+**Frage:** Wie wird das σ aus dem iMSD bei N ≥ 10 Fitpunkten gebildet, wenn Spuren weniger als N Lags haben?
+**Stelle:** Test and Other Validations, src/msd_settings_scan.py, sigma2_estimates()
+**Wirkung heute:** Spuren mit 10 Frames haben 9 Lags. Hat eine Datei auch nur eine solche Spur, wird ihr iMSD-σ nicht berechnet (Status „E055 offen“). Seit 2026-11-02 läuft der Scan nur bis N = 10: betroffen sind bei N = 10 51 von 70 Dateien, in V3 und V6. Diese 2 Sets fehlen in der Bewertung „Beste Sets“.
+- A: jede Spur mit ihren vorhandenen Lags fitten, min(N, Lags), wie E050 B → alle Spuren bleiben drin, die Gerade wird bei kurzen Spuren über weniger Punkte gelegt.
+- B: nur Spuren mit ≥ N Lags verwenden, Rest protokollieren → bei N = 10 fallen 283 von 6915 Spuren (W) und 34 von 1722 (H) aus dem σ-Mittel.
+- C: iMSD-σ nur bis N = 9; die Sets N10 mit iMSD entfallen → wie heute, aber festgelegt.
+**Entscheidung:** offen
+
+## E056 · ENTSCHIEDEN · 2026-11-02
+**Frage:** Wie wird mit N = 2 Fitpunkten umgegangen?
+**Stelle:** Test and Other Validations, src/msd_settings_scan.py, per_file(); core fit_powerlaw_with_errors()
+**Wirkung heute:** Bei 2 Punkten und 2 Parametern bricht np.polyfit(cov=True) in core ab („number of data points must exceed order“). Alle 490 Fits mit N = 2 (7 Sets × 70 Dateien) scheitern und sind protokolliert.
+- A: so lassen, N = 2 bleibt als gescheitert stehen → keine Werte für N = 2.
+- B: N = 2 ohne Fehlerschätzung fitten (exakte Kurve durch 2 Punkte, D_err und n_err NaN, R² = 1) → Werte vorhanden, R² ist dann immer 1 und ΔR² immer > 0.
+- C: N = 2 aus FIT_POINTS streichen → Scan wieder mit N = 3–12.
+**Entscheidung:** C (Nutzer, 2026-11-02): N = 2 entfällt; zugleich N > 10 weggelassen, FIT_POINTS = 3–10.
+
+## E057 · ENTSCHIEDEN · 2026-11-02
+**Frage:** Nach welcher Kennzahl wird der „beste Amsden-Fit“ eines Sets bestimmt?
+**Stelle:** Test and Other Validations, src/msd_settings_scan.py, CRITERIA / best_sets()
+**Wirkung heute:** Kleinstes gewichtetes RMS-Residuum → N8_V6_immob (0,053); größtes gewichtetes R² → N4_V3_immob (0,344).
+- A: Amsden nach RMS-Residuum → N8_V6_immob.
+- B: Amsden nach gewichtetem R² → N4_V3_immob.
+**Entscheidung:** B (Nutzer, 2026-11-02): bester Amsden-Fit = größtes gewichtetes R²; das RMS-Residuum wird weiter angezeigt, aber nicht gewertet. Die übrigen Teilfragen (Mittelung von n und D, Kombination der Kriterien) stehen jetzt in E058.
+
+## E058 · ENTSCHIEDEN · 2026-11-02
+**Frage:** Wird die Abweichung D̄₀ − D₀ (Wasser) absolut oder relativ bewertet?
+**Stelle:** Test and Other Validations, src/msd_settings_scan.py, CRITERIA
+**Wirkung heute:** Beide Kennzahlen angezeigt; bei N = 2–12 führten beide auf N12_V3_immob.
+- E: D absolut (µm² s⁻¹) → 35/50 nm dominieren.
+- F: D relativ (|D̄₀/D₀ − 1|) → alle Größen gleich gewichtet.
+**Entscheidung:** E (Nutzer, 2026-11-02): absolut; die relative Abweichung wird nur angezeigt. Gewichtung der Größen und Kombination der Kriterien jetzt in E059.
+
+## E059 · OFFEN · 2026-11-02
+**Frage:** Wie werden die Größengruppen beim Mitteln von |n̄ − 1| und |D̄₀ − D₀| gewichtet, und wie werden D, Amsden-R² und gescheiterte Fits zu einem „besten Set“ kombiniert?
+**Stelle:** Test and Other Validations, src/msd_settings_scan.py, ranking() / CRITERIA
+**Wirkung heute:** Jede Größengruppe gleich gewichtet (PROPOSED). N = 3–10: 53 Sets ohne gescheiterte Fits und ohne offene Einträge; bestes D N10_V3_immob (0,157 µm² s⁻¹), bestes Amsden-R² N4_V3_immob (0,344); kein Set ist in beiden am besten, Pareto-Front N4–N10 · V3 · σ immob.
+- C: Größengruppen gleich gewichtet (heute) → kleine und große Partikel zählen gleich.
+- D: Dateigewicht num_tracks_fit über alle Dateien → Größen mit vielen Spuren dominieren.
+- G: nur die Pareto-Front angeben → N4–N10 · V3 · σ immob, keine Einzelwahl.
+- H: Rangsumme aus D und Amsden-R² bei 0 gescheiterten Fits → N9_V3_immob (vor N10_V3_immob).
 **Entscheidung:** offen

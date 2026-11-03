@@ -72,7 +72,7 @@ from hydro_analysis.MSD_Trackmate.MSD_Deff_over_D0_vs_Size_20mg_WeightedAvg impo
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 R_F_MODE = "fixed"                 # "free" or "fixed"; decided by user, 2026-10-26 (E037 C)
-FIBRIL_DIAMETER_NM = 3.0           # "fixed" mode, r_f = 1.5 nm; decided by user, 2026-10-26 (E037 C; first run used 12 nm)
+FIBRIL_DIAMETER_NM = 10          # "fixed" mode, r_f = 1.5 nm; decided by user, 2026-10-26 (E037 C; first run used 12 nm)
 R_F_BOUNDS_NM = (3.0, 15.0)        # "free" mode, bounds on r_f (radius); decided by user, 2026-10-26
 BOUND_TOL_NM = 1e-3                # r_f closer than this to a bound counts as "on the bound" (numerical tolerance)
 R_F_PROFILE_STEP_NM = 1.0          # step of the chi2 profile over r_f in the summary (diagnostic only)
