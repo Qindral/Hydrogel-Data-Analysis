@@ -543,3 +543,35 @@ muss nicht weiter begründet werden.
 - G: nur die Pareto-Front angeben → N4–N10 · V3 · σ immob, keine Einzelwahl.
 - H: Rangsumme aus D und Amsden-R² bei 0 gescheiterten Fits → N9_V3_immob (vor N10_V3_immob).
 **Entscheidung:** offen
+
+## E060 · OFFEN · 2026-11-03
+**Frage:** Nach welcher Regel wird im neuen Ordnersystem (XML, .tif und .rec im selben Ordner) jeder XML-Datei ihre .rec zugeordnet?
+**Stelle:** `core/io.py`, `find_rec_tif_files()` (sucht heute zwei Ebenen höher, `xml_path.parent.parent`); `MSD_Trackmate/msd_pipeline.py`, `analyse_file()`.
+**Wirkung heute:** In `E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel` (Buffer SPT, Hydrogel SPT) liegen 127 XML-Dateien. Die XML-Namen haben keine Leerzeichen, die .rec-Namen meist schon (`100nmTriSpuffer.xml` ↔ `100 nm TriSpuffer.tif.rec`, `Resultof50nm_3.xml` ↔ `Result of 50 nm _ 3.tif.rec`). Die heutige Funktion findet keine .rec, weil sie im übergeordneten Ordner sucht.
+- A: .rec im selben Ordner; Vergleich nach Entfernen aller Leerzeichen (und von `_Tracks` im XML-Namen), `.tif.rec` oder `.rec`; kein oder mehr als ein Treffer → Fehler mit Dateiname (E006 A) → 123 von 127 XML eindeutig zugeordnet, 4 ohne .rec (E061).
+- B: .rec im selben Ordner, nur exakt gleicher Name (ohne `_Tracks`) → 48 von 127 zugeordnet, 79 ohne .rec.
+**Entscheidung:** offen
+
+## E061 · OFFEN · 2026-11-03
+**Frage:** Was passiert mit XML-Dateien, zu denen im selben Ordner keine .rec liegt, wenn es keine Overrides mehr gibt?
+**Stelle:** `MSD_Trackmate/msd_pipeline.py`, `analyse_file()`; bisher `REC_OVERRIDES` in `MSD_FromTrackmate_D0.py` und `MSD_FromTrackmate_20mg.py`.
+**Wirkung heute:** Bei Zuordnung nach E060 A ohne .rec: Buffer 20 nm `20nm_60fps_2.xml`, `20nm_60fps_3.xml` (passende .tif.rec liegen in `Obsolet\`), Buffer 50 nm `50nm_2-1-1.xml` (keine passende .rec im Ordner), Hydrogel 50 nm `B3_inside_1d_1mmfrominjection_50_20mg.xml` (im Ordner nur `B2_inside_1d_1mmfrom injection_50_20mg.rec`; bisher per Override zugeordnet, Nutzer 2026-10-27). Mit der heutigen Regel E006 A bricht der Lauf ab.
+- A: Abbruch mit Fehler wie E006 A → Lauf erst möglich, wenn die Ordner angepasst sind (durch den Nutzer).
+- B: Datei auslassen und im Ausschlussprotokoll zählen → Buffer 20 nm 2 Dateien weniger, Buffer 50 nm 1, Hydrogel 50 nm 1.
+**Entscheidung:** offen
+
+## E062 · OFFEN · 2026-11-03
+**Frage:** Woher kommt die Partikelgröße einer Datei: aus dem Ordner (Schlüssel in `XML_FOLDERS`) oder aus dem Dateinamen?
+**Stelle:** `core/io.py`, `extract_particle_size_from_path()` (über `single_file_data()`); `msd_pipeline.analyse_file()` nimmt den Ordnerschlüssel nur, wenn der Dateiname keine Zahl liefert.
+**Wirkung heute:** Im neuen Ordner Buffer 1000 nm ergibt `Water_contro_02l.xml` aus dem Namen 2 nm (erste Zahl „02“) und bildet im gewichteten Mittel eine eigene Gruppe „2 nm“; `Water_control.xml` ergibt keine Zahl und bekommt 1000 nm aus dem Ordner. Alle anderen 125 XML stimmen mit dem Ordner überein.
+- A: Größe nur aus dem Ordnerschlüssel → beide Dateien zählen zu 1000 nm.
+- B: wie heute, Dateiname zuerst → `Water_contro_02l.xml` als 2 nm.
+**Entscheidung:** offen
+
+## E063 · OFFEN · 2026-11-03
+**Frage:** Welche Hydrogel-Größen gehen ein, wenn nur XML direkt in den Ordnern von `Hydrogel SPT` gelesen werden?
+**Stelle:** `MSD_Trackmate/MSD_FromTrackmate_20mg.py`, `XML_FOLDERS`; `msd_pipeline.compute_results()` (`folder.glob("*.xml")`, ohne Unterordner).
+**Wirkung heute:** `100 nm hydrogel`, `200 nm hydrogel`, `500 nm hydrogel`, `1000 nm hydrogel` enthalten keine XML direkt im Ordner, nur den Unterordner `Injection\` (1000 nm: 15 XML, 500 nm: 1 XML, 20 nm: 1 XML in `Injection\Tracks`). Mit nur den Ordnern selbst gibt es Hydrogel-Ergebnisse für 20 nm (25 XML) und 50 nm (22 XML); Wasser hat alle 6 Größen. Folgeskripte mit D_eff/D0 über die Größe (Amsden, Saxton) erhalten dann nur 2 Hydrogel-Größen.
+- A: nur die Ordner selbst, ohne Unterordner → Hydrogel nur 20 und 50 nm, die 4 leeren Ordner mit 0 Dateien in der Ordnertabelle.
+- B: zusätzlich `Injection\` für bestimmte Größen (Nutzer nennt sie) → weitere Dateien.
+**Entscheidung:** offen

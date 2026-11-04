@@ -29,25 +29,24 @@ tp.quiet()
 
 # ── D₀ water folders ───────────────────────────────────────────────────────────
 XML_FOLDERS_D0: dict[float, list[Path]] = {
-    20.0: [
-        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\20 nm\Tracks"),
-        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.16\Tracks_20"),
-    ],
-    50.0: [
-        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_50"),
-    ],
-    100.0: [
-        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\100 nm\Tracks"),
-    ],
-    200.0: [
-        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\200 nm\Tracks"),
-    ],
-    500.0: [
-        Path(r"E:\PhD Data Analysis\SPT 2025 II\D_0 Wassermessung\500 nm\Tracks"),
-    ],
-    1000.0: [
-        Path(r"E:\PhD Data Analysis\SPT 2025 II\2026.01.19\Tracks_1000"),
-    ],
+20.0: [
+    Path(r"E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Buffer SPT\20 nm buffer"),
+],
+50.0: [
+    Path(r"E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Buffer SPT\50 nm buffer"),
+],
+100.0: [
+    Path(r"E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Buffer SPT\100 nm buffer"),
+],
+200.0: [
+    Path(r"E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Buffer SPT\200 nm buffer"),
+],
+500.0: [
+    Path(r"E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Buffer SPT\500 nm buffer"),
+],
+1000.0: [
+    Path(r"E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Buffer SPT\1000 nm buffer"),
+]
 }
 
 # ── 20 mg/mL C16 hydrogel folders ─────────────────────────────────────────────

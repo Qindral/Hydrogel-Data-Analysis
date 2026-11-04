@@ -52,12 +52,12 @@ from hydro_analysis.MSD_Trackmate.msd_pipeline import run_pipeline
 ROOT_PATH = Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16")
 
 XML_FOLDERS = {
-    20.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\20 nm\20 nm 20 mg\Tracks")],
-    50.0: [Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks_new")],#Path(r"E:\PhD Data Analysis\SPT 2025 II\Hydrogel Messung\20mg C16\50 nm\50 nm 20 mg\Tracks")],
-    100.0: [ROOT_PATH / "100 nm" / "Tracks"],
-    200.0: [ROOT_PATH / "200 nm" / "Tracks"],
-    500.0: [ROOT_PATH / "500 nm" / "Tracks"],
-    1000.0: [ROOT_PATH / "1000 nm" / "Tracks"],
+20: ["E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Hydrogel SPT\20 nm hydrogel"],
+50: ["E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Hydrogel SPT\50 nm hydrogel"],
+100: ["E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Hydrogel SPT\100 nm hydrogel"],
+200: ["E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Hydrogel SPT\200 nm hydrogel"],
+500: ["E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Hydrogel SPT\500 nm hydrogel"],
+1000: ["E:\Daten Promotion Sicherung\SPT Analysis Buffer_Hydrogel\Hydrogel SPT\1000 nm hydrogel"]
 }
 
 # .rec files whose name differs from the movie (raw data stay unchanged): {XML name: .rec path}.
