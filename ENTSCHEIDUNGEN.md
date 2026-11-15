@@ -130,14 +130,14 @@ muss nicht weiter begründet werden.
 - Einzelbilder: A: entfallen. B: bleiben.
 **Entscheidung:** Zentrum A, y-Achse A, Einzelbilder A; Profile als einzelne Zeile/Spalte ohne Mittelung (Nutzer, 2026-10-07).
 
-## E014 · OFFEN · 2026-10-07
+## E014 · ENTSCHIEDEN · 2026-11-10
 **Frage:** Laserstrahl: Sollen die bestehenden Pixelkorrekturen (zeitliche Ausreißer, Hot Pixel) bleiben?
 **Stelle:** `Laser_Intensity/laser_beam_characterization.py`, `load_measurement` (`TEMPORAL_OUTLIER_SIGMA`, `HOT_PIXEL_SIGMA`, `HOT_PIXEL_BOX_PX`).
 **Wirkung heute:** je Datei 0 bis 11 Einzelwerte durch den zeitlichen Median ersetzt und 57 bis 153 Pixel des Mittelbildes (0,2 bis 0,4 %) durch den lokalen 5 × 5-Median; Zählung in `laser_beam_exclusions.csv`. Nicht im Register (Abschnitt 0.2).
 - A: behalten → im Register eintragen, im Methodenteil nennen.
 - B: entfernen → E und Fit ändern sich leicht; einzelne Übersteuerungs- oder Hot-Pixel-Werte gehen in Profile und Fit ein.
 - C: nur Hot-Pixel-Korrektur behalten → die wenigen zeitlichen Ausreißer bleiben im Mittelbild.
-**Entscheidung:** offen
+**Entscheidung:** A (Nutzer, 2026-11-10): Pixelkorrekturen bleiben, im Register eingetragen, im Methodenteil nennen.
 
 ## E015 · ENTSCHIEDEN · 2026-10-07
 **Frage:** Laserstrahl, neue Version `Laser_beam_norm_detector.py`: Wie werden Leistung, Bildfläche, Korrekturen, Strahlgröße, beleuchtete Fläche, Fitmodell, E_max und Abbildungen festgelegt?
@@ -429,23 +429,23 @@ muss nicht weiter begründet werden.
 - B: allgemeine Form (Savin & Doyle 2005, Backlund et al. 2015), 2D: MSD(τ) = 4K/[(n+1)(n+2)·t_E²]·[(τ+t_E)^(n+2) + |τ−t_E|^(n+2) − 2τ^(n+2) − 2t_E^(n+2)] + 4σ².
 **Entscheidung:** B (Nutzer, 2026-10-27). K wird als `D_um2_per_s` gespeichert (Einheit µm² s⁻ⁿ), Modell in `fit_results_MSD["model_id"] = "general"`. Für n = 1 identisch mit A (geprüft, relative Abweichung < 1e-15). Gilt für Wasser, Hydrogel und die Fits pro Track.
 
-## E047 · OFFEN · 2026-10-27
+## E047 · ENTSCHIEDEN · 2026-11-10
 **Frage:** Wie sollen die Fits pro Track mit dem allgemeinen Modell (E046) umgehen, das nur für n > 0 definiert ist (bei τ = t_E ist der Klammerterm t_E^(n+2)·(2^(n+2) − 4), für n ≤ 0 also ≤ 0)?
 **Stelle:** `core/analysis.py`, `fit_powerlaw_blur_locerror_general()` (ohne Grenzen für n); `Validation_Claude/TaskB1_TrackLengthBias_Compute.py` (Abb17–19), `Validation_Claude/Fittingpoints_robustness.py` (Abb14–15).
 **Wirkung heute:** Fits pro Track, die nicht konvergieren oder am Startwert scheitern, werden ausgelassen und protokolliert: TaskB1 Wasser 465 von 6915 Tracks (35 nm 40, 50 nm 116, 100 nm 108, 240 nm 8, 560 nm 38, 1370 nm 155), Hydrogel 195 von 1722 (35 nm 77, 50 nm 118 von 539); Abb14–15 2344 (Wasser) und 1046 (Hydrogel) Kombinationen aus Track und Punktzahl. Es fallen bevorzugt Tracks mit kleinem n weg. Die Ensemble-Fits pro Datei sind nicht betroffen (alle konvergiert).
 - A: Fit pro Track mit Grenzen 0 < n < 2 (beschränkter Optimierer) → jeder Track bekommt einen Wert, Tracks am Rand werden markiert und gezählt.
 - B: wie heute, gescheiterte Tracks auslassen → Histogramme und Mediane ohne diese Tracks.
 - C: pro Track das bisherige Modell 4D(τ − t_E/3)ⁿ + 4σ² (für jedes n definiert) → Methodenunterschied Track gegen Ensemble.
-**Entscheidung:** offen
+**Entscheidung:** keine der Optionen (Nutzer, 2026-11-10): nur noch V1 (4Dτⁿ) und V3 (4Dτⁿ + 4σ²) fitten, keine V6-Fits (Modell mit Blur, E046) mehr. Gilt für die ganze SPT-Pipeline (Ensemble-Fits pro Datei und Fits pro Track), nicht nur für die Fits pro Track. In den Abbildungen wird V1 gezeigt, V3 als Vergleich. Ersetzt E046 B für das Hauptergebnis. Umsetzung: V1 läuft heute über `run_spt_uncorrected_powerlaw.py` (Ausgabe `SPT/uncorrected_powerlaw/`); V3 ist in der Pipeline noch nicht implementiert; `msd_pipeline.MSD_MODEL` ist noch das Modell von E046.
 
-## E048 · OFFEN · 2026-10-27
+## E048 · ENTSCHIEDEN · 2026-11-10
 **Frage:** FRAP v2: Wie wird der Hintergrund F_BG begründet bzw. gewählt, nachdem nur noch eine noFITC-Kontrolle (nofitc_1) übrig ist?
 **Stelle:** `FRAP/frap_analysis_v2.py`, `BACKGROUND_COUNTS = 0.0` und Modul-Docstring („The noFITC controls cannot serve as a quantitative background (their intensity scatters by a factor of 5 …)“).
 **Wirkung heute:** F_BG = 0 in allen Messungen. Die Begründung „Streuung um Faktor 5“ stammt aus den drei Kontrollen 15,6 / 83,1 / 68,7 Counts; nofitc_2 und nofitc_3 sind seit 2026-10-27 ausgeschlossen (FITC vorhanden, Nutzer), es bleibt nofitc_1 mit 15,6 Counts in der Bleich-ROI vor dem Bleichen (1,0 % Laser). FITC-Messungen vor dem Bleichen: 28,8–92,1 Counts; 3 von 13 gezeigten (interface_1, interface_2, gel_A1_1) mit 0,5 % Laser, dafür gibt es keine Kontrolle mehr. Laut Docstring kürzt sich ein konstanter Untergrund aus τ, t_half, M_f und w(t) und senkt nur das scheinbare K0.
 - A: F_BG = 0 beibehalten, Docstring nur mit PMT-Offset 0 begründen → keine Zahl ändert sich.
 - B: F_BG = Niveau von nofitc_1 (15,6 Counts) für die 1,0-%-Messungen → K0 und F_norm ändern sich; für die 0,5-%-Messungen ist ein eigener Wert nötig (vom Nutzer).
 - C: F_BG = 0, Abzug von nofitc_1 nur als Diagnose in den Tabellen → Hauptergebnisse unverändert, zusätzliche Spalten.
-**Entscheidung:** offen
+**Entscheidung:** A (Nutzer, 2026-11-10): F_BG = 0 bleibt; Begründung im Docstring von `frap_analysis_v2.py` nur über PMT-Offset 0 (Docstring noch nicht angepasst).
 
 ## E049 · ENTSCHIEDEN · 2026-10-27
 **Frage:** FRAP: Welche Unsicherheit wird für D_eff/D0 angegeben und gespeichert (Abbildung `frap_deff_d0_vs_depth.pdf` und Tabelle `frap_deff_d0_values.csv`)?
@@ -500,14 +500,14 @@ muss nicht weiter begründet werden.
 - C: beide Spalten ausgeben.
 **Entscheidung:** A (Nutzer, 2026-11-01): ΔR² = R²(Set, N Lags) − R²(V1, 6 Lags).
 
-## E055 · OFFEN · 2026-11-02
+## E055 · ENTSCHIEDEN · 2026-11-10
 **Frage:** Wie wird das σ aus dem iMSD bei N ≥ 10 Fitpunkten gebildet, wenn Spuren weniger als N Lags haben?
 **Stelle:** Test and Other Validations, src/msd_settings_scan.py, sigma2_estimates()
 **Wirkung heute:** Spuren mit 10 Frames haben 9 Lags. Hat eine Datei auch nur eine solche Spur, wird ihr iMSD-σ nicht berechnet (Status „E055 offen“). Seit 2026-11-02 läuft der Scan nur bis N = 10: betroffen sind bei N = 10 51 von 70 Dateien, in V3 und V6. Diese 2 Sets fehlen in der Bewertung „Beste Sets“.
 - A: jede Spur mit ihren vorhandenen Lags fitten, min(N, Lags), wie E050 B → alle Spuren bleiben drin, die Gerade wird bei kurzen Spuren über weniger Punkte gelegt.
 - B: nur Spuren mit ≥ N Lags verwenden, Rest protokollieren → bei N = 10 fallen 283 von 6915 Spuren (W) und 34 von 1722 (H) aus dem σ-Mittel.
 - C: iMSD-σ nur bis N = 9; die Sets N10 mit iMSD entfallen → wie heute, aber festgelegt.
-**Entscheidung:** offen
+**Entscheidung:** A (Nutzer, 2026-11-10): jede Spur mit min(N, Lags) fitten (noch nicht in `src/msd_settings_scan.py` umgesetzt).
 
 ## E056 · ENTSCHIEDEN · 2026-11-02
 **Frage:** Wie wird mit N = 2 Fitpunkten umgegangen?
@@ -534,7 +534,7 @@ muss nicht weiter begründet werden.
 - F: D relativ (|D̄₀/D₀ − 1|) → alle Größen gleich gewichtet.
 **Entscheidung:** E (Nutzer, 2026-11-02): absolut; die relative Abweichung wird nur angezeigt. Gewichtung der Größen und Kombination der Kriterien jetzt in E059.
 
-## E059 · OFFEN · 2026-11-02
+## E059 · ENTSCHIEDEN · 2026-11-10
 **Frage:** Wie werden die Größengruppen beim Mitteln von |n̄ − 1| und |D̄₀ − D₀| gewichtet, und wie werden D, Amsden-R² und gescheiterte Fits zu einem „besten Set“ kombiniert?
 **Stelle:** Test and Other Validations, src/msd_settings_scan.py, ranking() / CRITERIA
 **Wirkung heute:** Jede Größengruppe gleich gewichtet (PROPOSED). N = 3–10: 53 Sets ohne gescheiterte Fits und ohne offene Einträge; bestes D N10_V3_immob (0,157 µm² s⁻¹), bestes Amsden-R² N4_V3_immob (0,344); kein Set ist in beiden am besten, Pareto-Front N4–N10 · V3 · σ immob.
@@ -542,4 +542,13 @@ muss nicht weiter begründet werden.
 - D: Dateigewicht num_tracks_fit über alle Dateien → Größen mit vielen Spuren dominieren.
 - G: nur die Pareto-Front angeben → N4–N10 · V3 · σ immob, keine Einzelwahl.
 - H: Rangsumme aus D und Amsden-R² bei 0 gescheiterten Fits → N9_V3_immob (vor N10_V3_immob).
-**Entscheidung:** offen
+**Entscheidung:** D (Nutzer, 2026-11-10; zuerst als „B“ eingetragen, auf Nachfrage D): Dateigewicht num_tracks_fit über alle Dateien (noch nicht in `src/msd_settings_scan.py` umgesetzt).
+
+## E060 · ENTSCHIEDEN · 2026-11-10
+**Frage:** Was zeigt Abb03 (`A_correction_deviation_refined`, fig:res:locerror_correction, Vergleich korrigierter gegen unkorrigierten Fit), nachdem es nach E047 keine V6-Fits mehr gibt?
+**Stelle:** `MSD_Trackmate/Validation_Claude/Figures_Refined/Correlations_Refined.py` (Abb03), `Overleaf_Clone/Data.tex` Zeile 363.
+**Wirkung heute:** Abb03 vergleicht V6 (Modell mit Blur, E046) mit V1. Im Lauf vom 2026-11-10 wurde sie nicht neu erzeugt (die V1-Variante `run_spt_uncorrected_powerlaw.py` lässt Abb03 aus); in Data.tex steht noch die V6-Version vom letzten Lauf.
+- A: Abb03 aus dem Data-Kapitel nehmen → kein Korrekturvergleich im Kapitel.
+- B: Abb03 als Vergleich V3 gegen V1 neu bauen → braucht zuerst V3 in der Pipeline (noch nicht implementiert).
+- C: V6 gegen V1 nur als Methodenvergleich behalten → V6 wird für diese eine Abbildung weiter gefittet, entgegen „keine V6-Fits mehr“.
+**Entscheidung:** A (Nutzer, 2026-11-10; als „1“ eingetragen, auf Nachfrage A): Abb03 kommt aus dem Data-Kapitel; kein Korrekturvergleich im Kapitel. In `Overleaf_Clone/Data.tex` (Zeile 363, fig:res:locerror_correction) noch nicht entfernt.
