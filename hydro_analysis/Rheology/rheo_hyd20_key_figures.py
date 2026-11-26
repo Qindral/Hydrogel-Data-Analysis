@@ -56,10 +56,17 @@ Writes to OUTPUT_DIR (figures as PDF, tables as CSV and one workbook):
   fig2_stability_gp_vs_age.pdf      G' at 0.5 Hz of every qc_filtered run vs. gel age
   fig3a_lattice_cells.pdf           shaded renderings (pyvista/VTK) of the periodic lattices
                                     f = 4, 6, 8 around one cavity, one scale, 10 nm bar;
-                                    strands as thin tubes, cavity sphere and throat ring with
-                                    the axis diameters (fibril diameter not drawn); neighbouring
-                                    cells fade out, strands in front of the cavity are faint
-  fig3a_lattice_cells_f<f>.png      the three renderings (embedded in the PDF)
+                                    strands as thin tubes, cavity sphere, throat ring and the
+                                    cavity circumference (great circle parallel to the throat
+                                    ring) with the axis diameters (fibril diameter not drawn);
+                                    with RENDER_RINGS_ON_SPHERE the throat ring is shifted along
+                                    its normal onto the cavity sphere (drawing only; unchanged
+                                    for f = 6, about 0.01 a for f = 4 and 0.05 a for f = 8);
+                                    all strands within RENDER_SHOW_RADIUS_NM of the cavity centre
+                                    at full opacity (RENDER_FADE_OUTER / RENDER_FAINT_FRONT off;
+                                    earlier: neighbouring cells faded out, front strands faint)
+  fig3a_lattice_cells_f<f>.png      the three renderings (embedded in the PDF); CELL_PNGS_ONLY
+                                    renders only these and writes nothing else
   fig3b_cavity_vs_f.pdf             cavity diameter vs. f (d_f = 11 nm), combined uncertainty
   table1_viscoelastic_all_runs.csv  key values of every run (frequency + amplitude sweeps)
   table1b_viscoelastic_summary.csv  mean, SD, 95 % CI per age and pooled < 10 d
@@ -85,6 +92,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+from PIL import Image
 from scipy import optimize, stats
 
 from hydro_analysis.core.physics import BOLTZMANN_CONSTANT, calculate_network_mesh_size
@@ -120,9 +128,18 @@ RENDER_FADE_START_NM = 13.0               # full opacity inside, fading to zero 
 RENDER_FRONT_DEPTH_NM = 4.0               # strands more than this in front of the cavity centre are faint
 RENDER_FRONT_ALPHA = 0.3
 RENDER_TUBE_RADIUS_NM = 0.55              # visual strand radius only, not the fibril diameter
-RENDER_NODE_RADIUS_NM = 1.1
+RENDER_NODE_RADIUS_NM = 1.6               # junction spheres (1.1 hid them inside the 8-fold junctions)
+RENDER_STRAND_OPACITY = 0.8               # decided by user, 2026-11-25: strands slightly transparent
+RENDER_STRAND_AMBIENT = 0.3               # ambient share of strands and junctions (strands along the view stay visible)
 RENDER_CAVITY_OPACITY = 0.5
 RENDER_SCALE_BAR_NM = 10.0
+RENDER_RING_RADIUS_NM = 0.45              # tube radius of the two rings
+RENDER_SUPERSAMPLE = 3                    # rendered at 3x RENDER_PX, reduced with Lanczos (anti-aliasing)
+RENDER_DEPTH_PEELS = 32                   # depth peeling layers for the translucent cavity sphere
+RENDER_FADE_OUTER = False                 # decided by user, 2026-11-25: all strands drawn, none faded out
+RENDER_FAINT_FRONT = False                # decided by user, 2026-11-25: strands in front of the cavity not faint
+RENDER_RINGS_ON_SPHERE = True             # decided by user, 2026-11-25: rings lie on the cavity sphere
+CELL_PNGS_ONLY = False                    # True: main() renders only fig3a_lattice_cells_f<f>.png and stops
 
 LATTICE_NAME = {4: "diamond", 6: "simple cubic", 8: "body-centred cubic"}
 STRANDS_PER_CELL = {4: 16, 6: 3, 8: 8}
@@ -505,7 +522,9 @@ def render_lattice(geo: dict, a: float, colors: tuple, path: Path) -> float:
     """Shaded rendering (pyvista/VTK) of the periodic lattice around one cavity; returns pixels per nm.
 
     Strands are drawn as thin tubes of fixed visual radius (fibril diameter not drawn); the cavity
-    sphere and the throat ring have the axis diameters kappa_cav a and kappa_thr a (d_f = 0).
+    sphere, its circumference (great circle parallel to the throat ring) and the throat ring have
+    the axis diameters kappa_cav a and kappa_thr a (d_f = 0); with RENDER_RINGS_ON_SPHERE the
+    throat ring sits where a circle of its diameter lies on the sphere.
     Strand opacity falls off with the distance from the cavity centre (neighbouring cells only
     hinted), and strands in front of the cavity are drawn faint. Parallel projection with the same
     scale for every lattice, so all panels are to one scale.
@@ -526,54 +545,71 @@ def render_lattice(geo: dict, a: float, colors: tuple, path: Path) -> float:
             if seg is None:
                 continue
             mid = 0.5 * (seg[0] + seg[1])
-            alpha = np.clip((RENDER_SHOW_RADIUS_NM - np.linalg.norm(mid - centre))
-                            / (RENDER_SHOW_RADIUS_NM - RENDER_FADE_START_NM), 0.0, 1.0)
-            if (mid - centre) @ view > RENDER_FRONT_DEPTH_NM:
+            alpha = 1.0
+            if RENDER_FADE_OUTER:
+                alpha = np.clip((RENDER_SHOW_RADIUS_NM - np.linalg.norm(mid - centre))
+                                / (RENDER_SHOW_RADIUS_NM - RENDER_FADE_START_NM), 0.0, 1.0)
+            if RENDER_FAINT_FRONT and (mid - centre) @ view > RENDER_FRONT_DEPTH_NM:
                 alpha *= RENDER_FRONT_ALPHA
             level = round(alpha * 4) / 4
             if level <= 0:
                 continue
+            # Capped tubes: open tube ends seen along the view direction render as black stubs.
             tubes.setdefault(level, []).append(pv.Tube(pointa=seg[0], pointb=seg[1], radius=RENDER_TUBE_RADIUS_NM,
-                                                       n_sides=24))
+                                                       n_sides=48, capping=True))
             for p in ((p0 + s) * a, (p1 + s) * a):
                 if np.linalg.norm(p - centre) < RENDER_SHOW_RADIUS_NM:
-                    key = tuple(np.round(p, 4))
-                    nodes[key] = max(nodes.get(key, 0.0), level)
+                    nodes[tuple(np.round(p, 4))] = 1.0
 
-    pl = pv.Plotter(off_screen=True, window_size=(RENDER_PX, RENDER_PX), lighting="none")
+    px = RENDER_PX * RENDER_SUPERSAMPLE
+    pl = pv.Plotter(off_screen=True, window_size=(px, px), lighting="none")
     pl.set_background("white")
     for level, meshes in tubes.items():
-        pl.add_mesh(pv.merge(meshes), color=dark, opacity=level, smooth_shading=True, specular=0.3, specular_power=20)
-    by_level: Dict[float, list] = {}
-    for key, level in nodes.items():
-        by_level.setdefault(level, []).append(pv.Sphere(radius=RENDER_NODE_RADIUS_NM, center=key,
-                                                        theta_resolution=24, phi_resolution=24))
-    for level, meshes in by_level.items():
-        pl.add_mesh(pv.merge(meshes), color=dark, opacity=level, smooth_shading=True, specular=0.3)
-    pl.add_mesh(pv.Sphere(radius=geo["cavity_axis_diameter"] * a / 2, center=centre, theta_resolution=160,
-                          phi_resolution=160), color=base, opacity=RENDER_CAVITY_OPACITY, ambient=0.25,
+        pl.add_mesh(pv.merge(meshes, merge_points=False), color=dark, opacity=level * RENDER_STRAND_OPACITY,
+                    smooth_shading=True, split_sharp_edges=True, ambient=RENDER_STRAND_AMBIENT, diffuse=0.7,
+                    specular=0.3, specular_power=20)
+    # Junctions always opaque (decided by user, 2026-11-25).
+    pl.add_mesh(pv.merge([pv.Sphere(radius=RENDER_NODE_RADIUS_NM, center=key, theta_resolution=64, phi_resolution=64)
+                          for key in nodes], merge_points=False), color=dark, opacity=1.0, smooth_shading=True,
+                ambient=RENDER_STRAND_AMBIENT, diffuse=0.7, specular=0.3, specular_power=20)
+    pl.add_mesh(pv.Sphere(radius=geo["cavity_axis_diameter"] * a / 2, center=centre, theta_resolution=240,
+                          phi_resolution=240), color=base, opacity=RENDER_CAVITY_OPACITY, ambient=0.25,
                 smooth_shading=True, specular=0.5, specular_power=30)
     normal = geo["throat_normal"]
     e1 = np.cross(normal, [1.0, 0.0, 0.0] if abs(normal[0]) < 0.9 else [0.0, 1.0, 0.0])
     e1 /= np.linalg.norm(e1)
     e2 = np.cross(normal, e1)
-    phi = np.linspace(0, 2 * np.pi, 200, endpoint=False)
-    ring = geo["throat_centre"] * a + (geo["throat_axis_diameter"] * a / 2) * (
-        np.outer(np.cos(phi), e1) + np.outer(np.sin(phi), e2))
-    pl.add_mesh(pv.lines_from_points(ring, close=True).tube(radius=0.45, n_sides=20), color="black",
-                smooth_shading=True)
-    pl.add_light(pv.Light(position=tuple(centre + 200 * np.array([0.6, 0.2, 1.0])), focal_point=tuple(centre),
-                          intensity=0.9, light_type="scene light"))
-    pl.add_light(pv.Light(position=tuple(centre + 200 * view), focal_point=tuple(centre), intensity=0.35,
-                          light_type="scene light"))
-    pl.enable_depth_peeling(number_of_peels=12)
+    phi = np.linspace(0, 2 * np.pi, 720, endpoint=False)
+    r_cav = geo["cavity_axis_diameter"] * a / 2
+    r_thr = geo["throat_axis_diameter"] * a / 2
+    if RENDER_RINGS_ON_SPHERE:
+        # Throat ring shifted along its normal onto the cavity sphere (drawing only; exact for f = 6).
+        throat_centre = centre + np.sqrt(r_cav ** 2 - r_thr ** 2) * normal
+    else:
+        throat_centre = geo["throat_centre"] * a
+    # Throat ring and cavity circumference (great circle parallel to the throat ring), both on the sphere.
+    for ring_centre, radius in ((throat_centre, r_thr), (centre, r_cav)):
+        ring = ring_centre + radius * (np.outer(np.cos(phi), e1) + np.outer(np.sin(phi), e2))
+        pl.add_mesh(pv.lines_from_points(ring, close=True).tube(radius=RENDER_RING_RADIUS_NM, n_sides=48),
+                    color="black", smooth_shading=True)
+    # Key light from above, head light along the view, two fill lights perpendicular to both (lift strands
+    # that point nearly along the view direction).
+    key = np.array([0.6, 0.2, 1.0]) / np.linalg.norm([0.6, 0.2, 1.0])
+    fill = np.cross(view, key)
+    fill /= np.linalg.norm(fill)
+    for direction, intensity in ((key, 0.9), (view, 0.35), (fill, 0.35), (-fill, 0.25)):
+        pl.add_light(pv.Light(position=tuple(centre + 200 * direction), focal_point=tuple(centre),
+                              intensity=intensity, light_type="scene light"))
+    pl.enable_depth_peeling(number_of_peels=RENDER_DEPTH_PEELS, occlusion_ratio=0.0)
     pl.camera.position = tuple(centre + 400 * view)
     pl.camera.focal_point = tuple(centre)
     pl.camera.up = (0.0, 0.0, 1.0)
     pl.enable_parallel_projection()
     pl.camera.parallel_scale = RENDER_HALF_HEIGHT_NM
-    pl.screenshot(str(path))
+    image = pl.screenshot(return_img=True)
     pl.close()
+    # Supersampling: rendered at RENDER_SUPERSAMPLE x the size, reduced with a Lanczos filter (anti-aliasing).
+    Image.fromarray(image).resize((RENDER_PX, RENDER_PX), Image.LANCZOS).save(path, dpi=(600, 600))
     return RENDER_PX / (2.0 * RENDER_HALF_HEIGHT_NM)
 
 
@@ -692,6 +728,14 @@ def main() -> None:
     if pool["temperature_K"].isna().any():
         raise ValueError(f"Missing temperature for {list(pool.loc[pool['temperature_K'].isna(), 'specimen_id'])}")
     factors, pores, per_spec = pore_tables(pool, geometries)
+    if CELL_PNGS_ONLY:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        sub = per_spec[per_spec["d_f_nm"] == STRAND_DIAMETER_DRAWING_NM]
+        for f in FUNCTIONALITIES:
+            png = OUTPUT_DIR / f"fig3a_lattice_cells_f{f}.png"
+            render_lattice(geometries[f], sub.loc[sub["f"] == f, "a_nm"].mean(), COLOR_F[f], png)
+            print(f"Written {png}")
+        return
     combined = combined_pore_table(per_spec)
     mesh, mesh_pooled = mesh_size_tables(pool)
     exclusions = exclusion_log(cache, runs)

@@ -28,7 +28,11 @@ Figures (OUTPUT_ROOT/figures/...):
                                       per specimen and per age, pooled mean over
                                       all ages (affine, and phantom f = 4 as reference)
                       pore_size_phantom_network  diamond cell (f = 4) to scale with
-                                      cavity sphere; cavity and throat diameter vs.
+                                      cavity sphere, its circumference in the three
+                                      planes parallel to the cell faces and the throat
+                                      ring (position and plane from
+                                      rheo_hyd20_key_figures.lattice_pore_geometry,
+                                      diameter from the cache); cavity and throat diameter vs.
                                       strand diameter for f = 4 and f = 6
   validation/         tri_vs_xls_parity   reconstructed vs. TRIOS-exported moduli
 
@@ -62,6 +66,7 @@ from matplotlib.lines import Line2D
 
 from hydro_analysis.MSD_Trackmate.MSD_per_file_publication import _DASH_THEORY
 from hydro_analysis.Rheology.network_geometry import lattice_segments
+from hydro_analysis.Rheology.rheo_hyd20_key_figures import lattice_pore_geometry
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 CACHE_PATH = Path(__file__).resolve().parent / "cache" / "rheo_hyd20_results.pkl"
@@ -88,6 +93,8 @@ WINDOW_SHADE = "#d9d9d9"
 POINT_ALPHA = 0.7
 EXCLUDED_ALPHA = 0.35              # sweeps excluded from qc_filtered statistics (figure A)
 PLAIN_LABEL_MAX_DECADES = 1.6     # log axes spanning fewer decades get plain-number labels
+CAVITY_CIRCLE_LW = 0.8            # pore_size_phantom_network A: cavity circumference lines, set by Claude
+THROAT_RING_LW = 1.2              # pore_size_phantom_network A: throat ring, set by Claude
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -444,7 +451,9 @@ def plot_pore_size(cache: dict, folder: Path) -> None:
     """Pore geometry of the phantom network (pooled over all ages, FIG_SELECTION).
 
     A  diamond-lattice cell (f = 4) to scale for the pooled mean G': strands (d_f = 0),
-       junctions, and the cavity sphere
+       junctions, and the cavity sphere with its circumference in the three planes through
+       the cavity centre parallel to the cell faces; the throat as a ring of the throat
+       diameter in the plane between two neighbouring cavities (no labels for the circles)
     B  cavity and throat diameter vs. strand diameter d_f, diamond (f = 4, solid) and simple
        cubic (f = 6, dashed) lattice, mean +- SD over specimens as band
     """
@@ -453,6 +462,11 @@ def plot_pore_size(cache: dict, folder: Path) -> None:
     geo = cache["lattice_geometry"][4]
     ref = pooled[(pooled["functionality"] == 4) & (pooled["strand_diameter_nm"] == 0)].iloc[0]
     a = ref["cell_edge_nm_mean"]
+    # Throat position and plane (the cache stores only its diameter): exact geometry of rheo_hyd20_key_figures.py.
+    throat_geo = lattice_pore_geometry(4)
+    if not np.allclose(throat_geo["cavity_centre"], geo["cavity_centre"], atol=1e-6):
+        raise ValueError(f"Cavity centre of the cache {geo['cavity_centre']} differs from the exact geometry "
+                         f"{throat_geo['cavity_centre']}; the throat ring would not belong to the drawn cavity.")
 
     fig = plt.figure(figsize=(WIDTH_IN["full"], 3.1))
     ax_a = fig.add_subplot(1, 2, 1, projection="3d")
@@ -479,6 +493,18 @@ def plot_pore_size(cache: dict, folder: Path) -> None:
     c = geo["cavity_centre"] * a
     ax_a.plot_surface(c[0] + r * np.cos(u) * np.sin(v), c[1] + r * np.sin(u) * np.sin(v), c[2] + r * np.cos(v),
                       color=COLOR_CAST[0][0], alpha=0.35, lw=0)
+    phi = np.linspace(0, 2 * np.pi, 200)
+    for axis in range(3):
+        e1, e2 = np.eye(3)[(axis + 1) % 3], np.eye(3)[(axis + 2) % 3]
+        circle = c + r * (np.outer(np.cos(phi), e1) + np.outer(np.sin(phi), e2))
+        ax_a.plot(*circle.T, color=COLOR_CAST[0][1], lw=CAVITY_CIRCLE_LW)
+    normal = throat_geo["throat_normal"]
+    e1 = np.cross(normal, [1.0, 0.0, 0.0] if abs(normal[0]) < 0.9 else [0.0, 1.0, 0.0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(normal, e1)
+    ring = throat_geo["throat_centre"] * a + (ref["throat_diameter_nm_mean"] / 2) * (
+        np.outer(np.cos(phi), e1) + np.outer(np.sin(phi), e2))
+    ax_a.plot(*ring.T, color=COLOR_CAST[1][1], lw=THROAT_RING_LW)
     ax_a.set_box_aspect((1, 1, 1))
     ax_a.grid(False)
     for axis in (ax_a.xaxis, ax_a.yaxis, ax_a.zaxis):
