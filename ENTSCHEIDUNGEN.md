@@ -552,3 +552,21 @@ muss nicht weiter begründet werden.
 - B: Abb03 als Vergleich V3 gegen V1 neu bauen → braucht zuerst V3 in der Pipeline (noch nicht implementiert).
 - C: V6 gegen V1 nur als Methodenvergleich behalten → V6 wird für diese eine Abbildung weiter gefittet, entgegen „keine V6-Fits mehr“.
 **Entscheidung:** A (Nutzer, 2026-11-10; als „1“ eingetragen, auf Nachfrage A): Abb03 kommt aus dem Data-Kapitel; kein Korrekturvergleich im Kapitel. In `Overleaf_Clone/Data.tex` (Zeile 363, fig:res:locerror_correction) noch nicht entfernt.
+
+## E061 · OFFEN · 2026-11-26
+**Frage:** FRAP Kang: Wie wird F∞ für t½ bestimmt, wenn die Messreihe das Plateau nicht erreicht?
+**Stelle:** `FRAP/frap_kang_analysis.py`, `kang_half_time` (F∞ = letzter Frame, F½ = (F0 + F∞)/2, wie in Kang et al. 2012, Methods).
+**Wirkung heute:** Synthetischer Test (exakte 2D-Diffusion, echte Zeitachsen, ohne Rauschen): D_Kang zu hoch um +26 % (Zeitachse water_3, 52 s ≈ 9 t½), +9 bis +11 % (gel_B1_4, gel_A1_3), +7 % (gel_B1_2, 555 s) und +157 % (interface_1, 15 s ≈ 3 t½); mit 50-fach längerer Reihe ≤ 2,5 %. Echte Daten: D0 = 38,1 µm²/s (water_1 39,1, water_3 37,1; Propagation 30,1), D_eff = 33,9 ± 8,3 (95 %-KI, n = 11), davon interface_1 = 69,9 µm²/s; D_eff/D0 = 0,889.
+- A: F∞ = letzter Frame wie im Paper (heute) → Werte wie oben, Verzerrung je nach Messdauer.
+- B: Kang Gl. 3 an die Kurve fitten (D und M_f frei, wie im Paper als Alternative) → Plateau aus dem Modell statt aus dem letzten Frame; neu zu implementieren und synthetisch zu prüfen.
+- C: wie A, Messungen unter einer Mindestdauer (in t½) weglassen → interface_1 fällt sicher heraus; die übrigen bleiben um +7 bis +26 % verzerrt.
+**Entscheidung:** offen
+
+## E062 · OFFEN · 2026-11-26
+**Frage:** FRAP Kang: Welche Kurve ersetzt Kangs separate ungebleichte Messreihe (F_fading) für die Korrektur des Ausbleichens während der Aufnahme?
+**Stelle:** `FRAP/frap_kang_analysis.py`, `kang_curve` und `kang_effective_radius` (F_fading = Referenzregion aus `frap_analysis_v2.double_normalised_curve`, r ≥ clip(3 r_e; 25; 65) µm).
+**Wirkung heute:** Es gibt keine ungebleichte FITC-Reihe (die noFITC-Kontrollen haben kein FITC). Die Referenzregion fällt bis zum letzten Frame auf 0,88–0,98 des Pre-Bleach-Werts (water_1 0,88); im ersten Post-Bleach-Frame liegt das Fernfeld des Profils ohne Korrektur bei 0,93–0,99, mit Korrektur bei 1,00–1,04. Wirkung auf D nicht getrennt berechnet.
+- A: Referenzregion derselben Messung (heute) → Korrektur wie bei Phair & Misteli.
+- B: Mittelwert des ganzen Bildfelds (`F_fov`) → enthält die Bleichstelle, Korrektur fällt mit der Erholung zusammen.
+- C: keine Korrektur (F_fading = konstant) → F∞ um 2–12 % niedriger, t½ kürzer.
+**Entscheidung:** offen
